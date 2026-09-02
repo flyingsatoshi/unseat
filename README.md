@@ -9,6 +9,14 @@ No accounts. No cloud. No telemetry.
   <a href="https://github.com/flyingsatoshi/unseat/actions"><img alt="CI" src="https://github.com/flyingsatoshi/unseat/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
+<p align="center">
+  <img src="assets/screenshots/widget.png" alt="Unseat overlay timer" width="480">
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/settings.png" alt="Unseat settings" width="340">
+</p>
+
 ## What it does
 
 - Always-on-top timer that starts when you launch it
@@ -50,10 +58,3 @@ Unseat never phones home. It does not upload usage, crash reports, or identity. 
 [Apache License 2.0](LICENSE). Contributions are accepted under the same terms.
 
 **Unseat** is a name of this project. Forks may use the code; they should not present themselves as the official Unseat app.
-
-## Related
-
-FlyingSatoshi also builds:
-
-- [upwiz.com](https://upwiz.com) — hosting, free and paid
-- [finehost.com](https://finehost.com) — hosting
