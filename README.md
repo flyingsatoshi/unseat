@@ -1,8 +1,12 @@
-# Unseat
+<p align="center">
+  <img src="assets/logo.png" alt="Unseat logo" width="128">
+</p>
 
-A local-only Windows break reminder. It sits on top of your work, tracks how long you have been at the desk, and nags you to get up.
+<h1 align="center">Unseat</h1>
 
-No accounts. No cloud. No telemetry.
+<p align="center">A local-only Windows break reminder. It sits on top of your work, tracks how long you have been at the desk, and nags you to get up.</p>
+
+<p align="center">No accounts. No cloud. No telemetry.</p>
 
 <p>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
