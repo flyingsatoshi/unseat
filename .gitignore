@@ -1,0 +1,8 @@
+/target/
+**/*.rs.bk
+.superpowers/
+.idea/
+.vscode/
+*.pdb
+Thumbs.db
+.DS_Store
