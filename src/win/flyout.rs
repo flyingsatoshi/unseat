@@ -26,10 +26,10 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{Shell_NotifyIconGetRect, NOTIFYICONIDENTIFIER};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DrawIconEx, FindWindowW, GetClientRect, GetSystemMetrics,
-    GetWindowLongPtrW, RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, DI_NORMAL,
-    GWLP_USERDATA, HWND_TOPMOST, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SW_HIDE,
-    SW_SHOWNOACTIVATE, WM_DESTROY, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DrawIconEx, FindWindowW, GetClientRect,
+    GetSystemMetrics, GetWindowLongPtrW, RegisterClassW, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, DI_NORMAL, GWLP_USERDATA, HWND_TOPMOST, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE,
+    SW_HIDE, SW_SHOWNOACTIVATE, WM_DESTROY, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{w, Interface};
@@ -79,6 +79,14 @@ pub fn hide() {
     unsafe {
         if let Ok(hwnd) = FindWindowW(CLASS, None) {
             let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+}
+
+pub fn shutdown() {
+    unsafe {
+        if let Ok(hwnd) = FindWindowW(CLASS, None) {
+            let _ = DestroyWindow(hwnd);
         }
     }
 }

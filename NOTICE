@@ -1,7 +1,15 @@
 Unseat
+======
+
 Copyright 2026 FlyingSatoshi
 
-This product includes software developed by FlyingSatoshi.
+This product includes software developed for Unseat under the Apache License 2.0.
+See LICENSE.
 
-Unseat is a name of this project.
-This NOTICE file is for attribution only and does not modify the License.
+Third-party Rust crates (serde, serde_json, windows, embed-resource, and their
+transitive dependencies) are used under the terms of their own MIT and/or
+Apache-2.0 licenses. Copies of those licenses are available from each crate's
+repository or from https://crates.io/.
+
+Alert sounds in assets/sounds/ are original works dedicated to the public
+domain under CC0 1.0. See assets/sounds/LICENSE.txt.

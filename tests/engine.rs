@@ -1,6 +1,6 @@
 use std::time::Duration;
 use unseat::{
-    Beep, CivilDate, Command, EngineConfig, Input, SittingEngine, VisibleState,
+    Beep, CivilDate, Command, EngineConfig, Input, SittingEngine, VisibleState, clamp_clock,
 };
 
 fn cfg() -> EngineConfig {
@@ -209,4 +209,122 @@ fn no_progressive_when_repeat_disabled() {
     e.tick(Duration::from_secs(3600), day(), active());
     let r = e.tick(Duration::from_secs(4200), day(), active());
     assert_eq!(r.beep, Beep::None);
+}
+
+fn cfg_30_min() -> EngineConfig {
+    let mut c = cfg();
+    c.sitting_limit = Duration::from_secs(30 * 60);
+    c
+}
+
+#[test]
+fn stalled_tick_does_not_jump_sitting_on_a_30_min_session() {
+    let mut e = SittingEngine::new(cfg_30_min(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(15 * 60 + 55), day(), active());
+    let last = Duration::from_secs(15 * 60 + 55);
+    let now = clamp_clock(Some(last), last + Duration::from_secs(20 * 60));
+    let r = e.tick(now, day(), active());
+    assert_eq!(
+        r.snapshot.sitting_elapsed,
+        Duration::from_secs(15 * 60 + 55 + 2)
+    );
+}
+
+#[test]
+fn stalled_tick_while_idle_does_not_instantly_reset_a_30_min_session() {
+    let mut e = SittingEngine::new(cfg_30_min(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(15 * 60 + 55), day(), active());
+    let last = Duration::from_secs(15 * 60 + 55);
+    let now = clamp_clock(Some(last), last + Duration::from_secs(20 * 60));
+    let r = e.tick(now, day(), idle());
+    assert_eq!(
+        r.snapshot.sitting_elapsed,
+        Duration::from_secs(15 * 60 + 55)
+    );
+    assert_eq!(r.snapshot.state, VisibleState::Break);
+    assert!(r.snapshot.break_elapsed <= Duration::from_secs(2));
+}
+
+#[test]
+fn clamp_clock_caps_a_sleep_gap_and_passes_small_steps() {
+    let last = Duration::from_secs(15 * 60 + 55);
+    assert_eq!(
+        clamp_clock(Some(last), last + Duration::from_secs(20 * 60)),
+        last + Duration::from_secs(2)
+    );
+    assert_eq!(
+        clamp_clock(Some(last), last + Duration::from_secs(1)),
+        last + Duration::from_secs(1)
+    );
+    assert_eq!(clamp_clock(None, last), last);
+}
+
+#[test]
+fn snooze_after_limit_returns_to_sitting_until_extra_time_elapses() {
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(3600), day(), active());
+    assert_eq!(e.snapshot().state, VisibleState::Overdue);
+    e.apply(Command::Snooze(Duration::from_secs(10 * 60)));
+    assert_eq!(e.snapshot().state, VisibleState::Sitting);
+    let still = e.tick(Duration::from_secs(3600 + 9 * 60), day(), active());
+    assert_eq!(still.snapshot.state, VisibleState::Sitting);
+    assert_eq!(still.beep, Beep::None);
+    let again = e.tick(Duration::from_secs(3600 + 10 * 60), day(), active());
+    assert_eq!(again.snapshot.state, VisibleState::Overdue);
+    assert_eq!(again.beep, Beep::LimitReached);
+}
+
+#[test]
+fn snooze_before_limit_is_a_noop() {
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(10), day(), active());
+    e.apply(Command::Snooze(Duration::from_secs(10 * 60)));
+    assert!(!e.can_snooze());
+    assert_eq!(e.snapshot().state, VisibleState::Sitting);
+    let r = e.tick(Duration::from_secs(3600), day(), active());
+    assert_eq!(r.snapshot.state, VisibleState::Overdue);
+    assert_eq!(r.beep, Beep::LimitReached);
+}
+
+#[test]
+fn reset_clears_snooze() {
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(3600), day(), active());
+    e.apply(Command::Snooze(Duration::from_secs(30 * 60)));
+    e.apply(Command::Reset);
+    e.tick(Duration::from_secs(3600), day(), active());
+    let r = e.tick(Duration::from_secs(3600 + 1), day(), active());
+    assert_eq!(r.snapshot.state, VisibleState::Sitting);
+    assert_eq!(r.snapshot.sitting_elapsed, Duration::from_secs(1));
+}
+
+#[test]
+fn qualifying_break_clears_snooze() {
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(3600), day(), active());
+    e.apply(Command::Snooze(Duration::from_secs(20 * 60)));
+    e.tick(Duration::from_secs(3600), day(), idle());
+    e.tick(Duration::from_secs(3600 + 180), day(), idle());
+    let back = e.tick(Duration::from_secs(3600 + 180), day(), active());
+    assert_eq!(back.snapshot.state, VisibleState::Sitting);
+    assert_eq!(back.snapshot.sitting_elapsed, Duration::ZERO);
+}
+
+#[test]
+fn snooze_resets_progressive_beeps() {
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(3600), day(), active());
+    e.tick(Duration::from_secs(4200), day(), active());
+    e.apply(Command::Snooze(Duration::from_secs(10 * 60)));
+    let mid = e.tick(Duration::from_secs(4200 + 9 * 60), day(), active());
+    assert_eq!(mid.beep, Beep::None);
+    let again = e.tick(Duration::from_secs(4200 + 10 * 60), day(), active());
+    assert_eq!(again.beep, Beep::LimitReached);
 }

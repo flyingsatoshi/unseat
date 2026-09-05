@@ -12,15 +12,16 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetCursorPos, GetWindowLongPtrW, GetWindowRect, LoadCursorW,
-    MoveWindow, RegisterClassW, SetCursor, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    WindowFromPoint, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HTCLIENT, HWND_TOPMOST,
-    IDC_ARROW, SWP_NOACTIVATE, SW_SHOWNOACTIVATE, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_RBUTTONUP, WNDCLASSW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    MoveWindow, PostQuitMessage, RegisterClassW, SetCursor, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, WindowFromPoint, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HTCLIENT,
+    HWND_TOPMOST, IDC_ARROW, SC_MINIMIZE, SC_RESTORE, SWP_NOACTIVATE, SW_SHOWNOACTIVATE, WM_ACTIVATE,
+    WM_CLOSE, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST,
+    WM_RBUTTONUP, WM_SHOWWINDOW, WM_SYSCOMMAND, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::w;
 use unseat::{
-    hit_control, layout_scale, Command, Hit, TimerShape, VisibleState, WidgetSize, WIDGET_H,
+    hit_control, layout_scale, Command, Hit, TimerShape, WidgetSize, WIDGET_H,
     WIDGET_W,
 };
 
@@ -34,6 +35,7 @@ pub fn register() -> windows::core::Result<()> {
             lpfnWndProc: Some(wndproc),
             hInstance: instance.into(),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
+            hIcon: crate::win::icon::big(),
             lpszClassName: CLASS,
             ..Default::default()
         };
@@ -45,7 +47,7 @@ pub fn register() -> windows::core::Result<()> {
 pub fn create(app: *mut App, x: i32, y: i32) -> windows::core::Result<HWND> {
     unsafe {
         let hwnd = CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_APPWINDOW | WS_EX_NOACTIVATE,
             CLASS,
             w!("Unseat"),
             WS_POPUP,
@@ -146,6 +148,37 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             (*app).on_widget_right_click();
             LRESULT(0)
         }
+        WM_SHOWWINDOW => {
+            (*app).widget_visible = wp.0 != 0;
+            if wp.0 == 0 {
+                (*app).hover = false;
+            }
+            LRESULT(0)
+        }
+        WM_ACTIVATE => {
+            if wp.0 as u32 & 0xFFFF != 0 {
+                (*app).show_widget();
+            }
+            LRESULT(0)
+        }
+        WM_SYSCOMMAND => {
+            let cmd = (wp.0 as u32) & 0xFFF0;
+            if cmd == SC_RESTORE {
+                (*app).show_widget();
+                LRESULT(0)
+            } else if cmd == SC_MINIMIZE {
+                (*app).hide_widget();
+                LRESULT(0)
+            } else {
+                DefWindowProcW(hwnd, msg, wp, lp)
+            }
+        }
+        WM_CLOSE => {
+            (*app).persist_today();
+            crate::win::tray::remove((*app).hidden);
+            PostQuitMessage(0);
+            LRESULT(0)
+        }
         WM_DESTROY => LRESULT(0),
         _ => DefWindowProcW(hwnd, msg, wp, lp),
     }
@@ -210,11 +243,22 @@ impl App {
         let x = lp.0 as i16 as i32;
         let y = (lp.0 >> 16) as i16 as i32;
         let s = paint_scale(hwnd, self.settings.widget_size);
-        let paused = self.engine.snapshot().state == VisibleState::Paused;
-        if let Some(hit) = hit_control(self.settings.timer_shape, self.hover, paused, s, x, y) {
+        if let Some(hit) = hit_control(
+            self.settings.timer_shape,
+            self.hover,
+            self.engine.snapshot().state,
+            s,
+            x,
+            y,
+        ) {
             match hit {
                 Hit::Pause => self.engine.apply(Command::TogglePause),
                 Hit::Reset => self.engine.apply(Command::Reset),
+                Hit::Snooze => self.snooze_default(),
+                Hit::Close => {
+                    self.hide_widget();
+                    return;
+                }
             }
             self.persist_today();
             self.repaint();

@@ -13,6 +13,11 @@ pub const SETTINGS_REPEAT_MIN_SECS: u64 = 2 * 60;
 pub const SETTINGS_REPEAT_MAX_SECS: u64 = 60 * 60;
 pub const SETTINGS_STEP_MIN: u64 = 1;
 pub const SETTINGS_STEP_MAX: u64 = 30;
+pub const SETTINGS_SNOOZE_MIN_SECS: u64 = 60;
+pub const SETTINGS_SNOOZE_MAX_SECS: u64 = 60 * 60;
+pub const SETTINGS_ALERT_DURATION_MAX_SECS: u64 = 10;
+pub const SNOOZE_PRESETS_SECS: [u64; 4] = [5 * 60, 10 * 60, 15 * 60, 30 * 60];
+pub const ALERT_DURATION_PRESETS_SECS: [u64; 4] = [0, 2, 4, 8];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -82,6 +87,77 @@ impl WidgetSize {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AlertSound {
+    #[default]
+    Chime,
+    Bell,
+    Pulse,
+    Glass,
+    Soft,
+}
+
+impl AlertSound {
+    pub const ALL: [Self; 5] = [
+        Self::Chime,
+        Self::Bell,
+        Self::Pulse,
+        Self::Glass,
+        Self::Soft,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Chime => "chime",
+            Self::Bell => "bell",
+            Self::Pulse => "pulse",
+            Self::Glass => "glass",
+            Self::Soft => "soft",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Self {
+        match key {
+            "bell" => Self::Bell,
+            "pulse" => Self::Pulse,
+            "glass" => Self::Glass,
+            "soft" => Self::Soft,
+            _ => Self::Chime,
+        }
+    }
+
+    pub fn chip_label(self) -> &'static str {
+        match self {
+            Self::Chime => "Chime",
+            Self::Bell => "Bell",
+            Self::Pulse => "Pulse",
+            Self::Glass => "Glass",
+            Self::Soft => "Soft",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|&s| s == self).unwrap_or(0)
+    }
+
+    pub fn from_index(i: usize) -> Self {
+        Self::ALL.get(i).copied().unwrap_or(Self::Chime)
+    }
+}
+
+impl serde::Serialize for AlertSound {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.key())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AlertSound {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let key = String::deserialize(deserializer)?;
+        Ok(Self::from_key(&key))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
@@ -112,6 +188,12 @@ pub struct Settings {
     pub today_sitting_secs: u64,
     #[serde(default = "default_step")]
     pub step: u64,
+    #[serde(default)]
+    pub alert_sound: AlertSound,
+    #[serde(default)]
+    pub alert_duration_secs: u64,
+    #[serde(default = "default_snooze")]
+    pub snooze_secs: u64,
 }
 
 fn default_sitting_limit() -> u64 {
@@ -135,6 +217,9 @@ fn default_window() -> i32 {
 fn default_step() -> u64 {
     1
 }
+fn default_snooze() -> u64 {
+    10 * 60
+}
 
 impl Default for Settings {
     fn default() -> Self {
@@ -153,6 +238,9 @@ impl Default for Settings {
             today_date: String::new(),
             today_sitting_secs: 0,
             step: default_step(),
+            alert_sound: AlertSound::Chime,
+            alert_duration_secs: 0,
+            snooze_secs: default_snooze(),
         }
     }
 }
@@ -182,6 +270,12 @@ impl Settings {
             .repeat_every_secs
             .clamp(SETTINGS_REPEAT_MIN_SECS, SETTINGS_REPEAT_MAX_SECS);
         self.step = self.step.clamp(SETTINGS_STEP_MIN, SETTINGS_STEP_MAX);
+        self.alert_duration_secs = self
+            .alert_duration_secs
+            .min(SETTINGS_ALERT_DURATION_MAX_SECS);
+        self.snooze_secs = self
+            .snooze_secs
+            .clamp(SETTINGS_SNOOZE_MIN_SECS, SETTINGS_SNOOZE_MAX_SECS);
     }
 
     pub fn load_from(path: &Path) -> Self {

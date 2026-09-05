@@ -1,5 +1,5 @@
 use std::fs;
-use unseat::{Settings, TimerShape};
+use unseat::{AlertSound, Settings, TimerShape};
 
 fn temp_settings_path() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("unseat-test-{}", std::process::id()));
@@ -23,6 +23,9 @@ fn defaults_match_spec() {
     assert_eq!(s.window_y, 40);
     assert_eq!(s.today_sitting_secs, 0);
     assert_eq!(s.step, 1);
+    assert_eq!(s.alert_sound, AlertSound::Chime);
+    assert_eq!(s.alert_duration_secs, 0);
+    assert_eq!(s.snooze_secs, 10 * 60);
 }
 
 #[test]
@@ -60,8 +63,12 @@ fn clamp_brings_values_into_range() {
     assert_eq!(s.repeat_every_secs, 2 * 60);
     assert_eq!(s.step, 1);
     s.step = 99;
+    s.alert_duration_secs = 99;
+    s.snooze_secs = 1;
     s.clamp();
     assert_eq!(s.step, 30);
+    assert_eq!(s.alert_duration_secs, 10);
+    assert_eq!(s.snooze_secs, 60);
 }
 
 #[test]
@@ -94,4 +101,41 @@ fn garbage_file_yields_defaults() {
     let path = temp_settings_path().with_file_name("garbage-settings.json");
     fs::write(&path, "not-json{{{").unwrap();
     assert_eq!(Settings::load_from(&path), Settings::default());
+}
+
+#[test]
+fn missing_alert_fields_keep_defaults() {
+    let s = Settings::from_json(br#"{"sitting_limit_secs":1800}"#);
+    assert_eq!(s.sitting_limit_secs, 1800);
+    assert_eq!(s.alert_sound, AlertSound::Chime);
+    assert_eq!(s.alert_duration_secs, 0);
+    assert_eq!(s.snooze_secs, 10 * 60);
+}
+
+#[test]
+fn unknown_alert_sound_falls_back_to_chime() {
+    let s = Settings::from_json(br#"{"alert_sound":"trombone","alert_duration_secs":4,"snooze_secs":900}"#);
+    assert_eq!(s.alert_sound, AlertSound::Chime);
+    assert_eq!(s.alert_duration_secs, 4);
+    assert_eq!(s.snooze_secs, 900);
+}
+
+#[test]
+fn round_trip_keeps_alert_and_snooze() {
+    let mut s = Settings::default();
+    s.alert_sound = AlertSound::Glass;
+    s.alert_duration_secs = 8;
+    s.snooze_secs = 15 * 60;
+    let parsed = Settings::from_json(&s.to_json());
+    assert_eq!(parsed.alert_sound, AlertSound::Glass);
+    assert_eq!(parsed.alert_duration_secs, 8);
+    assert_eq!(parsed.snooze_secs, 15 * 60);
+}
+
+#[test]
+fn snooze_presets_are_five_ten_fifteen_thirty() {
+    assert_eq!(
+        unseat::SNOOZE_PRESETS_SECS,
+        [5 * 60, 10 * 60, 15 * 60, 30 * 60]
+    );
 }

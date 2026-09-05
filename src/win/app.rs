@@ -1,11 +1,11 @@
-use crate::win::{autostart, flyout, idle, paint, session, settings_dlg, sound, theme, tray, widget};
+use crate::win::{autostart, flyout, idle, install, paint, session, settings_dlg, sound, theme, tray, widget};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use unseat::{
-    Beep, CivilDate, Command, EngineConfig, Input, Settings, SittingEngine, Snapshot, WidgetSize,
-    WIDGET_H, WIDGET_W,
+    clamp_clock, Beep, CivilDate, Command, EngineConfig, Input, Settings, SittingEngine, Snapshot,
+    WidgetSize, WIDGET_H, WIDGET_W,
 };
-use windows::Win32::Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM, ERROR_ALREADY_EXISTS};
+use windows::Win32::Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM, ERROR_ALREADY_EXISTS, CloseHandle};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::Threading::{CreateMutexW, ReleaseMutex};
@@ -13,13 +13,15 @@ use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CON
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowW, GetMessageW, GetWindowLongPtrW,
     PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
-    TranslateMessage, CREATESTRUCTW, GWLP_USERDATA, HWND_MESSAGE, MSG, WM_COMMAND, WM_CREATE,
-    WM_DESTROY, WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_OVERLAPPED, WM_WTSSESSION_CHANGE,
+    ShowWindow, TranslateMessage, CREATESTRUCTW, GWLP_USERDATA, HWND_MESSAGE, MSG, WM_COMMAND,
+    WM_CREATE, WM_DESTROY, WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_OVERLAPPED,
+    WM_WTSSESSION_CHANGE, KillTimer,
 };
 use windows::core::w;
 
 const HIDDEN_CLASS: windows::core::PCWSTR = w!("UnseatHidden");
 const TICK_ID: usize = 1;
+const SOUND_ID: usize = 2;
 const SINGLETON: windows::core::PCWSTR = w!("Local\\UnseatSingleton");
 
 pub struct App {
@@ -41,15 +43,24 @@ pub struct App {
     last_key: u64,
     ticks_since_save: u32,
     last_tray_select: Option<Instant>,
+    last_clock: Option<Duration>,
+    pub widget_visible: bool,
 }
 
 pub fn run() -> windows::core::Result<()> {
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        if install::prepare() {
+            return Ok(());
+        }
         let mutex = CreateMutexW(None, true, SINGLETON)?;
         if GetLastError() == ERROR_ALREADY_EXISTS {
             if let Ok(existing) = FindWindowW(widget::CLASS, None) {
+                let _ = ShowWindow(existing, windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE);
                 let _ = SetForegroundWindow(existing);
+            }
+            if let Ok(host) = FindWindowW(HIDDEN_CLASS, None) {
+                let _ = SetForegroundWindow(host);
             }
             let _ = ReleaseMutex(mutex);
             return Ok(());
@@ -95,6 +106,8 @@ pub fn run() -> windows::core::Result<()> {
             last_key: u64::MAX,
             ticks_since_save: 0,
             last_tray_select: None,
+            last_clock: None,
+            widget_visible: true,
         });
         let ptr = Box::into_raw(app);
 
@@ -132,13 +145,28 @@ pub fn run() -> windows::core::Result<()> {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        sound::stop();
+        session::unregister(hidden);
+        let _ = KillTimer(hidden, TICK_ID);
+        let _ = KillTimer(hidden, SOUND_ID);
+        flyout::shutdown();
+        settings_dlg::shutdown();
+        tray::remove(hidden);
+        let _ = Box::from_raw(ptr);
+        let _ = ReleaseMutex(mutex);
+        let _ = CloseHandle(mutex);
         Ok(())
     }
 }
 
 impl App {
     pub fn tick(&mut self) {
-        let now = self.origin.elapsed();
+        let now = {
+            let raw = self.origin.elapsed();
+            let now = clamp_clock(self.last_clock, raw);
+            self.last_clock = Some(now);
+            now
+        };
         let date = local_date();
         let input = Input {
             last_input_age: idle::last_input_age(),
@@ -147,7 +175,7 @@ impl App {
         let result = self.engine.tick(now, date, input);
         match result.beep {
             Beep::None => {}
-            Beep::LimitReached | Beep::Progressive => sound::play(),
+            Beep::LimitReached | Beep::Progressive => self.play_alert_sound(),
         }
         self.ticks_since_save += 1;
         if self.ticks_since_save >= 60 {
@@ -175,6 +203,40 @@ impl App {
 
     pub fn save_settings(&self) {
         let _ = self.settings.save_to(&self.settings_path);
+    }
+
+    pub fn hide_widget(&mut self) {
+        self.widget_visible = false;
+        self.hover = false;
+        self.persist_today();
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
+                self.widget,
+                windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE,
+            );
+        }
+    }
+
+    pub fn show_widget(&mut self) {
+        self.widget_visible = true;
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
+                self.widget,
+                windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
+            );
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowPos(
+                self.widget,
+                windows::Win32::UI::WindowsAndMessaging::HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                    | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
+                    | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+            );
+        }
+        self.force_repaint();
     }
 
     pub fn force_repaint(&mut self) {
@@ -211,11 +273,54 @@ impl App {
             Duration::from_secs(self.settings.break_duration_secs),
             widget::paint_scale(self.widget, self.settings.widget_size),
         );
+        if self.widget_visible {
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
+                    self.widget,
+                    windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
+                );
+            }
+        }
+    }
+
+    pub fn snooze_default(&mut self) {
+        self.snooze(self.settings.snooze_secs);
+    }
+
+    pub fn snooze(&mut self, secs: u64) {
+        self.settings.snooze_secs = secs;
+        self.settings.clamp();
+        self.stop_alert_sound();
+        self.engine
+            .apply(Command::Snooze(Duration::from_secs(self.settings.snooze_secs)));
+        self.save_settings();
+        self.force_repaint();
+    }
+
+    pub fn preview_sound(&mut self, kind: unseat::AlertSound, duration_secs: u64) {
+        let duration_secs = duration_secs.min(10);
+        sound::play_alert(kind, duration_secs);
         unsafe {
-            let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
-                self.widget,
-                windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
-            );
+            let _ = KillTimer(self.hidden, SOUND_ID);
+            if duration_secs > 0 {
+                let _ = SetTimer(
+                    self.hidden,
+                    SOUND_ID,
+                    duration_secs.saturating_mul(1000) as u32,
+                    None,
+                );
+            }
+        }
+    }
+
+    fn play_alert_sound(&mut self) {
+        self.preview_sound(self.settings.alert_sound, self.settings.alert_duration_secs);
+    }
+
+    fn stop_alert_sound(&mut self) {
+        sound::stop();
+        unsafe {
+            let _ = KillTimer(self.hidden, SOUND_ID);
         }
     }
 
@@ -223,7 +328,19 @@ impl App {
         match id {
             tray::ID_PAUSE => self.engine.apply(Command::TogglePause),
             tray::ID_RESET => self.engine.apply(Command::Reset),
+            tray::ID_SNOOZE_5 => self.snooze(5 * 60),
+            tray::ID_SNOOZE_10 => self.snooze(10 * 60),
+            tray::ID_SNOOZE_15 => self.snooze(15 * 60),
+            tray::ID_SNOOZE_30 => self.snooze(30 * 60),
+            tray::ID_SNOOZE_CUSTOM => self.snooze_default(),
             tray::ID_SETTINGS => settings_dlg::open(self as *mut App),
+            tray::ID_HIDE => {
+                if self.widget_visible {
+                    self.hide_widget();
+                } else {
+                    self.show_widget();
+                }
+            }
             tray::ID_QUIT => unsafe {
                 PostQuitMessage(0);
             },
@@ -274,6 +391,7 @@ fn register_hidden() -> windows::core::Result<()> {
             lpfnWndProc: Some(hidden_proc),
             lpszClassName: HIDDEN_CLASS,
             hInstance: GetModuleHandleW(None)?.into(),
+            hIcon: crate::win::icon::big(),
             ..Default::default()
         };
         RegisterClassW(&wc);
@@ -295,7 +413,12 @@ unsafe extern "system" fn hidden_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
     }
     match msg {
         WM_TIMER => {
-            (*app).tick();
+            if wp.0 == SOUND_ID {
+                sound::stop();
+                let _ = KillTimer(hwnd, SOUND_ID);
+            } else {
+                (*app).tick();
+            }
             LRESULT(0)
         }
         WM_COMMAND => {
@@ -318,6 +441,7 @@ unsafe extern "system" fn hidden_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                     settings_dlg::open(app);
                     (*app).last_tray_select = None;
                 } else {
+                    (*app).show_widget();
                     (*app).last_tray_select = Some(now);
                 }
             }
@@ -340,7 +464,9 @@ unsafe extern "system" fn hidden_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         }
         WM_DESTROY => {
             (*app).persist_today();
+            (*app).stop_alert_sound();
             tray::remove(hwnd);
+            session::unregister(hwnd);
             PostQuitMessage(0);
             LRESULT(0)
         }

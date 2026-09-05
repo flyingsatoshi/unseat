@@ -3,6 +3,7 @@ mod autostart;
 mod flyout;
 mod icon;
 mod idle;
+mod install;
 mod paint;
 mod session;
 mod settings_dlg;

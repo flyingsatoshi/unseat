@@ -11,4 +11,6 @@ Include:
 - Steps to reproduce
 - Impact (for example: unexpected autostart, settings overwrite, local file write)
 
+Do not send settings.json if it is not needed; it only lives on the reporter's PC.
+
 We aim to respond within a week.

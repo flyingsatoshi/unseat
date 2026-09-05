@@ -3,6 +3,13 @@
 .superpowers/
 .idea/
 .vscode/
+.cursor/
 *.pdb
 Thumbs.db
 .DS_Store
+.env
+.env.*
+*.log
+*.dmp
+*.tmp
+Cargo.lock.bak

@@ -6,10 +6,12 @@ use std::time::Duration;
 pub enum Hit {
     Pause,
     Reset,
+    Close,
+    Snooze,
 }
 
-pub const WIDGET_W: f32 = 220.0;
-pub const WIDGET_H: f32 = 88.0;
+pub const WIDGET_W: f32 = 144.0;
+pub const WIDGET_H: f32 = 56.0;
 
 /// Logical layout at 96 DPI for Small. Other sizes multiply `scale`.
 pub fn widget_pixel_size(_shape: TimerShape, scale: f32) -> (i32, i32) {
@@ -23,44 +25,142 @@ pub fn layout_scale(dpi_scale: f32, size: WidgetSize) -> f32 {
     dpi_scale * size.factor()
 }
 
-pub fn play_center(scale: f32) -> (f32, f32, f32) {
+#[derive(Clone, Copy, Debug)]
+pub struct WidgetLayout {
+    pub pill_x: f32,
+    pub pill_y: f32,
+    pub pill_w: f32,
+    pub pill_h: f32,
+    pub tag_x: f32,
+    pub tag_y: f32,
+    pub tag_w: f32,
+    pub tag_h: f32,
+    pub pause: (f32, f32),
+    pub reset: (f32, f32),
+    pub control_r: f32,
+    pub digits_l: f32,
+    pub digits_t: f32,
+    pub digits_r: f32,
+    pub digits_b: f32,
+    pub bar_x: f32,
+    pub bar_y: f32,
+    pub bar_w: f32,
+    pub bar_h: f32,
+    pub digit_px: f32,
+    pub play: (f32, f32, f32),
+    pub close: (f32, f32),
+    pub close_r: f32,
+}
+
+pub fn widget_layout(scale: f32) -> WidgetLayout {
     let s = scale;
-    (82.0 * s, 44.0 * s, 28.0 * s)
+    let pill_x = 6.0 * s;
+    let pill_y = 6.0 * s;
+    let pill_w = WIDGET_W * s - pill_x * 2.0;
+    let pill_h = WIDGET_H * s - pill_y * 2.0;
+    let pad = 8.0 * s;
+    let control_r = 9.0 * s;
+    let inner_pad = 2.0 * s;
+    let col_gap = 6.0 * s;
+    let tag_w = inner_pad * 2.0 + control_r * 2.0;
+    let chip_inset = 2.0 * s;
+    let tag_h = pill_h - chip_inset * 2.0;
+    let tag_x = pill_x + pill_w - pad - tag_w;
+    let tag_y = pill_y + chip_inset;
+    let pause_x = tag_x + inner_pad + control_r;
+    let gap = (tag_h - inner_pad * 2.0 - control_r * 4.0).max(0.0);
+    let pause = (pause_x, tag_y + inner_pad + control_r);
+    let reset = (pause_x, pause.1 + control_r + gap + control_r);
+    let digits_l = pill_x + pad;
+    let digits_r = tag_x - col_gap;
+    let bar_h = 3.0 * s;
+    let bar_y = pill_y + pill_h - 5.0 * s - bar_h;
+    let play_x = (digits_l + digits_r) * 0.5;
+    let play_y = pill_y + pill_h * 0.5;
+    let close_r = 6.0 * s;
+    let close_inset = 1.0 * s;
+    WidgetLayout {
+        pill_x,
+        pill_y,
+        pill_w,
+        pill_h,
+        tag_x,
+        tag_y,
+        tag_w,
+        tag_h,
+        pause,
+        reset,
+        control_r,
+        digits_l,
+        digits_t: pill_y + 3.0 * s,
+        digits_r,
+        digits_b: bar_y - 2.0 * s,
+        bar_x: digits_l,
+        bar_y,
+        bar_w: (digits_r - digits_l).max(8.0 * s),
+        bar_h,
+        digit_px: 26.0 * s,
+        play: (play_x, play_y, 18.0 * s),
+        close: (
+            WIDGET_W * s - close_inset - close_r,
+            close_inset + close_r,
+        ),
+        close_r,
+    }
+}
+
+pub fn play_center(scale: f32) -> (f32, f32, f32) {
+    widget_layout(scale).play
 }
 
 /// Hover chips stacked in a right-edge tag: pause on top, reset below.
 pub fn control_centers(_shape: TimerShape, scale: f32) -> ((f32, f32), (f32, f32), f32) {
-    let s = scale;
-    ((194.0 * s, 30.0 * s), (194.0 * s, 58.0 * s), 11.0 * s)
+    let l = widget_layout(scale);
+    (l.pause, l.reset, l.control_r)
 }
 
 pub fn hit_control(
-    shape: TimerShape,
+    _shape: TimerShape,
     hover: bool,
-    paused: bool,
+    state: VisibleState,
     scale: f32,
     x: i32,
     y: i32,
 ) -> Option<Hit> {
     let xf = x as f32;
     let yf = y as f32;
+    let layout = widget_layout(scale);
+    let paused = state == VisibleState::Paused;
     if paused {
-        let (cx, cy, r) = play_center(scale);
+        let (cx, cy, r) = layout.play;
         if (xf - cx).hypot(yf - cy) <= r {
             return Some(Hit::Pause);
         }
     }
-    if !hover {
-        return None;
+    if hover {
+        let (cx, cy) = layout.close;
+        if (xf - cx).hypot(yf - cy) <= layout.close_r {
+            return Some(Hit::Close);
+        }
+        let (px, py) = layout.pause;
+        let (rx, ry) = layout.reset;
+        let r = layout.control_r;
+        if !paused && (xf - px).hypot(yf - py) <= r {
+            return Some(Hit::Pause);
+        }
+        if (xf - rx).hypot(yf - ry) <= r {
+            return Some(Hit::Reset);
+        }
     }
-    let ((px, py), (rx, ry), r) = control_centers(shape, scale);
-    if !paused && (xf - px).hypot(yf - py) <= r {
-        Some(Hit::Pause)
-    } else if (xf - rx).hypot(yf - ry) <= r {
-        Some(Hit::Reset)
-    } else {
-        None
+    if state == VisibleState::Overdue
+        && xf >= layout.digits_l
+        && xf <= layout.digits_r
+        && yf >= layout.digits_t
+        && yf <= layout.digits_b
+    {
+        return Some(Hit::Snooze);
     }
+    None
 }
 
 pub fn format_elapsed(d: Duration) -> String {
@@ -73,6 +173,11 @@ pub fn format_elapsed(d: Duration) -> String {
     } else {
         format!("{minutes:02}:{seconds:02}")
     }
+}
+
+pub fn face_digits(state: VisibleState, sitting: Duration, break_remaining: Duration) -> String {
+    let _ = (state, break_remaining);
+    format_elapsed(sitting)
 }
 
 pub fn format_break_remaining(d: Duration) -> String {
@@ -89,6 +194,14 @@ pub fn format_goal_parts(d: Duration) -> (String, &'static str) {
     } else {
         (mins.to_string(), "min")
     }
+}
+
+pub fn tag_goal(
+    _state: VisibleState,
+    limit: Duration,
+    _break_dur: Duration,
+) -> Duration {
+    limit
 }
 
 pub fn format_limit(d: Duration) -> String {

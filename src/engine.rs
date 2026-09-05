@@ -35,6 +35,7 @@ pub struct Input {
 pub enum Command {
     TogglePause,
     Reset,
+    Snooze(Duration),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +80,7 @@ pub struct SittingEngine {
     last_now: Option<Duration>,
     limit_beeped: bool,
     progressive_beeps_fired: u32,
+    snooze_until: Duration,
 }
 
 impl SittingEngine {
@@ -94,6 +96,7 @@ impl SittingEngine {
             last_now: None,
             limit_beeped: false,
             progressive_beeps_fired: 0,
+            snooze_until: Duration::ZERO,
         }
     }
 
@@ -111,8 +114,24 @@ impl SittingEngine {
                 self.running = true;
                 self.limit_beeped = false;
                 self.progressive_beeps_fired = 0;
+                self.snooze_until = Duration::ZERO;
+            }
+            Command::Snooze(extra) => {
+                if self.can_snooze() {
+                    self.snooze_until = self.sitting_elapsed.saturating_add(extra);
+                    self.limit_beeped = false;
+                    self.progressive_beeps_fired = 0;
+                }
             }
         }
+    }
+
+    pub fn can_snooze(&self) -> bool {
+        self.sitting_elapsed >= self.config.sitting_limit
+    }
+
+    fn effective_limit(&self) -> Duration {
+        self.config.sitting_limit.max(self.snooze_until)
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -161,6 +180,7 @@ impl SittingEngine {
                 self.sitting_elapsed = Duration::ZERO;
                 self.limit_beeped = false;
                 self.progressive_beeps_fired = 0;
+                self.snooze_until = Duration::ZERO;
             }
         } else {
             if self.in_break {
@@ -184,7 +204,7 @@ impl SittingEngine {
             VisibleState::Paused
         } else if self.in_break {
             VisibleState::Break
-        } else if self.sitting_elapsed >= self.config.sitting_limit {
+        } else if self.sitting_elapsed >= self.effective_limit() {
             VisibleState::Overdue
         } else {
             VisibleState::Sitting
@@ -195,7 +215,7 @@ impl SittingEngine {
         if !self.config.sound_enabled {
             return Beep::None;
         }
-        let limit = self.config.sitting_limit;
+        let limit = self.effective_limit();
         if previous < limit && sitting >= limit && !self.limit_beeped {
             self.limit_beeped = true;
             return Beep::LimitReached;
@@ -212,5 +232,15 @@ impl SittingEngine {
         } else {
             Beep::None
         }
+    }
+}
+
+/// Keep at most 2s of wall time per tick so sleep/resume cannot jump or zero the session.
+pub fn clamp_clock(last: Option<Duration>, now: Duration) -> Duration {
+    const MAX_DT: Duration = Duration::from_secs(2);
+    match last {
+        Some(prev) if now > prev => prev + (now - prev).min(MAX_DT),
+        Some(prev) => prev,
+        None => now,
     }
 }

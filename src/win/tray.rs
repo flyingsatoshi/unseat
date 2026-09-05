@@ -9,7 +9,8 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, SetForegroundWindow, TrackPopupMenu,
-    MF_GRAYED, MF_SEPARATOR, MF_STRING, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_CONTEXTMENU,
+    MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP,
+    WM_CONTEXTMENU,
 };
 use windows::core::w;
 
@@ -17,7 +18,13 @@ pub const CALLBACK: u32 = WM_APP + 1;
 pub const ID_PAUSE: u32 = 10;
 pub const ID_RESET: u32 = 11;
 pub const ID_SETTINGS: u32 = 12;
+pub const ID_HIDE: u32 = 14;
 pub const ID_QUIT: u32 = 13;
+pub const ID_SNOOZE_5: u32 = 20;
+pub const ID_SNOOZE_10: u32 = 21;
+pub const ID_SNOOZE_15: u32 = 22;
+pub const ID_SNOOZE_30: u32 = 23;
+pub const ID_SNOOZE_CUSTOM: u32 = 24;
 
 pub fn add(hwnd: HWND) -> bool {
     if !nid(hwnd, true) {
@@ -66,8 +73,39 @@ pub fn show_menu(app: &App, hwnd: HWND) {
         };
         let _ = AppendMenuW(menu, MF_STRING, ID_PAUSE as usize, pause);
         let _ = AppendMenuW(menu, MF_STRING, ID_RESET as usize, w!("Reset"));
+        if let Ok(snooze) = CreatePopupMenu() {
+            let enable = if app.engine.can_snooze() {
+                MF_STRING
+            } else {
+                MF_STRING | MF_GRAYED
+            };
+            let _ = AppendMenuW(snooze, enable, ID_SNOOZE_5 as usize, w!("5 minutes"));
+            let _ = AppendMenuW(snooze, enable, ID_SNOOZE_10 as usize, w!("10 minutes"));
+            let _ = AppendMenuW(snooze, enable, ID_SNOOZE_15 as usize, w!("15 minutes"));
+            let _ = AppendMenuW(snooze, enable, ID_SNOOZE_30 as usize, w!("30 minutes"));
+            let custom = format!("Custom ({} min)", app.settings.snooze_secs / 60);
+            let custom_w: Vec<u16> = custom.encode_utf16().chain(std::iter::once(0)).collect();
+            let _ = AppendMenuW(
+                snooze,
+                enable,
+                ID_SNOOZE_CUSTOM as usize,
+                windows::core::PCWSTR(custom_w.as_ptr()),
+            );
+            let popup = if app.engine.can_snooze() {
+                MF_POPUP
+            } else {
+                MF_POPUP | MF_GRAYED
+            };
+            let _ = AppendMenuW(menu, popup, snooze.0 as usize, w!("Snooze"));
+        }
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(menu, MF_STRING, ID_SETTINGS as usize, w!("Settings…"));
+        let hide = if app.widget_visible {
+            w!("Hide overlay")
+        } else {
+            w!("Show overlay")
+        };
+        let _ = AppendMenuW(menu, MF_STRING, ID_HIDE as usize, hide);
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(menu, MF_STRING, ID_QUIT as usize, w!("Quit"));
         let mut pt = windows::Win32::Foundation::POINT::default();

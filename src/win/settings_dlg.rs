@@ -1,5 +1,7 @@
 ﻿use crate::win::app::App;
-use unseat::{format_today, WidgetSize};
+use unseat::{
+    format_today, AlertSound, WidgetSize, ALERT_DURATION_PRESETS_SECS, SNOOZE_PRESETS_SECS,
+};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
@@ -24,19 +26,20 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, ScreenToClient, PAINTSTRUCT};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW, GetClientRect, GetWindowLongPtrW,
     RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA,
     HTCAPTION, HTCLIENT, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SW_SHOW, WM_CLOSE,
-    WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT,
-    WNDCLASSW, WS_POPUP, WS_VISIBLE, WS_EX_TOPMOST,
+    WM_CREATE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST,
+    WM_PAINT, WNDCLASSW, WS_POPUP, WS_VISIBLE, WS_EX_TOPMOST,
 };
 use windows::core::{w, Interface};
 
 pub const CLASS: windows::core::PCWSTR = w!("UnseatSettings");
 
 const WIN_W: i32 = 300;
-const WIN_H: i32 = 588;
+const WIN_H: i32 = 800;
 const BTN_RADIUS: f32 = 4.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -46,6 +49,7 @@ enum Field {
     Break,
     Idle,
     Every,
+    Snooze,
 }
 
 impl Field {
@@ -64,6 +68,7 @@ impl Field {
             Self::Break => 1,
             Self::Idle => 15,
             Self::Every => 2,
+            Self::Snooze => 1,
         }
     }
 
@@ -74,6 +79,7 @@ impl Field {
             Self::Break => 30,
             Self::Idle => 600,
             Self::Every => 60,
+            Self::Snooze => 60,
         }
     }
 }
@@ -84,6 +90,10 @@ enum Hit {
     Close,
     Size(usize),
     Sound,
+    Preview,
+    SoundKind(usize),
+    Duration(usize),
+    SnoozePreset(usize),
     Repeat,
     Auto,
     Cancel,
@@ -104,6 +114,9 @@ struct Dialog {
     idle_sec: u64,
     every_min: u64,
     step: u64,
+    sound_kind: AlertSound,
+    alert_duration: u64,
+    snooze_min: u64,
     saved: bool,
     hover: Hit,
     scale: f32,
@@ -229,8 +242,16 @@ struct Lay {
     alerts_head: D2D_RECT_F,
     alerts_card: D2D_RECT_F,
     sound: D2D_RECT_F,
+    preview: D2D_RECT_F,
+    sounds: [D2D_RECT_F; 5],
+    duration_label: D2D_RECT_F,
+    durations: [D2D_RECT_F; 4],
     repeat: D2D_RECT_F,
     every_row: D2D_RECT_F,
+    snooze_head: D2D_RECT_F,
+    snooze_card: D2D_RECT_F,
+    snoozes: [D2D_RECT_F; 4],
+    snooze_row: D2D_RECT_F,
     system_head: D2D_RECT_F,
     auto: D2D_RECT_F,
     today: D2D_RECT_F,
@@ -241,6 +262,7 @@ struct Lay {
     step_break: Step,
     step_idle: Step,
     step_every: Step,
+    step_snooze: Step,
 }
 
 impl Lay {
@@ -251,6 +273,7 @@ impl Lay {
             Field::Break => &self.step_break,
             Field::Idle => &self.step_idle,
             Field::Every => &self.step_every,
+            Field::Snooze => &self.step_snooze,
         }
     }
 
@@ -324,13 +347,53 @@ fn layout(scale: f32) -> Lay {
 
     let alerts_head_top = breaks_bot + gap;
     let a0 = alerts_head_top + head_h;
-    let repeat_top = a0 + row_h;
+    let sound = rct(x, a0, card_r, a0 + row_h);
+    let sounds_y = a0 + row_h + px(4.0, scale);
+    let mut sounds = [rct(0.0, 0.0, 0.0, 0.0); 5];
+    for i in 0..5 {
+        let left = x + px(8.0, scale) + i as f32 * (cw + chip_gap);
+        sounds[i] = rct(left, sounds_y, left + cw, sounds_y + chip_h);
+    }
+    let duration_label_top = sounds_y + chip_h + px(8.0, scale);
+    let duration_label_bot = duration_label_top + px(16.0, scale);
+    let duration_y = duration_label_bot + px(4.0, scale);
+    let d_inner = inner;
+    let d_gap = px(4.0, scale);
+    let dw = (d_inner - d_gap * 3.0) / 4.0;
+    let mut durations = [rct(0.0, 0.0, 0.0, 0.0); 4];
+    for i in 0..4 {
+        let left = x + px(8.0, scale) + i as f32 * (dw + d_gap);
+        durations[i] = rct(left, duration_y, left + dw, duration_y + chip_h);
+    }
+    let repeat_top = duration_y + chip_h + px(8.0, scale);
     let every_top = repeat_top + row_h;
     let alerts_bot = every_top + row_h;
     let alerts_card = rct(x, a0, card_r, alerts_bot);
     let every_row = rct(x, every_top, card_r, alerts_bot);
 
-    let system_head_top = alerts_bot + gap;
+    let tog_w = px(38.0, scale);
+    let preview = rct(
+        card_r - px(12.0, scale) - tog_w - px(8.0, scale) - px(58.0, scale),
+        a0 + px(8.0, scale),
+        card_r - px(12.0, scale) - tog_w - px(8.0, scale),
+        a0 + row_h - px(8.0, scale),
+    );
+
+    let snooze_head_top = alerts_bot + gap;
+    let z0 = snooze_head_top + head_h;
+    let snooze_chip_y = z0 + px(8.0, scale);
+    let mut snoozes = [rct(0.0, 0.0, 0.0, 0.0); 4];
+    let sw = (inner - d_gap * 3.0) / 4.0;
+    for i in 0..4 {
+        let left = x + px(8.0, scale) + i as f32 * (sw + d_gap);
+        snoozes[i] = rct(left, snooze_chip_y, left + sw, snooze_chip_y + chip_h);
+    }
+    let snooze_row_top = snooze_chip_y + chip_h + px(8.0, scale);
+    let snooze_bot = snooze_row_top + row_h;
+    let snooze_card = rct(x, z0, card_r, snooze_bot);
+    let snooze_row = rct(x, snooze_row_top, card_r, snooze_bot);
+
+    let system_head_top = snooze_bot + gap;
     let s0 = system_head_top + head_h;
     let auto = rct(x, s0, card_r, s0 + row_h);
 
@@ -363,9 +426,17 @@ fn layout(scale: f32) -> Lay {
         idle_row,
         alerts_head: rct(x + px(4.0, scale), alerts_head_top, px(160.0, scale), a0),
         alerts_card,
-        sound: rct(x, a0, card_r, repeat_top),
+        sound,
+        preview,
+        sounds,
+        duration_label: rct(x + px(12.0, scale), duration_label_top, px(200.0, scale), duration_label_bot),
+        durations,
         repeat: rct(x, repeat_top, card_r, every_top),
         every_row,
+        snooze_head: rct(x + px(4.0, scale), snooze_head_top, px(160.0, scale), z0),
+        snooze_card,
+        snoozes,
+        snooze_row,
         system_head: rct(x + px(4.0, scale), system_head_top, px(160.0, scale), s0),
         auto,
         today: rct(x, btn_y, cancel.left - px(8.0, scale), btn_y + btn_h),
@@ -376,6 +447,7 @@ fn layout(scale: f32) -> Lay {
         step_break: stepper(break_row, scale),
         step_idle: stepper(idle_row, scale),
         step_every: stepper(every_row, scale),
+        step_snooze: stepper(snooze_row, scale),
     }
 }
 
@@ -401,7 +473,14 @@ fn hit_at(x: f32, y: f32, scale: f32) -> Hit {
     if contains(l.cancel, x, y) {
         return Hit::Cancel;
     }
-    for field in [Field::Limit, Field::Step, Field::Break, Field::Idle, Field::Every] {
+    for field in [
+        Field::Limit,
+        Field::Step,
+        Field::Break,
+        Field::Idle,
+        Field::Every,
+        Field::Snooze,
+    ] {
         if let Some(hit) = hit_step(&l, field, x, y) {
             return hit;
         }
@@ -409,6 +488,24 @@ fn hit_at(x: f32, y: f32, scale: f32) -> Hit {
     for (i, rc) in l.sizes.iter().enumerate() {
         if contains(*rc, x, y) {
             return Hit::Size(i);
+        }
+    }
+    if contains(l.preview, x, y) {
+        return Hit::Preview;
+    }
+    for (i, rc) in l.sounds.iter().enumerate() {
+        if contains(*rc, x, y) {
+            return Hit::SoundKind(i);
+        }
+    }
+    for (i, rc) in l.durations.iter().enumerate() {
+        if contains(*rc, x, y) {
+            return Hit::Duration(i);
+        }
+    }
+    for (i, rc) in l.snoozes.iter().enumerate() {
+        if contains(*rc, x, y) {
+            return Hit::SnoozePreset(i);
         }
     }
     if contains(l.sound, x, y) {
@@ -489,6 +586,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             close(hwnd);
             LRESULT(0)
         }
+        WM_KEYDOWN => {
+            let vk = wp.0 as u16;
+            if vk == VK_ESCAPE.0 {
+                close(hwnd);
+            } else if vk == VK_RETURN.0 {
+                save(hwnd);
+            }
+            LRESULT(0)
+        }
         WM_DESTROY => {
             if !dlg.is_null() {
                 let _ = Box::from_raw(dlg);
@@ -500,8 +606,34 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 }
 
 unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
-    let (size, sound, repeat, auto, sitting_min, break_min, idle_sec, every_min, step) = if app.is_null() {
-        (WidgetSize::Small, true, true, true, 60, 3, 60, 10, 1)
+    let (
+        size,
+        sound,
+        repeat,
+        auto,
+        sitting_min,
+        break_min,
+        idle_sec,
+        every_min,
+        step,
+        sound_kind,
+        alert_duration,
+        snooze_min,
+    ) = if app.is_null() {
+        (
+            WidgetSize::Small,
+            true,
+            true,
+            true,
+            60,
+            3,
+            60,
+            10,
+            1,
+            AlertSound::Chime,
+            0,
+            10,
+        )
     } else {
         let s = &(*app).settings;
         (
@@ -514,6 +646,9 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
             s.idle_after_secs.clamp(Field::Idle.min(), Field::Idle.max()),
             (s.repeat_every_secs / 60).clamp(Field::Every.min(), Field::Every.max()),
             s.step.clamp(Field::Step.min(), Field::Step.max()),
+            s.alert_sound,
+            s.alert_duration_secs.min(10),
+            (s.snooze_secs / 60).clamp(Field::Snooze.min(), Field::Snooze.max()),
         )
     };
     let scale = dpi_scale(hwnd);
@@ -538,6 +673,9 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
         idle_sec,
         every_min,
         step,
+        sound_kind,
+        alert_duration,
+        snooze_min,
         saved: false,
         hover: Hit::None,
         scale,
@@ -707,6 +845,7 @@ fn field_value(dlg: &Dialog, field: Field) -> u64 {
         Field::Break => dlg.break_min,
         Field::Idle => dlg.idle_sec,
         Field::Every => dlg.every_min,
+        Field::Snooze => dlg.snooze_min,
     }
 }
 
@@ -934,14 +1073,103 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     text(
         &rt,
         dwrite,
-        "Play a sound at the limit",
-        l.row_label(l.sound, l.sound.right - px(50.0, s)),
+        "Sound",
+        l.row_label(l.sound, l.preview.left - px(8.0, s)),
         label_sz,
         DWRITE_FONT_WEIGHT_MEDIUM,
         DWRITE_TEXT_ALIGNMENT_LEADING,
         label,
     );
+    fill_round(
+        &rt,
+        l.preview,
+        px(8.0, s),
+        if hover == Hit::Preview {
+            rgb(0x48, 0x48, 0x4A, 1.0)
+        } else {
+            rgb(0x3A, 0x3A, 0x3C, 1.0)
+        },
+    );
+    text(
+        &rt,
+        dwrite,
+        "Preview",
+        l.preview,
+        px(10.0, s),
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_TEXT_ALIGNMENT_CENTER,
+        rgb(0xEB, 0xEB, 0xF5, 0.95),
+    );
     toggle(&rt, l.sound, (*dlg).sound, s);
+    for (i, kind) in AlertSound::ALL.iter().enumerate() {
+        let on = *kind == (*dlg).sound_kind;
+        fill_round(
+            &rt,
+            l.sounds[i],
+            px(8.0, s),
+            if on {
+                rgb(0x0A, 0x84, 0xFF, 1.0)
+            } else {
+                rgb(0x3A, 0x3A, 0x3C, 1.0)
+            },
+        );
+        text(
+            &rt,
+            dwrite,
+            kind.chip_label(),
+            l.sounds[i],
+            px(10.0, s),
+            DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_TEXT_ALIGNMENT_CENTER,
+            if on {
+                rgb(255, 255, 255, 1.0)
+            } else {
+                rgb(0xEB, 0xEB, 0xF5, 0.92)
+            },
+        );
+    }
+    text(
+        &rt,
+        dwrite,
+        "Alert length",
+        l.duration_label,
+        label_sz,
+        DWRITE_FONT_WEIGHT_MEDIUM,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        label,
+    );
+    for (i, secs) in ALERT_DURATION_PRESETS_SECS.iter().enumerate() {
+        let on = (*dlg).alert_duration == *secs;
+        let caption = if *secs == 0 {
+            "Once".to_string()
+        } else {
+            format!("{secs}s")
+        };
+        fill_round(
+            &rt,
+            l.durations[i],
+            px(8.0, s),
+            if on {
+                rgb(0x0A, 0x84, 0xFF, 1.0)
+            } else {
+                rgb(0x3A, 0x3A, 0x3C, 1.0)
+            },
+        );
+        text(
+            &rt,
+            dwrite,
+            &caption,
+            l.durations[i],
+            chip_sz,
+            DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_TEXT_ALIGNMENT_CENTER,
+            if on {
+                rgb(255, 255, 255, 1.0)
+            } else {
+                rgb(0xEB, 0xEB, 0xF5, 0.92)
+            },
+        );
+    }
     fill_round(
         &rt,
         rct(l.alerts_card.left + px(12.0, s), l.repeat.top, l.alerts_card.right - px(12.0, s), l.repeat.top + px(1.0, s)),
@@ -976,6 +1204,53 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
         label,
     );
     paint_step(&rt, dwrite, &*dlg, &l, Field::Every, hover);
+
+    text(&rt, dwrite, "Snooze", l.snooze_head, head_sz, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, head);
+    fill_round(&rt, l.snooze_card, card_r, card);
+    for (i, mins) in SNOOZE_PRESETS_SECS.iter().map(|secs| secs / 60).enumerate() {
+        let on = (*dlg).snooze_min == mins;
+        fill_round(
+            &rt,
+            l.snoozes[i],
+            px(8.0, s),
+            if on {
+                rgb(0x0A, 0x84, 0xFF, 1.0)
+            } else {
+                rgb(0x3A, 0x3A, 0x3C, 1.0)
+            },
+        );
+        text(
+            &rt,
+            dwrite,
+            &format!("{mins}m"),
+            l.snoozes[i],
+            chip_sz,
+            DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_TEXT_ALIGNMENT_CENTER,
+            if on {
+                rgb(255, 255, 255, 1.0)
+            } else {
+                rgb(0xEB, 0xEB, 0xF5, 0.92)
+            },
+        );
+    }
+    fill_round(
+        &rt,
+        rct(l.snooze_card.left + px(12.0, s), l.snooze_row.top, l.snooze_card.right - px(12.0, s), l.snooze_row.top + px(1.0, s)),
+        0.5,
+        sep,
+    );
+    text(
+        &rt,
+        dwrite,
+        "Custom",
+        l.row_label(l.snooze_row, l.step_snooze.minus.left - px(8.0, s)),
+        label_sz,
+        DWRITE_FONT_WEIGHT_MEDIUM,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        label,
+    );
+    paint_step(&rt, dwrite, &*dlg, &l, Field::Snooze, hover);
 
     text(&rt, dwrite, "System", l.system_head, head_sz, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, head);
     fill_round(&rt, l.auto, card_r, card);
@@ -1061,12 +1336,13 @@ unsafe fn set_field(dlg: *mut Dialog, field: Field, value: u64) {
         Field::Break => (*dlg).break_min = value,
         Field::Idle => (*dlg).idle_sec = value,
         Field::Every => (*dlg).every_min = value,
+        Field::Snooze => (*dlg).snooze_min = value,
     }
 }
 
 unsafe fn step_field(dlg: *mut Dialog, field: Field, dir: i32) {
     let current = field_value(&*dlg, field);
-    let delta = if field == Field::Step {
+    let delta = if field == Field::Step || field == Field::Snooze {
         1
     } else {
         (*dlg).step.max(1)
@@ -1091,6 +1367,27 @@ unsafe fn on_click(hwnd: HWND, dlg: *mut Dialog, hit: Hit) {
         Hit::Sound => {
             (*dlg).sound = !(*dlg).sound;
             let _ = InvalidateRect(hwnd, None, false);
+        }
+        Hit::Preview => {
+            if !(*dlg).app.is_null() {
+                (*(*dlg).app).preview_sound((*dlg).sound_kind, (*dlg).alert_duration);
+            }
+        }
+        Hit::SoundKind(i) => {
+            (*dlg).sound_kind = AlertSound::from_index(i);
+            let _ = InvalidateRect(hwnd, None, false);
+        }
+        Hit::Duration(i) => {
+            if let Some(secs) = ALERT_DURATION_PRESETS_SECS.get(i).copied() {
+                (*dlg).alert_duration = secs;
+                let _ = InvalidateRect(hwnd, None, false);
+            }
+        }
+        Hit::SnoozePreset(i) => {
+            if let Some(secs) = SNOOZE_PRESETS_SECS.get(i).copied() {
+                (*dlg).snooze_min = secs / 60;
+                let _ = InvalidateRect(hwnd, None, false);
+            }
         }
         Hit::Repeat => {
             (*dlg).repeat = !(*dlg).repeat;
@@ -1125,6 +1422,9 @@ unsafe fn save(hwnd: HWND) {
     (*app).settings.step = (*dlg).step;
     (*app).settings.sound_enabled = (*dlg).sound;
     (*app).settings.repeat_reminders = (*dlg).repeat;
+    (*app).settings.alert_sound = (*dlg).sound_kind;
+    (*app).settings.alert_duration_secs = (*dlg).alert_duration;
+    (*app).settings.snooze_secs = (*dlg).snooze_min.saturating_mul(60);
     (*app).settings.launch_with_windows = (*dlg).auto;
     (*app).settings.widget_size = (*dlg).size;
     (*app).settings.clamp();
@@ -1145,4 +1445,12 @@ unsafe fn close(hwnd: HWND) {
         (*(*dlg).app).force_repaint();
     }
     let _ = DestroyWindow(hwnd);
+}
+
+pub fn shutdown() {
+    unsafe {
+        if let Ok(hwnd) = FindWindowW(CLASS, None) {
+            let _ = DestroyWindow(hwnd);
+        }
+    }
 }

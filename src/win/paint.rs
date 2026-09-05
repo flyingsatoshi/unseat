@@ -1,6 +1,6 @@
 ﻿use unseat::{
-    control_centers, format_break_remaining, format_elapsed, format_goal_parts, play_center,
-    progress, widget_pixel_size, Snapshot, TimerShape, VisibleState,
+    face_digits, format_goal_parts, progress, tag_goal, widget_layout, widget_pixel_size, Snapshot,
+    TimerShape, VisibleState,
 };
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -11,6 +11,7 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory, ID2D1RenderTarget,
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
     D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE, D2D1_ROUNDED_RECT,
+    D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED,
@@ -102,6 +103,7 @@ pub fn paint(
                 };
                 if rt.BindDC(hdc, &rect).is_ok() {
                     let _ = rt.BeginDraw();
+                    rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
                     rt.Clear(Some(&rgb(0, 0, 0, 0.0)));
                     draw_pill(
                         &rt,
@@ -153,16 +155,16 @@ fn create_rt(factory: &ID2D1Factory) -> windows::core::Result<ID2D1DCRenderTarge
             format: DXGI_FORMAT_B8G8R8A8_UNORM,
             alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
         },
-        dpiX: 0.0,
-        dpiY: 0.0,
+        dpiX: 96.0,
+        dpiY: 96.0,
         usage: D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE,
         minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
     };
     unsafe { factory.CreateDCRenderTarget(&props) }
 }
 
-fn as_rt(rt: &ID2D1DCRenderTarget) -> ID2D1RenderTarget {
-    rt.cast().expect("d2d render target")
+fn as_rt(rt: &ID2D1DCRenderTarget) -> Option<ID2D1RenderTarget> {
+    rt.cast().ok()
 }
 
 fn draw_pill(
@@ -175,37 +177,47 @@ fn draw_pill(
     break_dur: std::time::Duration,
     scale: f32,
 ) {
-    let s = scale;
-    let x = 8.0 * s;
-    let y = 12.0 * s;
-    let w = 204.0 * s;
-    let h = 64.0 * s;
-    let radius = 10.0 * s;
-    let rt = as_rt(dc);
+    let l = widget_layout(scale);
+    let radius = 10.0 * scale;
+    let Some(rt) = as_rt(dc) else {
+        return;
+    };
     unsafe {
-        fill_round(&rt, x + 1.0 * s, y + 3.0 * s, w, h, radius, rgb(0, 0, 0, 0.22));
-        fill_round(&rt, x, y, w, h, radius, rgb(0x10, 0x12, 0x14, 0.98));
-        stroke_round(&rt, x, y, w, h, radius, rgb(255, 255, 255, 0.10), 1.0 * s);
+        fill_round(
+            &rt,
+            l.pill_x + 1.0 * scale,
+            l.pill_y + 3.0 * scale,
+            l.pill_w,
+            l.pill_h,
+            radius,
+            rgb(0, 0, 0, 0.22),
+        );
+        fill_round(
+            &rt,
+            l.pill_x,
+            l.pill_y,
+            l.pill_w,
+            l.pill_h,
+            radius,
+            rgb(0x10, 0x12, 0x14, 0.98),
+        );
+        stroke_round(
+            &rt,
+            l.pill_x,
+            l.pill_y,
+            l.pill_w,
+            l.pill_h,
+            radius,
+            rgb(255, 255, 255, 0.10),
+            1.0 * scale,
+        );
 
-        let digits = match snap.state {
-            VisibleState::Break => format_break_remaining(snap.break_remaining),
-            _ => format_elapsed(snap.sitting_elapsed),
-        };
-        let goal = match snap.state {
-            VisibleState::Break => break_dur,
-            _ => limit,
-        };
+        let digits = face_digits(snap.state, snap.sitting_elapsed, snap.break_remaining);
+        let goal = tag_goal(snap.state, limit, break_dur);
         let paused = snap.state == VisibleState::Paused;
-        let ((px, py), (rx, ry), cr) = control_centers(TimerShape::Capsule, s);
-        let tag_pad = 5.0 * s;
-        let tag_left = px - cr - tag_pad;
-        let tag_top = py - cr - tag_pad;
-        let tag_w = (cr + tag_pad) * 2.0;
-        let tag_h = (ry + cr + tag_pad) - tag_top;
-        let text_left = x + 14.0 * s;
-        let text_right = tag_left - 10.0 * s;
-        let bar_h = 4.0 * s;
-        let bar_y = y + h - 12.0 * s;
+        let (px, py) = l.pause;
+        let (rx, ry) = l.reset;
+        let cr = l.control_r;
         let fill = progress(
             snap.state,
             snap.sitting_elapsed,
@@ -214,16 +226,16 @@ fn draw_pill(
             break_dur,
         );
 
-        if let Some(fmt) = digit_format(dwrite, 36.0 * s, DWRITE_TEXT_ALIGNMENT_LEADING) {
+        if let Some(fmt) = digit_format(dwrite, l.digit_px, DWRITE_TEXT_ALIGNMENT_LEADING) {
             draw_text(
                 &rt,
                 &fmt,
                 &digits,
                 D2D_RECT_F {
-                    left: text_left,
-                    top: y,
-                    right: text_right,
-                    bottom: bar_y - 1.0 * s,
+                    left: l.digits_l,
+                    top: l.digits_t,
+                    right: l.digits_r,
+                    bottom: l.digits_b,
                 },
                 if paused {
                     rgb(252, 252, 248, 0.22)
@@ -235,10 +247,10 @@ fn draw_pill(
 
         draw_progress(
             &rt,
-            text_left,
-            bar_y,
-            (tag_left - 4.0 * s - text_left).max(8.0 * s),
-            bar_h,
+            l.bar_x,
+            l.bar_y,
+            l.bar_w,
+            l.bar_h,
             fill,
             progress_color(snap.state, fill, paused),
         );
@@ -246,79 +258,51 @@ fn draw_pill(
         if paused {
             fill_round(
                 &rt,
-                x,
-                y,
-                (tag_left - x).max(8.0 * s),
-                h,
+                l.pill_x,
+                l.pill_y,
+                (l.tag_x - l.pill_x).max(8.0 * scale),
+                l.pill_h,
                 radius,
                 rgb(8, 10, 12, 0.28),
             );
-            let (cx, cy, r) = play_center(s);
+            let (cx, cy, r) = l.play;
             fill_play_triangle(&rt, factory, cx, cy, r * 1.05, rgb(252, 252, 248, 0.96));
         }
-
-        fill_round(
-            &rt,
-            tag_left,
-            tag_top,
-            tag_w,
-            tag_h,
-            8.0 * s,
-            rgb(28, 32, 34, 0.98),
-        );
-        stroke_round(
-            &rt,
-            tag_left,
-            tag_top,
-            tag_w,
-            tag_h,
-            8.0 * s,
-            rgb(255, 255, 255, 0.10),
-            1.0 * s,
-        );
-        fill_round(
-            &rt,
-            tag_left + 1.0 * s,
-            tag_top + 8.0 * s,
-            1.5 * s,
-            tag_h - 16.0 * s,
-            0.75 * s,
-            rgb(212, 196, 168, 0.35),
-        );
 
         if hover {
             let icon = rgb(252, 252, 248, 1.0);
             if !paused {
-                draw_icon(&rt, dwrite, "\u{E769}", px, py, cr * 0.95, icon);
+                draw_icon(&rt, dwrite, "\u{E769}", px, py, cr * 0.9, icon);
             }
-            draw_icon(&rt, dwrite, "\u{E72C}", rx, ry, cr * 0.95, icon);
+            draw_icon(&rt, dwrite, "\u{E72C}", rx, ry, cr * 0.9, icon);
+            draw_close_chip(&rt, l.close.0, l.close.1, l.close_r);
         } else {
             let (n, unit) = format_goal_parts(goal);
-            let mid = tag_top + tag_h * 0.48;
-            if let Some(fmt) = digit_format(dwrite, 16.0 * s, DWRITE_TEXT_ALIGNMENT_CENTER) {
+            let mid = l.tag_y + l.tag_h * 0.48;
+            if let Some(fmt) = digit_format(dwrite, 13.0 * scale, DWRITE_TEXT_ALIGNMENT_CENTER) {
                 draw_text(
                     &rt,
                     &fmt,
                     &n,
                     D2D_RECT_F {
-                        left: tag_left,
-                        top: mid - 15.0 * s,
-                        right: tag_left + tag_w,
-                        bottom: mid + 3.0 * s,
+                        left: l.tag_x,
+                        top: mid - 15.0 * scale,
+                        right: l.tag_x + l.tag_w,
+                        bottom: mid + 3.0 * scale,
                     },
                     rgb(236, 224, 204, 0.95),
                 );
             }
-            if let Some(fmt) = label_format(dwrite, 9.0 * s, DWRITE_TEXT_ALIGNMENT_CENTER) {
+            if let Some(fmt) = label_format(dwrite, 9.0 * scale, DWRITE_TEXT_ALIGNMENT_CENTER) {
                 draw_text(
                     &rt,
                     &fmt,
                     unit,
                     D2D_RECT_F {
-                        left: tag_left,
-                        top: mid + 1.0 * s,
-                        right: tag_left + tag_w,
-                        bottom: mid + 13.0 * s,
+                        left: l.tag_x,
+                        top: mid + 1.0 * scale,
+                        right: l.tag_x + l.tag_w,
+                        bottom: mid + 13.0 * scale,
                     },
                     rgb(210, 208, 200, 0.50),
                 );
@@ -493,6 +477,45 @@ unsafe fn fill_play_triangle(
     }
 }
 
+unsafe fn draw_close_chip(rt: &ID2D1RenderTarget, cx: f32, cy: f32, r: f32) {
+    let d = r * 2.0;
+    let x = cx - r;
+    let y = cy - r;
+    fill_round(rt, x, y, d, d, r, rgb(255, 255, 255, 0.06));
+    stroke_round(rt, x, y, d, d, r, rgb(255, 255, 255, 0.10), 1.0);
+    let arm = r * 0.34;
+    let thick = (r * 0.20).clamp(1.15, 2.0);
+    let ink = rgb(252, 252, 248, 0.78);
+    if let Ok(brush) = rt.CreateSolidColorBrush(&ink as *const _, None) {
+        rt.DrawLine(
+            D2D_POINT_2F {
+                x: cx - arm,
+                y: cy - arm,
+            },
+            D2D_POINT_2F {
+                x: cx + arm,
+                y: cy + arm,
+            },
+            &brush,
+            thick,
+            None,
+        );
+        rt.DrawLine(
+            D2D_POINT_2F {
+                x: cx + arm,
+                y: cy - arm,
+            },
+            D2D_POINT_2F {
+                x: cx - arm,
+                y: cy + arm,
+            },
+            &brush,
+            thick,
+            None,
+        );
+    }
+}
+
 unsafe fn fill_round(
     rt: &ID2D1RenderTarget,
     x: f32,
@@ -593,10 +616,7 @@ unsafe fn gdi_fallback(hdc: HDC, bits: *mut core::ffi::c_void, cx: i32, cy: i32,
             }
         }
     }
-    let digits = match snap.state {
-        VisibleState::Break => format_break_remaining(snap.break_remaining),
-        _ => format_elapsed(snap.sitting_elapsed),
-    };
+    let digits = face_digits(snap.state, snap.sitting_elapsed, snap.break_remaining);
     let mut text: Vec<u16> = digits.encode_utf16().chain(std::iter::once(0)).collect();
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, COLORREF(0x00F2F5F5));
