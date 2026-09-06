@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Unseat logo" width="128">
+  <img src="assets/social.png" alt="Unseat always-on-top Windows sitting timer">
 </p>
 
 <h1 align="center">Unseat</h1>
 
-<p align="center">A local-only Windows break reminder. It sits on top of your work, tracks how long you have been at the desk, and nags you to get up.</p>
+<p align="center">An always-on-top <strong>sitting timer</strong> for Windows. A tiny overlay watch that counts desk time and nags you to stand up.</p>
 
 <p align="center">No accounts. No cloud. No telemetry.</p>
 
@@ -14,18 +14,20 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/widget.png" alt="Unseat overlay timer" width="480">
+  <img src="assets/screenshots/widget.png" alt="Unseat overlay sitting timer on the Windows desktop" width="420">
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/settings.png" alt="Unseat settings" width="340">
+  <img src="assets/screenshots/settings.png" alt="Unseat timer settings with sounds, alert length, and snooze" width="360">
 </p>
 
-## What it does
+## Sitting timer for Windows
 
-- Always-on-top timer that starts when you launch it
+Unseat is a local desktop **timer** and break reminder. It stays on top of your work like a small watch, tracks how long you have been sitting, and alerts you when it is time to get up.
+
+- Always-on-top overlay timer that starts when you launch it
 - Idle or lock the session and it treats that as a break
-- A qualifying break resets the current session
+- A qualifying break resets the current sitting session
 - Pause freezes the clock; reset starts a fresh session
 - One alert at the limit, optional repeat while overdue
 - Choose a bundled sound, preview it, and how long it plays

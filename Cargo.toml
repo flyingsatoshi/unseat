@@ -2,12 +2,14 @@
 name = "unseat"
 version = "0.1.0"
 edition = "2021"
-description = "Local-only Windows break reminder"
+description = "Always-on-top Windows sitting timer and break reminder"
 license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/flyingsatoshi/unseat"
 homepage = "https://github.com/flyingsatoshi/unseat"
 authors = ["FlyingSatoshi"]
+keywords = ["timer", "sitting-timer", "break-timer", "windows", "overlay"]
+categories = ["gui"]
 publish = false
 
 [lib]
