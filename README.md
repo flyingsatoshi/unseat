@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/social.png" alt="Unseat always-on-top Windows sitting timer">
+  <img src="assets/icon.png" alt="Unseat sitting timer icon" width="128">
 </p>
 
 <h1 align="center">Unseat</h1>
