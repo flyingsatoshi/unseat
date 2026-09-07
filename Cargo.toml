@@ -1,6 +1,6 @@
 [package]
 name = "unseat"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Always-on-top Windows sitting timer and break reminder"
 license = "Apache-2.0"
