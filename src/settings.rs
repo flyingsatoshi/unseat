@@ -30,6 +30,29 @@ pub enum TimerShape {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum TimerDisplayMode {
+    #[default]
+    Countdown,
+    Stopwatch,
+}
+
+impl TimerDisplayMode {
+    pub const ALL: [Self; 2] = [Self::Countdown, Self::Stopwatch];
+
+    pub fn chip_label(self) -> &'static str {
+        match self {
+            Self::Countdown => "Countdown",
+            Self::Stopwatch => "Stopwatch",
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        Self::ALL.get(index).copied().unwrap_or_default()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InactivityBehavior {
     #[default]
     Pause,
@@ -195,6 +218,8 @@ pub struct Settings {
     pub timer_shape: TimerShape,
     #[serde(default)]
     pub widget_size: WidgetSize,
+    #[serde(default)]
+    pub timer_display_mode: TimerDisplayMode,
     #[serde(default = "default_sitting_limit")]
     pub sitting_limit_secs: u64,
     #[serde(default = "default_break")]
@@ -261,6 +286,7 @@ impl Default for Settings {
         Self {
             timer_shape: TimerShape::Capsule,
             widget_size: WidgetSize::Small,
+            timer_display_mode: TimerDisplayMode::Countdown,
             sitting_limit_secs: default_sitting_limit(),
             break_duration_secs: default_break(),
             idle_after_secs: default_idle(),

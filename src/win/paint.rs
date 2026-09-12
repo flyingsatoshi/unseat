@@ -1,6 +1,6 @@
 use unseat::{
-    face_digits, format_goal_parts, pill_background_rgb, progress, tag_goal, widget_layout,
-    widget_pixel_size, Snapshot, TimerShape, VisibleState,
+    format_goal_parts, pill_background_rgb, progress, tag_goal, timer_digit_px, timer_face_digits,
+    widget_layout, widget_pixel_size, Snapshot, TimerDisplayMode, TimerShape, VisibleState,
 };
 use windows::core::{w, Interface};
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
@@ -23,9 +23,11 @@ use windows::Win32::Graphics::DirectWrite::{
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, DrawTextW, GetDC, ReleaseDC,
-    SelectObject, SetBkMode, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER,
-    BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, DT_CENTER, DT_SINGLELINE, DT_VCENTER, HDC, TRANSPARENT,
+    CreateCompatibleDC, CreateDIBSection, CreateFontW, DeleteDC, DeleteObject, DrawTextW, GetDC,
+    ReleaseDC, SelectObject, SetBkMode, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO,
+    BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
+    DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, DT_CENTER, DT_SINGLELINE, DT_VCENTER,
+    FF_DONTCARE, FW_BOLD, HDC, OUT_DEFAULT_PRECIS, TRANSPARENT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{UpdateLayeredWindow, ULW_ALPHA};
 
@@ -62,6 +64,7 @@ pub fn paint(
     d2d: Option<&D2d>,
     hwnd: HWND,
     shape: TimerShape,
+    timer_display_mode: TimerDisplayMode,
     snap: Snapshot,
     _dark: bool,
     hover: bool,
@@ -109,6 +112,7 @@ pub fn paint(
                         &rt,
                         &d2d.factory,
                         &d2d.dwrite,
+                        timer_display_mode,
                         snap,
                         hover,
                         limit,
@@ -120,7 +124,7 @@ pub fn paint(
             }
         }
         if !drew {
-            gdi_fallback(hdc, bits, cx, cy, snap);
+            gdi_fallback(hdc, bits, cx, cy, timer_display_mode, snap);
         }
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
@@ -171,6 +175,7 @@ fn draw_pill(
     dc: &ID2D1DCRenderTarget,
     factory: &ID2D1Factory,
     dwrite: &IDWriteFactory,
+    timer_display_mode: TimerDisplayMode,
     snap: Snapshot,
     hover: bool,
     limit: std::time::Duration,
@@ -213,7 +218,7 @@ fn draw_pill(
             1.0 * scale,
         );
 
-        let digits = face_digits(snap.timer_remaining);
+        let digits = timer_face_digits(timer_display_mode, snap);
         let goal = tag_goal(snap.state, limit, break_dur);
         let paused = snap.state == VisibleState::Paused;
         let (px, py) = l.pause;
@@ -227,7 +232,8 @@ fn draw_pill(
             break_dur,
         );
 
-        if let Some(fmt) = digit_format(dwrite, l.digit_px, DWRITE_TEXT_ALIGNMENT_LEADING) {
+        let digit_px = timer_digit_px(&digits, l.digit_px, l.digits_r - l.digits_l);
+        if let Some(fmt) = digit_format(dwrite, digit_px, DWRITE_TEXT_ALIGNMENT_LEADING) {
             draw_text(
                 &rt,
                 &fmt,
@@ -591,7 +597,14 @@ unsafe fn stroke_round(
     }
 }
 
-unsafe fn gdi_fallback(hdc: HDC, bits: *mut core::ffi::c_void, cx: i32, cy: i32, snap: Snapshot) {
+unsafe fn gdi_fallback(
+    hdc: HDC,
+    bits: *mut core::ffi::c_void,
+    cx: i32,
+    cy: i32,
+    timer_display_mode: TimerDisplayMode,
+    snap: Snapshot,
+) {
     if bits.is_null() || cx <= 0 || cy <= 0 {
         return;
     }
@@ -615,10 +628,34 @@ unsafe fn gdi_fallback(hdc: HDC, bits: *mut core::ffi::c_void, cx: i32, cy: i32,
             }
         }
     }
-    let digits = face_digits(snap.timer_remaining);
+    let digits = timer_face_digits(timer_display_mode, snap);
     let mut text: Vec<u16> = digits.encode_utf16().chain(std::iter::once(0)).collect();
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, COLORREF(0x00F2F5F5));
+    let scale = cy as f32 / unseat::WIDGET_H;
+    let layout = widget_layout(scale);
+    let digit_px = timer_digit_px(&digits, layout.digit_px, layout.digits_r - layout.digits_l);
+    let font = CreateFontW(
+        -digit_px.round() as i32,
+        0,
+        0,
+        0,
+        FW_BOLD.0 as i32,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET.0 as u32,
+        OUT_DEFAULT_PRECIS.0 as u32,
+        CLIP_DEFAULT_PRECIS.0 as u32,
+        CLEARTYPE_QUALITY.0 as u32,
+        (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+        w!("Segoe UI"),
+    );
+    let old_font = if font.is_invalid() {
+        None
+    } else {
+        Some(SelectObject(hdc, font))
+    };
     let mut rc = RECT {
         left: 16,
         top: 0,
@@ -631,6 +668,10 @@ unsafe fn gdi_fallback(hdc: HDC, bits: *mut core::ffi::c_void, cx: i32, cy: i32,
         &mut rc,
         DT_CENTER | DT_VCENTER | DT_SINGLELINE,
     );
+    if let Some(old_font) = old_font {
+        SelectObject(hdc, old_font);
+        let _ = DeleteObject(font);
+    }
     for y in 0..cy {
         for x in 0..cx {
             let i = (y * stride + x * 4) as isize;

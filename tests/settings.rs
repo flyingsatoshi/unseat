@@ -1,6 +1,8 @@
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
-use unseat::{AlertSound, InactivityBehavior, Settings, TimerCheckpoint, TimerShape};
+use unseat::{
+    AlertSound, InactivityBehavior, Settings, TimerCheckpoint, TimerDisplayMode, TimerShape,
+};
 
 fn temp_settings_path() -> std::path::PathBuf {
     static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
@@ -15,6 +17,7 @@ fn defaults_match_spec() {
     let s = Settings::default();
     assert_eq!(s.timer_shape, TimerShape::Capsule);
     assert_eq!(s.widget_size, unseat::WidgetSize::Small);
+    assert_eq!(s.timer_display_mode, TimerDisplayMode::Countdown);
     assert_eq!(s.sitting_limit_secs, 3600);
     assert_eq!(s.break_duration_secs, 180);
     assert_eq!(s.idle_after_secs, 60);
@@ -30,6 +33,12 @@ fn defaults_match_spec() {
     assert_eq!(s.alert_duration_secs, 0);
     assert_eq!(s.snooze_secs, 10 * 60);
     assert_eq!(s.inactivity_behavior, InactivityBehavior::Pause);
+}
+
+#[test]
+fn defaults_serialize_countdown_as_the_timer_display_mode() {
+    let json = String::from_utf8(Settings::default().to_json()).unwrap();
+    assert!(json.contains(r#""timer_display_mode": "countdown""#));
 }
 
 #[test]
@@ -57,18 +66,33 @@ fn round_trip_json_preserves_fields() {
     s.sitting_limit_secs = 2700;
     s.step = 5;
     s.inactivity_behavior = InactivityBehavior::Continue;
+    s.timer_display_mode = TimerDisplayMode::Stopwatch;
     let parsed = Settings::from_json(&s.to_json());
     assert_eq!(parsed.timer_shape, TimerShape::Disc);
     assert_eq!(parsed.widget_size, unseat::WidgetSize::ExtraLarge);
     assert_eq!(parsed.sitting_limit_secs, 2700);
     assert_eq!(parsed.step, 5);
     assert_eq!(parsed.inactivity_behavior, InactivityBehavior::Continue);
+    assert_eq!(parsed.timer_display_mode, TimerDisplayMode::Stopwatch);
 }
 
 #[test]
 fn older_settings_default_to_pausing_during_inactivity() {
     let s = Settings::from_json(br#"{"sitting_limit_secs":3600}"#);
     assert_eq!(s.inactivity_behavior, InactivityBehavior::Pause);
+    assert_eq!(s.timer_display_mode, TimerDisplayMode::Countdown);
+}
+
+#[test]
+fn timer_display_preference_exposes_countdown_and_stopwatch_choices() {
+    assert_eq!(
+        TimerDisplayMode::ALL,
+        [TimerDisplayMode::Countdown, TimerDisplayMode::Stopwatch]
+    );
+    assert_eq!(TimerDisplayMode::Countdown.chip_label(), "Countdown");
+    assert_eq!(TimerDisplayMode::Stopwatch.chip_label(), "Stopwatch");
+    assert_eq!(TimerDisplayMode::from_index(0), TimerDisplayMode::Countdown);
+    assert_eq!(TimerDisplayMode::from_index(1), TimerDisplayMode::Stopwatch);
 }
 
 #[test]
@@ -141,10 +165,12 @@ fn save_then_load_round_trips() {
     let path = temp_settings_path();
     let mut s = Settings::default();
     s.timer_shape = TimerShape::Card;
+    s.timer_display_mode = TimerDisplayMode::Stopwatch;
     s.today_sitting_secs = 8040;
     s.save_to(&path).unwrap();
     let loaded = Settings::load_from(&path);
     assert_eq!(loaded.timer_shape, TimerShape::Card);
+    assert_eq!(loaded.timer_display_mode, TimerDisplayMode::Stopwatch);
     assert_eq!(loaded.today_sitting_secs, 8040);
 }
 

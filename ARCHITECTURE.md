@@ -44,3 +44,7 @@ excludes idle, lock, sleep, and closed-app time; Continue mode counts through th
 checkpoint is stored with settings so relaunch restores the session. Countdown display is derived
 with saturating subtraction, remains at `00:00` when overdue, and uses a dark-maroon completed
 surface while session accounting and optional reminders continue.
+
+`timer_display_mode` changes presentation only. `countdown` shows the saturating remaining time;
+`stopwatch` shows accumulated sitting time and continues ascending while overdue. Both modes share
+the same engine session, completion state, alerts, pause behavior, and persisted checkpoint.

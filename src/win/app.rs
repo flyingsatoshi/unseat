@@ -321,6 +321,7 @@ impl App {
         let snap = self.engine.snapshot();
         let key = timer_render_key(
             snap,
+            self.settings.timer_display_mode,
             self.settings.timer_shape,
             self.settings.widget_size,
             self.hover,
@@ -339,6 +340,7 @@ impl App {
             self.d2d.as_ref(),
             self.widget,
             self.settings.timer_shape,
+            self.settings.timer_display_mode,
             snap,
             self.dark,
             self.hover,

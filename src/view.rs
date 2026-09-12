@@ -1,5 +1,5 @@
 use crate::engine::{Snapshot, VisibleState};
-use crate::settings::{TimerShape, WidgetSize};
+use crate::settings::{TimerDisplayMode, TimerShape, WidgetSize};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,7 +15,8 @@ pub const WIDGET_H: f32 = 56.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimerRenderKey {
-    timer_remaining_secs: u64,
+    timer_display_mode: TimerDisplayMode,
+    face_secs: u64,
     break_remaining_secs: u64,
     state: VisibleState,
     shape: TimerShape,
@@ -26,13 +27,15 @@ pub struct TimerRenderKey {
 
 pub fn timer_render_key(
     snapshot: Snapshot,
+    timer_display_mode: TimerDisplayMode,
     shape: TimerShape,
     size: WidgetSize,
     hover: bool,
     dark: bool,
 ) -> TimerRenderKey {
     TimerRenderKey {
-        timer_remaining_secs: countdown_secs(snapshot.timer_remaining),
+        timer_display_mode,
+        face_secs: timer_face_seconds(timer_display_mode, snapshot),
         break_remaining_secs: countdown_secs(snapshot.break_remaining),
         state: snapshot.state,
         shape,
@@ -203,6 +206,33 @@ pub fn format_elapsed(d: Duration) -> String {
 
 pub fn face_digits(timer_remaining: Duration) -> String {
     format_elapsed(Duration::from_secs(countdown_secs(timer_remaining)))
+}
+
+pub fn timer_face_digits(timer_display_mode: TimerDisplayMode, snapshot: Snapshot) -> String {
+    format_elapsed(Duration::from_secs(timer_face_seconds(
+        timer_display_mode,
+        snapshot,
+    )))
+}
+
+/// Keeps expanding hour-based stopwatch values inside the timer's fixed digit lane.
+pub fn timer_digit_px(digits: &str, base_px: f32, lane_width: f32) -> f32 {
+    let em_width = digits
+        .chars()
+        .fold(0.0, |width, ch| width + if ch == ':' { 0.28 } else { 0.58 });
+    let estimated_width = em_width * base_px;
+    if estimated_width <= lane_width || estimated_width <= 0.0 {
+        base_px
+    } else {
+        base_px * lane_width.max(0.0) / estimated_width
+    }
+}
+
+fn timer_face_seconds(timer_display_mode: TimerDisplayMode, snapshot: Snapshot) -> u64 {
+    match timer_display_mode {
+        TimerDisplayMode::Countdown => countdown_secs(snapshot.timer_remaining),
+        TimerDisplayMode::Stopwatch => snapshot.sitting_elapsed.as_secs(),
+    }
 }
 
 fn countdown_secs(remaining: Duration) -> u64 {

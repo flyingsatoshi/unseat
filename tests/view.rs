@@ -1,8 +1,9 @@
 use std::time::Duration;
 use unseat::{
     face_digits, format_elapsed, format_limit, format_today, hit_control, installed_exe,
-    is_dev_build, pill_background_rgb, progress, timer_render_key, widget_layout,
-    widget_pixel_size, Hit, Snapshot, TimerShape, VisibleState, WidgetSize,
+    is_dev_build, pill_background_rgb, progress, timer_digit_px, timer_face_digits,
+    timer_render_key, widget_layout, widget_pixel_size, Hit, Snapshot, TimerDisplayMode,
+    TimerShape, VisibleState, WidgetSize,
 };
 
 #[test]
@@ -169,6 +170,61 @@ fn countdown_does_not_show_zero_before_expiry() {
 }
 
 #[test]
+fn timer_display_modes_use_remaining_or_elapsed_time_without_changing_session_state() {
+    let snapshot = Snapshot {
+        state: VisibleState::Sitting,
+        sitting_elapsed: Duration::from_secs(34),
+        timer_remaining: Duration::from_secs(4 * 60 + 26),
+        break_elapsed: Duration::ZERO,
+        break_remaining: Duration::from_secs(180),
+        today_sitting: Duration::from_secs(34),
+        running: true,
+    };
+
+    assert_eq!(
+        timer_face_digits(TimerDisplayMode::Countdown, snapshot),
+        "04:26"
+    );
+    assert_eq!(
+        timer_face_digits(TimerDisplayMode::Stopwatch, snapshot),
+        "00:34"
+    );
+    assert_eq!(snapshot.sitting_elapsed, Duration::from_secs(34));
+}
+
+#[test]
+fn stopwatch_keeps_ascending_after_the_goal_is_reached() {
+    let snapshot = Snapshot {
+        state: VisibleState::Overdue,
+        sitting_elapsed: Duration::from_secs(5 * 60 + 29),
+        timer_remaining: Duration::ZERO,
+        break_elapsed: Duration::ZERO,
+        break_remaining: Duration::from_secs(180),
+        today_sitting: Duration::from_secs(5 * 60 + 29),
+        running: true,
+    };
+
+    assert_eq!(
+        timer_face_digits(TimerDisplayMode::Stopwatch, snapshot),
+        "05:29"
+    );
+    assert_eq!(pill_background_rgb(snapshot.state), [0x2A, 0x10, 0x16]);
+}
+
+#[test]
+fn long_stopwatch_faces_shrink_to_stay_inside_the_digit_lane() {
+    assert_eq!(timer_digit_px("05:29", 26.0, 88.0), 26.0);
+
+    let ten_hours = timer_digit_px("10:00:00", 26.0, 88.0);
+    assert!(ten_hours < 26.0);
+    assert!(ten_hours >= 20.0);
+
+    let multi_day = timer_digit_px("120:00:00", 26.0, 88.0);
+    assert!(multi_day < ten_hours);
+    assert!(multi_day > 0.0);
+}
+
+#[test]
 fn completed_timer_uses_a_subtle_dark_maroon_background() {
     assert_eq!(
         pill_background_rgb(VisibleState::Overdue),
@@ -193,6 +249,7 @@ fn render_key_tracks_countdown_state_without_hash_collisions() {
     };
     let same = timer_render_key(
         snapshot,
+        TimerDisplayMode::Countdown,
         TimerShape::Capsule,
         WidgetSize::Small,
         false,
@@ -205,6 +262,7 @@ fn render_key_tracks_countdown_state_without_hash_collisions() {
     completed_accounting_only.timer_remaining = Duration::ZERO;
     let completed_key = timer_render_key(
         completed_accounting_only,
+        TimerDisplayMode::Countdown,
         TimerShape::Capsule,
         WidgetSize::Small,
         false,
@@ -217,6 +275,7 @@ fn render_key_tracks_countdown_state_without_hash_collisions() {
         same,
         timer_render_key(
             snapshot,
+            TimerDisplayMode::Countdown,
             TimerShape::Capsule,
             WidgetSize::Small,
             false,
@@ -227,6 +286,7 @@ fn render_key_tracks_countdown_state_without_hash_collisions() {
         same,
         timer_render_key(
             advanced,
+            TimerDisplayMode::Countdown,
             TimerShape::Capsule,
             WidgetSize::Small,
             false,
@@ -237,6 +297,40 @@ fn render_key_tracks_countdown_state_without_hash_collisions() {
         completed_key,
         timer_render_key(
             completed_accounting_only,
+            TimerDisplayMode::Countdown,
+            TimerShape::Capsule,
+            WidgetSize::Small,
+            false,
+            true,
+        )
+    );
+
+    assert_ne!(
+        completed_key,
+        timer_render_key(
+            completed_accounting_only,
+            TimerDisplayMode::Stopwatch,
+            TimerShape::Capsule,
+            WidgetSize::Small,
+            false,
+            true,
+        )
+    );
+
+    let stopwatch_key = timer_render_key(
+        completed_accounting_only,
+        TimerDisplayMode::Stopwatch,
+        TimerShape::Capsule,
+        WidgetSize::Small,
+        false,
+        true,
+    );
+    completed_accounting_only.sitting_elapsed += Duration::from_secs(1);
+    assert_ne!(
+        stopwatch_key,
+        timer_render_key(
+            completed_accounting_only,
+            TimerDisplayMode::Stopwatch,
             TimerShape::Capsule,
             WidgetSize::Small,
             false,

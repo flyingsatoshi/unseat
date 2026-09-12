@@ -25,8 +25,9 @@
 
 Unseat is a local desktop **timer** and break reminder. It stays on top of your work like a small watch, tracks how long you have been sitting, and alerts you when it is time to get up.
 
-- Always-on-top countdown that starts when you launch it and stops at `00:00`
-- Choose whether idle, lock, sleep, and app downtime pause the countdown or let it continue
+- Always-on-top timer that starts when you launch it
+- Choose a reverse countdown or an ascending stopwatch without resetting the session
+- Choose whether idle, lock, sleep, and app downtime pause the timer session or let it continue
 - A qualifying break resets the current sitting session
 - Pause freezes the clock; reset starts a fresh session
 - Active timer state is restored after relaunch; only Reset starts over

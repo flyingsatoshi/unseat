@@ -1,9 +1,10 @@
 use crate::win::app::App;
 use unseat::{
-    format_today, AlertSound, InactivityBehavior, WidgetSize, ALERT_DURATION_PRESETS_SECS,
-    SNOOZE_PRESETS_SECS,
+    format_today, AlertSound, InactivityBehavior, TimerDisplayMode, WidgetSize,
+    ALERT_DURATION_PRESETS_SECS, SNOOZE_PRESETS_SECS,
 };
 use windows::core::{w, Interface};
+use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
@@ -26,7 +27,8 @@ use windows::Win32::Graphics::Dwm::{
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, EndPaint, InvalidateRect, ScreenToClient, PAINTSTRUCT,
+    BeginPaint, EndPaint, GetMonitorInfoW, InvalidateRect, MonitorFromWindow, ScreenToClient,
+    MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
@@ -34,16 +36,17 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW, GetClientRect, GetWindowLongPtrW,
     RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    GWLP_USERDATA, HTCAPTION, HTCLIENT, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SW_SHOW,
-    WM_CLOSE, WM_CREATE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    GWLP_USERDATA, HTCAPTION, HTCLIENT, HWND_TOPMOST, SWP_NOACTIVATE, SW_SHOW, WM_CLOSE, WM_CREATE,
+    WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
     WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 
 pub const CLASS: windows::core::PCWSTR = w!("UnseatSettings");
 
 const WIN_W: i32 = 300;
-const WIN_H: i32 = 838;
+const WIN_H: i32 = 876;
 const BTN_RADIUS: f32 = 4.0;
+const WORK_AREA_MARGIN: i32 = 12;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
@@ -97,6 +100,7 @@ enum Hit {
     SoundKind(usize),
     Duration(usize),
     SnoozePreset(usize),
+    TimerDisplay(usize),
     Inactivity(usize),
     Repeat,
     Auto,
@@ -110,6 +114,7 @@ struct Dialog {
     app: *mut App,
     size: WidgetSize,
     revert_size: WidgetSize,
+    timer_display_mode: TimerDisplayMode,
     sound: bool,
     repeat: bool,
     auto: bool,
@@ -125,6 +130,7 @@ struct Dialog {
     saved: bool,
     hover: Hit,
     scale: f32,
+    scroll_y: f32,
     factory: Option<ID2D1Factory>,
     dwrite: Option<IDWriteFactory>,
     rt: Option<ID2D1HwndRenderTarget>,
@@ -170,21 +176,40 @@ pub fn open(app: *mut App) {
                 &pref as *const _ as *const core::ffi::c_void,
                 std::mem::size_of_val(&pref) as u32,
             );
-            let scale = dpi_scale(hwnd);
-            let _ = SetWindowPos(
-                hwnd,
-                HWND_TOPMOST,
-                0,
-                0,
-                (WIN_W as f32 * scale).round() as i32,
-                (WIN_H as f32 * scale).round() as i32,
-                SWP_NOMOVE | SWP_NOACTIVATE,
-            );
             let _ = ShowWindow(hwnd, SW_SHOW);
             crate::win::icon::apply(hwnd);
             let _ = SetForegroundWindow(hwnd);
         }
     }
+}
+
+fn fit_window_to_work_area(work: RECT, scale: f32) -> (i32, i32, i32, i32) {
+    let available_w = (work.right - work.left - WORK_AREA_MARGIN * 2).max(1);
+    let available_h = (work.bottom - work.top - WORK_AREA_MARGIN * 2).max(1);
+    let width = ((WIN_W as f32 * scale).round() as i32).min(available_w);
+    let height = ((WIN_H as f32 * scale).round() as i32).min(available_h);
+    let min_x = work.left + WORK_AREA_MARGIN;
+    let min_y = work.top + WORK_AREA_MARGIN;
+    let max_x = (work.right - WORK_AREA_MARGIN - width).max(min_x);
+    let max_y = (work.bottom - WORK_AREA_MARGIN - height).max(min_y);
+    (
+        120.clamp(min_x, max_x),
+        80.clamp(min_y, max_y),
+        width,
+        height,
+    )
+}
+
+fn scroll_after_wheel(
+    current: f32,
+    wheel_delta: i16,
+    scale: f32,
+    content_height: f32,
+    viewport_height: f32,
+) -> f32 {
+    let max_scroll = (content_height - viewport_height).max(0.0);
+    let step = px(80.0, scale) * wheel_delta as f32 / 120.0;
+    (current - step).clamp(0.0, max_scroll)
 }
 
 fn rgb(r: u8, g: u8, b: u8, a: f32) -> D2D1_COLOR_F {
@@ -229,7 +254,6 @@ struct Step {
 }
 
 struct Lay {
-    w: f32,
     h: f32,
     scale: f32,
     close: D2D_RECT_F,
@@ -238,6 +262,8 @@ struct Lay {
     timer_card: D2D_RECT_F,
     sitting_row: D2D_RECT_F,
     step_row: D2D_RECT_F,
+    timer_display_row: D2D_RECT_F,
+    timer_display_choices: [D2D_RECT_F; 2],
     overlay_label: D2D_RECT_F,
     sizes: [D2D_RECT_F; 5],
     breaks_head: D2D_RECT_F,
@@ -331,7 +357,8 @@ fn layout(scale: f32) -> Lay {
     );
     let t0 = px(57.0, scale);
     let step_top = t0 + row_h;
-    let overlay_label_top = step_top + row_h + px(8.0, scale);
+    let timer_display_top = step_top + row_h;
+    let overlay_label_top = timer_display_top + row_h + px(8.0, scale);
     let overlay_label_bot = overlay_label_top + px(18.0, scale);
     let chip_y = overlay_label_bot + px(10.0, scale);
     let chip_h = px(26.0, scale);
@@ -339,6 +366,26 @@ fn layout(scale: f32) -> Lay {
     let timer_card = rct(x, t0, card_r, timer_bot);
     let sitting_row = rct(x, t0, card_r, t0 + row_h);
     let step_row = rct(x, step_top, card_r, step_top + row_h);
+    let timer_display_row = rct(x, timer_display_top, card_r, timer_display_top + row_h);
+    let display_choice_gap = px(4.0, scale);
+    let display_choice_w = px(74.0, scale);
+    let display_choice_h = px(26.0, scale);
+    let display_choices_right = card_r - px(10.0, scale);
+    let display_choices_y = timer_display_top + (row_h - display_choice_h) * 0.5;
+    let timer_display_choices = [
+        rct(
+            display_choices_right - display_choice_w * 2.0 - display_choice_gap,
+            display_choices_y,
+            display_choices_right - display_choice_w - display_choice_gap,
+            display_choices_y + display_choice_h,
+        ),
+        rct(
+            display_choices_right - display_choice_w,
+            display_choices_y,
+            display_choices_right,
+            display_choices_y + display_choice_h,
+        ),
+    ];
 
     let inner = (card_r - x) - px(16.0, scale);
     let chip_gap = px(4.0, scale);
@@ -442,7 +489,6 @@ fn layout(scale: f32) -> Lay {
     );
 
     Lay {
-        w,
         h,
         scale,
         close: rct(
@@ -456,6 +502,8 @@ fn layout(scale: f32) -> Lay {
         timer_card,
         sitting_row,
         step_row,
+        timer_display_row,
+        timer_display_choices,
         overlay_label: rct(
             x + px(12.0, scale),
             overlay_label_top,
@@ -540,6 +588,11 @@ fn hit_at(x: f32, y: f32, scale: f32) -> Hit {
             return Hit::Size(i);
         }
     }
+    for (i, rc) in l.timer_display_choices.iter().enumerate() {
+        if contains(*rc, x, y) {
+            return Hit::TimerDisplay(i);
+        }
+    }
     if contains(l.preview, x, y) {
         return Hit::Preview;
     }
@@ -585,8 +638,12 @@ fn client_hit(hwnd: HWND, dlg: *mut Dialog, lp: LPARAM, screen: bool) -> Hit {
             x = pt.x;
             y = pt.y;
         }
-        let scale = if dlg.is_null() { 1.0 } else { (*dlg).scale };
-        hit_at(x as f32, y as f32, scale)
+        let (scale, scroll_y) = if dlg.is_null() {
+            (1.0, 0.0)
+        } else {
+            ((*dlg).scale, (*dlg).scroll_y)
+        };
+        hit_at(x as f32, y as f32 + scroll_y, scale)
     }
 }
 
@@ -617,6 +674,27 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let h = client_hit(hwnd, dlg, lp, false);
                 if h != (*dlg).hover {
                     (*dlg).hover = h;
+                    let _ = InvalidateRect(hwnd, None, false);
+                }
+            }
+            LRESULT(0)
+        }
+        WM_MOUSEWHEEL => {
+            if !dlg.is_null() {
+                let mut rc = RECT::default();
+                let _ = GetClientRect(hwnd, &mut rc);
+                let viewport_height = (rc.bottom - rc.top).max(1) as f32;
+                let wheel_delta = ((wp.0 >> 16) as u16) as i16;
+                let next = scroll_after_wheel(
+                    (*dlg).scroll_y,
+                    wheel_delta,
+                    (*dlg).scale,
+                    layout((*dlg).scale).h,
+                    viewport_height,
+                );
+                if next != (*dlg).scroll_y {
+                    (*dlg).scroll_y = next;
+                    (*dlg).hover = Hit::None;
                     let _ = InvalidateRect(hwnd, None, false);
                 }
             }
@@ -663,6 +741,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
     let (
         size,
+        timer_display_mode,
         sound,
         repeat,
         auto,
@@ -678,6 +757,7 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
     ) = if app.is_null() {
         (
             WidgetSize::Small,
+            TimerDisplayMode::Countdown,
             true,
             true,
             false,
@@ -695,6 +775,7 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
         let s = &(*app).settings;
         (
             s.widget_size,
+            s.timer_display_mode,
             s.sound_enabled,
             s.repeat_reminders,
             s.launch_with_windows,
@@ -711,19 +792,36 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
         )
     };
     let scale = dpi_scale(hwnd);
+    let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    let mut monitor_info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    let work = if GetMonitorInfoW(monitor, &mut monitor_info).as_bool() {
+        monitor_info.rcWork
+    } else {
+        RECT {
+            left: 0,
+            top: 0,
+            right: (WIN_W as f32 * scale).round() as i32 + WORK_AREA_MARGIN * 2,
+            bottom: (WIN_H as f32 * scale).round() as i32 + WORK_AREA_MARGIN * 2,
+        }
+    };
+    let (window_x, window_y, window_w, window_h) = fit_window_to_work_area(work, scale);
     let _ = SetWindowPos(
         hwnd,
         HWND_TOPMOST,
-        0,
-        0,
-        (WIN_W as f32 * scale).round() as i32,
-        (WIN_H as f32 * scale).round() as i32,
-        SWP_NOMOVE | SWP_NOACTIVATE,
+        window_x,
+        window_y,
+        window_w,
+        window_h,
+        SWP_NOACTIVATE,
     );
     Box::new(Dialog {
         app,
         size,
         revert_size: size,
+        timer_display_mode,
         sound,
         repeat,
         auto,
@@ -739,6 +837,7 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
         saved: false,
         hover: Hit::None,
         scale,
+        scroll_y: 0.0,
         factory: D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok(),
         dwrite: DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).ok(),
         rt: None,
@@ -1027,16 +1126,22 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     let l = layout((*dlg).scale);
     let s = l.scale;
     let hover = (*dlg).hover;
+    let mut client = RECT::default();
+    let _ = GetClientRect(hwnd, &mut client);
+    let viewport_w = (client.right - client.left).max(1) as f32;
+    let viewport_h = (client.bottom - client.top).max(1) as f32;
+    let scroll_y = (*dlg).scroll_y.clamp(0.0, (l.h - viewport_h).max(0.0));
+    (*dlg).scroll_y = scroll_y;
     rt.BeginDraw();
     rt.Clear(Some(&rgb(0x1C, 0x1C, 0x1E, 1.0)));
-
-    stroke_round(
-        &rt,
-        rct(0.5, 0.5, l.w - 0.5, l.h - 0.5),
-        px(12.0, s),
-        rgb(0x63, 0x63, 0x66, 0.90),
-        px(1.0, s),
-    );
+    rt.SetTransform(&Matrix3x2 {
+        M11: 1.0,
+        M12: 0.0,
+        M21: 0.0,
+        M22: 1.0,
+        M31: 0.0,
+        M32: -scroll_y,
+    });
 
     let head = rgb(0x8E, 0x8E, 0x93, 1.0);
     let label = rgb(0xF2, 0xF2, 0xF7, 1.0);
@@ -1108,6 +1213,57 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
             l.step_row.bottom,
             l.timer_card.right - px(12.0, s),
             l.step_row.bottom + px(1.0, s),
+        ),
+        0.5,
+        sep,
+    );
+    text(
+        &rt,
+        dwrite,
+        "Timer display",
+        l.row_label(
+            l.timer_display_row,
+            l.timer_display_choices[0].left - px(8.0, s),
+        ),
+        label_sz,
+        DWRITE_FONT_WEIGHT_MEDIUM,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        label,
+    );
+    for (i, mode) in TimerDisplayMode::ALL.iter().enumerate() {
+        let on = *mode == (*dlg).timer_display_mode;
+        fill_round(
+            &rt,
+            l.timer_display_choices[i],
+            px(8.0, s),
+            if on {
+                rgb(0x0A, 0x84, 0xFF, 1.0)
+            } else {
+                rgb(0x3A, 0x3A, 0x3C, 1.0)
+            },
+        );
+        text(
+            &rt,
+            dwrite,
+            mode.chip_label(),
+            l.timer_display_choices[i],
+            chip_sz,
+            DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_TEXT_ALIGNMENT_CENTER,
+            if on {
+                rgb(255, 255, 255, 1.0)
+            } else {
+                rgb(0xEB, 0xEB, 0xF5, 0.92)
+            },
+        );
+    }
+    fill_round(
+        &rt,
+        rct(
+            l.timer_card.left + px(12.0, s),
+            l.timer_display_row.bottom,
+            l.timer_card.right - px(12.0, s),
+            l.timer_display_row.bottom + px(1.0, s),
         ),
         0.5,
         sep,
@@ -1553,6 +1709,39 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
         rgb(0xEB, 0xEB, 0xF5, 1.0),
     );
 
+    rt.SetTransform(&Matrix3x2 {
+        M11: 1.0,
+        M12: 0.0,
+        M21: 0.0,
+        M22: 1.0,
+        M31: 0.0,
+        M32: 0.0,
+    });
+    stroke_round(
+        &rt,
+        rct(0.5, 0.5, viewport_w - 0.5, viewport_h - 0.5),
+        px(12.0, s),
+        rgb(0x63, 0x63, 0x66, 0.90),
+        px(1.0, s),
+    );
+    let max_scroll = (l.h - viewport_h).max(0.0);
+    if max_scroll > 0.0 {
+        let track_h = (viewport_h - px(24.0, s)).max(px(24.0, s));
+        let thumb_h = (track_h * viewport_h / l.h).max(px(24.0, s));
+        let thumb_y = px(12.0, s) + scroll_y / max_scroll * (track_h - thumb_h);
+        fill_round(
+            &rt,
+            rct(
+                viewport_w - px(5.0, s),
+                thumb_y,
+                viewport_w - px(2.0, s),
+                thumb_y + thumb_h,
+            ),
+            px(1.5, s),
+            rgb(0x8E, 0x8E, 0x93, 0.70),
+        );
+    }
+
     let _ = rt.EndDraw(None, None);
 }
 
@@ -1624,6 +1813,10 @@ unsafe fn on_click(hwnd: HWND, dlg: *mut Dialog, hit: Hit) {
                 let _ = InvalidateRect(hwnd, None, false);
             }
         }
+        Hit::TimerDisplay(i) => {
+            (*dlg).timer_display_mode = TimerDisplayMode::from_index(i);
+            let _ = InvalidateRect(hwnd, None, false);
+        }
         Hit::Inactivity(i) => {
             (*dlg).inactivity_behavior = InactivityBehavior::from_index(i);
             let _ = InvalidateRect(hwnd, None, false);
@@ -1659,6 +1852,7 @@ unsafe fn save(hwnd: HWND) {
     (*app).settings.sitting_limit_secs = (*dlg).sitting_min.saturating_mul(60);
     (*app).settings.break_duration_secs = (*dlg).break_min.saturating_mul(60);
     (*app).settings.idle_after_secs = (*dlg).idle_sec;
+    (*app).settings.timer_display_mode = (*dlg).timer_display_mode;
     (*app).settings.inactivity_behavior = (*dlg).inactivity_behavior;
     (*app).settings.repeat_every_secs = (*dlg).every_min.saturating_mul(60);
     (*app).settings.step = (*dlg).step;
@@ -1681,6 +1875,42 @@ unsafe fn save(hwnd: HWND) {
     (*app).force_repaint();
     (*dlg).saved = true;
     close(hwnd);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_window_is_capped_and_clamped_to_the_monitor_work_area() {
+        let work = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1040,
+        };
+
+        assert_eq!(fit_window_to_work_area(work, 1.25), (120, 12, 375, 1016));
+    }
+
+    #[test]
+    fn scrolling_reaches_the_footer_and_clamps_at_both_ends() {
+        let content_height = 1095.0;
+        let viewport_height = 1016.0;
+
+        assert_eq!(
+            scroll_after_wheel(0.0, -120, 1.25, content_height, viewport_height),
+            79.0
+        );
+        assert_eq!(
+            scroll_after_wheel(79.0, -120, 1.25, content_height, viewport_height),
+            79.0
+        );
+        assert_eq!(
+            scroll_after_wheel(79.0, 120, 1.25, content_height, viewport_height),
+            0.0
+        );
+    }
 }
 
 unsafe fn close(hwnd: HWND) {
