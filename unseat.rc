@@ -1,1 +1,31 @@
 1 ICON "assets/unseat.ico"
+
+1 24 "unseat.manifest"
+
+1 VERSIONINFO
+ FILEVERSION UNSEAT_VERSION_NUM
+ PRODUCTVERSION UNSEAT_VERSION_NUM
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "FlyingSatoshi\0"
+            VALUE "FileDescription", "Unseat sitting timer and break reminder\0"
+            VALUE "FileVersion", UNSEAT_VERSION
+            VALUE "InternalName", "unseat\0"
+            VALUE "OriginalFilename", "unseat.exe\0"
+            VALUE "ProductName", "Unseat\0"
+            VALUE "ProductVersion", UNSEAT_VERSION
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

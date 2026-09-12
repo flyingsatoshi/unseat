@@ -1,4 +1,4 @@
-use crate::engine::VisibleState;
+use crate::engine::{Snapshot, VisibleState};
 use crate::settings::{TimerShape, WidgetSize};
 use std::time::Duration;
 
@@ -12,6 +12,35 @@ pub enum Hit {
 
 pub const WIDGET_W: f32 = 144.0;
 pub const WIDGET_H: f32 = 56.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TimerRenderKey {
+    timer_remaining_secs: u64,
+    break_remaining_secs: u64,
+    state: VisibleState,
+    shape: TimerShape,
+    size: WidgetSize,
+    hover: bool,
+    dark: bool,
+}
+
+pub fn timer_render_key(
+    snapshot: Snapshot,
+    shape: TimerShape,
+    size: WidgetSize,
+    hover: bool,
+    dark: bool,
+) -> TimerRenderKey {
+    TimerRenderKey {
+        timer_remaining_secs: countdown_secs(snapshot.timer_remaining),
+        break_remaining_secs: countdown_secs(snapshot.break_remaining),
+        state: snapshot.state,
+        shape,
+        size,
+        hover,
+        dark,
+    }
+}
 
 /// Logical layout at 96 DPI for Small. Other sizes multiply `scale`.
 pub fn widget_pixel_size(_shape: TimerShape, scale: f32) -> (i32, i32) {
@@ -101,10 +130,7 @@ pub fn widget_layout(scale: f32) -> WidgetLayout {
         bar_h,
         digit_px: 26.0 * s,
         play: (play_x, play_y, 18.0 * s),
-        close: (
-            WIDGET_W * s - close_inset - close_r,
-            close_inset + close_r,
-        ),
+        close: (WIDGET_W * s - close_inset - close_r, close_inset + close_r),
         close_r,
     }
 }
@@ -175,9 +201,21 @@ pub fn format_elapsed(d: Duration) -> String {
     }
 }
 
-pub fn face_digits(state: VisibleState, sitting: Duration, break_remaining: Duration) -> String {
-    let _ = (state, break_remaining);
-    format_elapsed(sitting)
+pub fn face_digits(timer_remaining: Duration) -> String {
+    format_elapsed(Duration::from_secs(countdown_secs(timer_remaining)))
+}
+
+fn countdown_secs(remaining: Duration) -> u64 {
+    remaining
+        .as_secs()
+        .saturating_add(u64::from(remaining.subsec_nanos() != 0))
+}
+
+pub fn pill_background_rgb(state: VisibleState) -> [u8; 3] {
+    match state {
+        VisibleState::Overdue => [0x2A, 0x10, 0x16],
+        _ => [0x10, 0x12, 0x14],
+    }
 }
 
 pub fn format_break_remaining(d: Duration) -> String {
@@ -196,11 +234,7 @@ pub fn format_goal_parts(d: Duration) -> (String, &'static str) {
     }
 }
 
-pub fn tag_goal(
-    _state: VisibleState,
-    limit: Duration,
-    _break_dur: Duration,
-) -> Duration {
+pub fn tag_goal(_state: VisibleState, limit: Duration, _break_dur: Duration) -> Duration {
     limit
 }
 

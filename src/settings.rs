@@ -30,6 +30,37 @@ pub enum TimerShape {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum InactivityBehavior {
+    #[default]
+    Pause,
+    Continue,
+}
+
+impl InactivityBehavior {
+    pub const ALL: [Self; 2] = [Self::Pause, Self::Continue];
+
+    pub fn chip_label(self) -> &'static str {
+        match self {
+            Self::Pause => "Pause",
+            Self::Continue => "Continue",
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        Self::ALL.get(index).copied().unwrap_or_default()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimerCheckpoint {
+    pub sitting_elapsed_secs: u64,
+    pub snooze_until_secs: u64,
+    pub running: bool,
+    pub saved_at_unix_secs: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WidgetSize {
     Micro,
     #[default]
@@ -170,13 +201,15 @@ pub struct Settings {
     pub break_duration_secs: u64,
     #[serde(default = "default_idle")]
     pub idle_after_secs: u64,
+    #[serde(default)]
+    pub inactivity_behavior: InactivityBehavior,
     #[serde(default = "default_true")]
     pub sound_enabled: bool,
     #[serde(default = "default_true")]
     pub repeat_reminders: bool,
     #[serde(default = "default_repeat")]
     pub repeat_every_secs: u64,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub launch_with_windows: bool,
     #[serde(default = "default_window")]
     pub window_x: i32,
@@ -194,6 +227,8 @@ pub struct Settings {
     pub alert_duration_secs: u64,
     #[serde(default = "default_snooze")]
     pub snooze_secs: u64,
+    #[serde(default)]
+    pub timer_checkpoint: Option<TimerCheckpoint>,
 }
 
 fn default_sitting_limit() -> u64 {
@@ -229,10 +264,11 @@ impl Default for Settings {
             sitting_limit_secs: default_sitting_limit(),
             break_duration_secs: default_break(),
             idle_after_secs: default_idle(),
+            inactivity_behavior: InactivityBehavior::Pause,
             sound_enabled: true,
             repeat_reminders: true,
             repeat_every_secs: default_repeat(),
-            launch_with_windows: true,
+            launch_with_windows: false,
             window_x: 40,
             window_y: 40,
             today_date: String::new(),
@@ -241,6 +277,7 @@ impl Default for Settings {
             alert_sound: AlertSound::Chime,
             alert_duration_secs: 0,
             snooze_secs: default_snooze(),
+            timer_checkpoint: None,
         }
     }
 }

@@ -1,28 +1,26 @@
 use crate::win::app::App;
 use crate::win::paint::widget_size;
+use unseat::{hit_control, layout_scale, Command, Hit, TimerShape, WidgetSize, WIDGET_H, WIDGET_W};
+use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetCursorPos, GetWindowLongPtrW, GetWindowRect, LoadCursorW,
     MoveWindow, PostQuitMessage, RegisterClassW, SetCursor, SetWindowLongPtrW, SetWindowPos,
     ShowWindow, WindowFromPoint, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HTCLIENT,
-    HWND_TOPMOST, IDC_ARROW, SC_MINIMIZE, SC_RESTORE, SWP_NOACTIVATE, SW_SHOWNOACTIVATE, WM_ACTIVATE,
-    WM_CLOSE, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST,
-    WM_RBUTTONUP, WM_SHOWWINDOW, WM_SYSCOMMAND, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_POPUP,
-};
-use windows::core::w;
-use unseat::{
-    hit_control, layout_scale, Command, Hit, TimerShape, WidgetSize, WIDGET_H,
-    WIDGET_W,
+    HWND_TOPMOST, IDC_ARROW, PBT_APMRESUMEAUTOMATIC, PBT_APMSUSPEND, SC_MINIMIZE, SC_RESTORE,
+    SWP_NOACTIVATE, SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_CLOSE, WM_CREATE, WM_DESTROY,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_POWERBROADCAST, WM_RBUTTONUP,
+    WM_SHOWWINDOW, WM_SYSCOMMAND, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 
 pub const CLASS: windows::core::PCWSTR = w!("UnseatWidget");
@@ -148,6 +146,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             (*app).on_widget_right_click();
             LRESULT(0)
         }
+        WM_POWERBROADCAST => {
+            match wp.0 as u32 {
+                PBT_APMSUSPEND => (*app).on_suspend(),
+                PBT_APMRESUMEAUTOMATIC => (*app).on_resume(),
+                _ => {}
+            }
+            LRESULT(1)
+        }
         WM_SHOWWINDOW => {
             (*app).widget_visible = wp.0 != 0;
             if wp.0 == 0 {
@@ -252,8 +258,8 @@ impl App {
             y,
         ) {
             match hit {
-                Hit::Pause => self.engine.apply(Command::TogglePause),
-                Hit::Reset => self.engine.apply(Command::Reset),
+                Hit::Pause => self.apply_engine_command(Command::TogglePause),
+                Hit::Reset => self.apply_engine_command(Command::Reset),
                 Hit::Snooze => self.snooze_default(),
                 Hit::Close => {
                     self.hide_widget();

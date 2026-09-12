@@ -1,7 +1,8 @@
 use std::time::Duration;
 use unseat::{
-    face_digits, format_elapsed, format_limit, format_today, hit_control, is_dev_build,
-    installed_exe, progress, widget_layout, widget_pixel_size, Hit, TimerShape, VisibleState,
+    face_digits, format_elapsed, format_limit, format_today, hit_control, installed_exe,
+    is_dev_build, pill_background_rgb, progress, timer_render_key, widget_layout,
+    widget_pixel_size, Hit, Snapshot, TimerShape, VisibleState, WidgetSize,
 };
 
 #[test]
@@ -17,22 +18,22 @@ fn elapsed_uses_h_when_over_an_hour() {
 fn limit_caption_uses_minutes_under_two_hours() {
     assert_eq!(format_limit(Duration::from_secs(3600)), "60 min");
     assert_eq!(format_limit(Duration::from_secs(180)), "3 min");
-    assert_eq!(unseat::format_goal_parts(Duration::from_secs(3600)), ("60".into(), "min"));
-    assert_eq!(unseat::format_goal_parts(Duration::from_secs(7200)), ("2".into(), "hr"));
+    assert_eq!(
+        unseat::format_goal_parts(Duration::from_secs(3600)),
+        ("60".into(), "min")
+    );
+    assert_eq!(
+        unseat::format_goal_parts(Duration::from_secs(7200)),
+        ("2".into(), "hr")
+    );
 }
 
 #[test]
 fn goal_tag_keeps_sitting_limit_on_break() {
     let limit = Duration::from_secs(30 * 60);
     let brk = Duration::from_secs(3 * 60);
-    assert_eq!(
-        unseat::tag_goal(VisibleState::Break, limit, brk),
-        limit
-    );
-    assert_eq!(
-        unseat::tag_goal(VisibleState::Sitting, limit, brk),
-        limit
-    );
+    assert_eq!(unseat::tag_goal(VisibleState::Break, limit, brk), limit);
+    assert_eq!(unseat::tag_goal(VisibleState::Sitting, limit, brk), limit);
 }
 
 #[test]
@@ -73,19 +74,13 @@ fn widget_size_is_the_pill() {
 fn digit_lane_hugs_the_time() {
     let l = widget_layout(1.0);
     let lane = l.digits_r - l.digits_l;
-    assert!(
-        lane >= 84.0,
-        "digit lane {lane}px is too narrow for MM:SS"
-    );
+    assert!(lane >= 84.0, "digit lane {lane}px is too narrow for MM:SS");
     assert!(
         lane <= 92.0,
         "digit lane {lane}px leaves a stale hole beside the time"
     );
     let gap = l.tag_x - l.digits_r;
-    assert!(
-        gap <= 8.0 + 0.01,
-        "controls sit {gap}px from the time"
-    );
+    assert!(gap <= 8.0 + 0.01, "controls sit {gap}px from the time");
 }
 
 #[test]
@@ -114,8 +109,16 @@ fn window_chrome_is_even() {
     let (w, h) = widget_pixel_size(TimerShape::Capsule, 1.0);
     let right = w as f32 - l.pill_x - l.pill_w;
     let bottom = h as f32 - l.pill_y - l.pill_h;
-    assert!((l.pill_x - right).abs() < 0.01, "left {} vs right {right}", l.pill_x);
-    assert!((l.pill_y - bottom).abs() < 0.01, "top {} vs bottom {bottom}", l.pill_y);
+    assert!(
+        (l.pill_x - right).abs() < 0.01,
+        "left {} vs right {right}",
+        l.pill_x
+    );
+    assert!(
+        (l.pill_y - bottom).abs() < 0.01,
+        "top {} vs bottom {bottom}",
+        l.pill_y
+    );
 }
 
 #[test]
@@ -132,7 +135,10 @@ fn running_hides_controls_until_hover() {
     let l = widget_layout(1.0);
     let (px, py) = (l.pause.0.round() as i32, l.pause.1.round() as i32);
     let (rx, ry) = (l.reset.0.round() as i32, l.reset.1.round() as i32);
-    assert_eq!(hit_control(TimerShape::Card, false, VisibleState::Sitting, 1.0, px, py), None);
+    assert_eq!(
+        hit_control(TimerShape::Card, false, VisibleState::Sitting, 1.0, px, py),
+        None
+    );
     assert_eq!(
         hit_control(TimerShape::Card, true, VisibleState::Sitting, 1.0, px, py),
         Some(Hit::Pause)
@@ -145,13 +151,97 @@ fn running_hides_controls_until_hover() {
 
 #[test]
 fn break_keeps_sitting_digits_instead_of_swapping_to_break_remaining() {
+    assert_eq!(face_digits(Duration::from_secs(15 * 60 + 55)), "15:55");
+}
+
+#[test]
+fn countdown_face_is_stable_across_repaints_and_stops_at_zero() {
+    let remaining = Duration::from_secs(2 * 60 + 13);
+    assert_eq!(face_digits(remaining), "02:13");
+    assert_eq!(face_digits(remaining), "02:13");
+    assert_eq!(face_digits(Duration::ZERO), "00:00");
+}
+
+#[test]
+fn countdown_does_not_show_zero_before_expiry() {
+    assert_eq!(face_digits(Duration::from_millis(1)), "00:01");
+    assert_eq!(face_digits(Duration::from_millis(1001)), "00:02");
+}
+
+#[test]
+fn completed_timer_uses_a_subtle_dark_maroon_background() {
     assert_eq!(
-        face_digits(
-            VisibleState::Break,
-            Duration::from_secs(15 * 60 + 55),
-            Duration::from_secs(180)
-        ),
-        "15:55"
+        pill_background_rgb(VisibleState::Overdue),
+        [0x2A, 0x10, 0x16]
+    );
+    assert_eq!(
+        pill_background_rgb(VisibleState::Sitting),
+        [0x10, 0x12, 0x14]
+    );
+}
+
+#[test]
+fn render_key_tracks_countdown_state_without_hash_collisions() {
+    let snapshot = Snapshot {
+        state: VisibleState::Sitting,
+        sitting_elapsed: Duration::from_secs(10),
+        timer_remaining: Duration::from_secs(20),
+        break_elapsed: Duration::ZERO,
+        break_remaining: Duration::from_secs(180),
+        today_sitting: Duration::from_secs(10),
+        running: true,
+    };
+    let same = timer_render_key(
+        snapshot,
+        TimerShape::Capsule,
+        WidgetSize::Small,
+        false,
+        true,
+    );
+    let mut advanced = snapshot;
+    advanced.timer_remaining = Duration::from_secs(19);
+    let mut completed_accounting_only = snapshot;
+    completed_accounting_only.state = VisibleState::Overdue;
+    completed_accounting_only.timer_remaining = Duration::ZERO;
+    let completed_key = timer_render_key(
+        completed_accounting_only,
+        TimerShape::Capsule,
+        WidgetSize::Small,
+        false,
+        true,
+    );
+    completed_accounting_only.sitting_elapsed += Duration::from_secs(1);
+    completed_accounting_only.today_sitting += Duration::from_secs(1);
+
+    assert_eq!(
+        same,
+        timer_render_key(
+            snapshot,
+            TimerShape::Capsule,
+            WidgetSize::Small,
+            false,
+            true
+        )
+    );
+    assert_ne!(
+        same,
+        timer_render_key(
+            advanced,
+            TimerShape::Capsule,
+            WidgetSize::Small,
+            false,
+            true
+        )
+    );
+    assert_eq!(
+        completed_key,
+        timer_render_key(
+            completed_accounting_only,
+            TimerShape::Capsule,
+            WidgetSize::Small,
+            false,
+            true,
+        )
     );
 }
 
@@ -202,7 +292,10 @@ fn close_is_hittable_only_on_hover() {
     let l = widget_layout(1.0);
     let x = l.close.0.round() as i32;
     let y = l.close.1.round() as i32;
-    assert_eq!(hit_control(TimerShape::Card, false, VisibleState::Sitting, 1.0, x, y), None);
+    assert_eq!(
+        hit_control(TimerShape::Card, false, VisibleState::Sitting, 1.0, x, y),
+        None
+    );
     assert_eq!(
         hit_control(TimerShape::Card, true, VisibleState::Sitting, 1.0, x, y),
         Some(Hit::Close)
@@ -234,14 +327,14 @@ fn close_sits_in_the_window_corner() {
         (right - top).abs() < 0.01,
         "right inset {right} vs top {top}"
     );
-    assert!(right <= 2.0 + 0.01, "close inset {right} should sit in the chrome");
+    assert!(
+        right <= 2.0 + 0.01,
+        "close inset {right} should sit in the chrome"
+    );
     let dx = l.close.0 - l.pause.0;
     let dy = l.close.1 - l.pause.1;
     let sep = (dx * dx + dy * dy).sqrt() - l.close_r - l.control_r;
-    assert!(
-        sep >= 5.5,
-        "close overlaps pause (gap {sep})"
-    );
+    assert!(sep >= 5.5, "close overlaps pause (gap {sep})");
 }
 
 #[test]

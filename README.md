@@ -25,10 +25,11 @@
 
 Unseat is a local desktop **timer** and break reminder. It stays on top of your work like a small watch, tracks how long you have been sitting, and alerts you when it is time to get up.
 
-- Always-on-top overlay timer that starts when you launch it
-- Idle or lock the session and it treats that as a break
+- Always-on-top countdown that starts when you launch it and stops at `00:00`
+- Choose whether idle, lock, sleep, and app downtime pause the countdown or let it continue
 - A qualifying break resets the current sitting session
 - Pause freezes the clock; reset starts a fresh session
+- Active timer state is restored after relaunch; only Reset starts over
 - One alert at the limit, optional repeat while overdue
 - Choose a bundled sound, preview it, and how long it plays
 - Snooze from the overlay (click the overdue time), tray, or settings
@@ -41,11 +42,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for how the engine and Win32 host split.
 
 ## Install
 
-Download `unseat.exe` from [Releases](https://github.com/flyingsatoshi/unseat/releases) and run it. The first launch copies Unseat into `%LOCALAPPDATA%\Unseat` and adds a Start Menu shortcut, so you can pin it to the taskbar and open it again without going back to Downloads.
+Download `unseat.exe` from [Releases](https://github.com/flyingsatoshi/unseat/releases), put it in a permanent folder of your choice, and run it there. Unseat is portable: it does not copy or relaunch itself, or create shortcuts automatically. You can pin it to the taskbar or create a shortcut yourself.
 
 Close from the taskbar or tray **Quit**. Click the pinned icon to open it again. Hide the overlay from the close chip or tray; the timer keeps running.
 
-Optional: Settings → Launch with Windows.
+Optional: Settings → Launch with Windows. This is off by default; the startup registration changes only when you change that switch and save. Existing saved preferences and startup entries are preserved. If you move the executable, turn the switch off and save, then turn it on and save from the new location to update the startup path.
 
 ## Alerts and snooze
 
@@ -55,18 +56,22 @@ When the sitting limit is reached, snooze **5 / 10 / 15 / 30** minutes or a cust
 
 ## Build from source
 
-Windows 10/11 x64, [Rust](https://rustup.rs/), and the MSVC Build Tools C++ workload.
+Windows 10/11 x64, [Rust](https://rustup.rs/), and the MSVC Build Tools C++ workload including the Windows SDK/resource compiler.
 
 From an x64 Native Tools prompt (or after `vcvars64.bat`):
 
 ```bat
-cargo test --no-default-features
-cargo build --release --features gui
+cargo test --locked --all-targets
+cargo build --locked --release --features gui
 ```
 
 The binary is `target\release\unseat.exe`.
 
 Library tests do not need the GUI feature. The Win32 host is behind `--features gui`.
+
+GNU builds additionally need MinGW `windres` on PATH (or configured through the resource compiler's `RC` environment variable). GUI builds require resources and fail if they cannot embed the application manifest, icon, and version information.
+
+For release signing and handling antivirus false positives, see [Windows distribution](docs/windows-distribution.md). Build/test success does not establish an antivirus verdict.
 
 To regenerate alert WAVs (optional):
 

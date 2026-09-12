@@ -1,5 +1,5 @@
 use crate::date::CivilDate;
-use crate::settings::Settings;
+use crate::settings::{InactivityBehavior, Settings, TimerCheckpoint};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7,6 +7,7 @@ pub struct EngineConfig {
     pub sitting_limit: Duration,
     pub break_duration: Duration,
     pub idle_after: Duration,
+    pub inactivity_behavior: InactivityBehavior,
     pub sound_enabled: bool,
     pub repeat_reminders: bool,
     pub repeat_every: Duration,
@@ -18,6 +19,7 @@ impl EngineConfig {
             sitting_limit: Duration::from_secs(settings.sitting_limit_secs),
             break_duration: Duration::from_secs(settings.break_duration_secs),
             idle_after: Duration::from_secs(settings.idle_after_secs),
+            inactivity_behavior: settings.inactivity_behavior,
             sound_enabled: settings.sound_enabled,
             repeat_reminders: settings.repeat_reminders,
             repeat_every: Duration::from_secs(settings.repeat_every_secs),
@@ -57,6 +59,7 @@ pub enum Beep {
 pub struct Snapshot {
     pub state: VisibleState,
     pub sitting_elapsed: Duration,
+    pub timer_remaining: Duration,
     pub break_elapsed: Duration,
     pub break_remaining: Duration,
     pub today_sitting: Duration,
@@ -102,6 +105,10 @@ impl SittingEngine {
 
     pub fn set_config(&mut self, config: EngineConfig) {
         self.config = config;
+        if config.inactivity_behavior == InactivityBehavior::Continue {
+            self.in_break = false;
+            self.break_elapsed = Duration::ZERO;
+        }
     }
 
     pub fn apply(&mut self, cmd: Command) {
@@ -126,6 +133,58 @@ impl SittingEngine {
         }
     }
 
+    pub fn restore(
+        config: EngineConfig,
+        today: CivilDate,
+        today_sitting: Duration,
+        checkpoint: TimerCheckpoint,
+        wall_now_secs: u64,
+    ) -> Self {
+        let mut engine = Self::new(config, today, today_sitting);
+        engine.sitting_elapsed = Duration::from_secs(checkpoint.sitting_elapsed_secs);
+        engine.snooze_until = Duration::from_secs(checkpoint.snooze_until_secs);
+        engine.running = checkpoint.running;
+
+        if engine.running && config.inactivity_behavior == InactivityBehavior::Continue {
+            let downtime = wall_now_secs.saturating_sub(checkpoint.saved_at_unix_secs);
+            let downtime = Duration::from_secs(downtime);
+            engine.sitting_elapsed = engine.sitting_elapsed.saturating_add(downtime);
+        }
+
+        let limit = engine.effective_limit();
+        engine.limit_beeped = engine.sitting_elapsed >= limit;
+        if engine.limit_beeped && engine.config.repeat_reminders {
+            let over = engine.sitting_elapsed.saturating_sub(limit).as_secs();
+            let every = engine.config.repeat_every.as_secs().max(1);
+            engine.progressive_beeps_fired = (over / every) as u32;
+        }
+        engine
+    }
+
+    pub fn checkpoint(&self, wall_now_secs: u64) -> TimerCheckpoint {
+        TimerCheckpoint {
+            sitting_elapsed_secs: self.sitting_elapsed.as_secs(),
+            snooze_until_secs: self.snooze_until.as_secs(),
+            running: self.running,
+            saved_at_unix_secs: wall_now_secs,
+        }
+    }
+
+    pub fn apply_at(
+        &mut self,
+        cmd: Command,
+        now: Duration,
+        date: CivilDate,
+        input: Input,
+    ) -> TickResult {
+        let result = self.tick(now, date, input);
+        self.apply(cmd);
+        TickResult {
+            beep: result.beep,
+            snapshot: self.snapshot(),
+        }
+    }
+
     pub fn can_snooze(&self) -> bool {
         self.sitting_elapsed >= self.config.sitting_limit
     }
@@ -138,6 +197,7 @@ impl SittingEngine {
         Snapshot {
             state: self.visible_state(),
             sitting_elapsed: self.sitting_elapsed,
+            timer_remaining: self.effective_limit().saturating_sub(self.sitting_elapsed),
             break_elapsed: self.break_elapsed,
             break_remaining: self
                 .config
@@ -167,15 +227,50 @@ impl SittingEngine {
             };
         }
 
-        let away = input.session_locked || input.last_input_age >= self.config.idle_after;
+        let inactive = input.session_locked || input.last_input_age >= self.config.idle_after;
+        if self.config.inactivity_behavior == InactivityBehavior::Pause
+            && inactive
+            && self.sitting_elapsed >= self.effective_limit()
+        {
+            self.in_break = false;
+            self.break_elapsed = Duration::ZERO;
+            return TickResult {
+                beep: Beep::None,
+                snapshot: self.snapshot(),
+            };
+        }
+
+        let away = self.config.inactivity_behavior == InactivityBehavior::Pause && inactive;
         let mut beep = Beep::None;
 
         if away {
+            let mut break_dt = dt;
             if !self.in_break {
+                let already_away = if input.session_locked {
+                    Duration::ZERO
+                } else {
+                    input.last_input_age.saturating_sub(self.config.idle_after)
+                };
+                break_dt = already_away.min(dt);
+                let active_dt = dt.saturating_sub(break_dt);
+                if !active_dt.is_zero() {
+                    let previous = self.sitting_elapsed;
+                    self.sitting_elapsed += active_dt;
+                    self.today_sitting += active_dt;
+                    beep = self.beep_for(previous, self.sitting_elapsed);
+                }
+                if self.sitting_elapsed >= self.effective_limit() {
+                    self.in_break = false;
+                    self.break_elapsed = Duration::ZERO;
+                    return TickResult {
+                        beep,
+                        snapshot: self.snapshot(),
+                    };
+                }
                 self.in_break = true;
                 self.break_elapsed = Duration::ZERO;
             }
-            self.break_elapsed += dt;
+            self.break_elapsed += break_dt;
             if self.break_elapsed >= self.config.break_duration {
                 self.sitting_elapsed = Duration::ZERO;
                 self.limit_beeped = false;
@@ -183,13 +278,22 @@ impl SittingEngine {
                 self.snooze_until = Duration::ZERO;
             }
         } else {
+            let mut active_dt = dt;
             if self.in_break {
+                active_dt = input.last_input_age.min(dt);
+                self.break_elapsed += dt.saturating_sub(active_dt);
+                if self.break_elapsed >= self.config.break_duration {
+                    self.sitting_elapsed = Duration::ZERO;
+                    self.limit_beeped = false;
+                    self.progressive_beeps_fired = 0;
+                    self.snooze_until = Duration::ZERO;
+                }
                 self.in_break = false;
                 self.break_elapsed = Duration::ZERO;
             }
             let previous = self.sitting_elapsed;
-            self.sitting_elapsed += dt;
-            self.today_sitting += dt;
+            self.sitting_elapsed += active_dt;
+            self.today_sitting += active_dt;
             beep = self.beep_for(previous, self.sitting_elapsed);
         }
 
@@ -235,12 +339,38 @@ impl SittingEngine {
     }
 }
 
-/// Keep at most 2s of wall time per tick so sleep/resume cannot jump or zero the session.
+/// Reconcile a monotonic clock without discarding time when update messages are delayed.
 pub fn clamp_clock(last: Option<Duration>, now: Duration) -> Duration {
-    const MAX_DT: Duration = Duration::from_secs(2);
     match last {
-        Some(prev) if now > prev => prev + (now - prev).min(MAX_DT),
-        Some(prev) => prev,
+        Some(prev) => now.max(prev),
         None => now,
     }
+}
+
+pub fn restored_today_sitting(
+    saved_today_sitting: Duration,
+    saved_date: CivilDate,
+    today: CivilDate,
+    inactivity_behavior: InactivityBehavior,
+    checkpoint: TimerCheckpoint,
+    wall_now_secs: u64,
+    since_local_midnight: Duration,
+) -> Duration {
+    let same_day = saved_date == today;
+    let base = if same_day {
+        saved_today_sitting
+    } else {
+        Duration::ZERO
+    };
+    if !checkpoint.running || inactivity_behavior != InactivityBehavior::Continue {
+        return base;
+    }
+
+    let downtime = Duration::from_secs(wall_now_secs.saturating_sub(checkpoint.saved_at_unix_secs));
+    let today_downtime = if same_day {
+        downtime
+    } else {
+        downtime.min(since_local_midnight)
+    };
+    base.saturating_add(today_downtime)
 }

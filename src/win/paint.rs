@@ -1,7 +1,8 @@
-﻿use unseat::{
-    face_digits, format_goal_parts, progress, tag_goal, widget_layout, widget_pixel_size, Snapshot,
-    TimerShape, VisibleState,
+use unseat::{
+    face_digits, format_goal_parts, pill_background_rgb, progress, tag_goal, widget_layout,
+    widget_pixel_size, Snapshot, TimerShape, VisibleState,
 };
+use windows::core::{w, Interface};
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED,
@@ -15,19 +16,18 @@ use windows::Win32::Graphics::Direct2D::{
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED,
-    DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,     DWRITE_FONT_WEIGHT_BLACK, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_MEASURING_MODE_NATURAL,
-    DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT,
-    DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_WORD_WRAPPING_NO_WRAP,
+    DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_BLACK,
+    DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+    DWRITE_TEXT_ALIGNMENT, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
+    DWRITE_WORD_WRAPPING_NO_WRAP,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, DrawTextW, GetDC, ReleaseDC,
-    SelectObject, SetBkMode, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO,
-    BITMAPINFOHEADER, BLENDFUNCTION, DIB_RGB_COLORS, DT_CENTER, DT_SINGLELINE, DT_VCENTER, HDC,
-    TRANSPARENT,
+    SelectObject, SetBkMode, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER,
+    BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, DT_CENTER, DT_SINGLELINE, DT_VCENTER, HDC, TRANSPARENT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{UpdateLayeredWindow, ULW_ALPHA};
-use windows::core::{w, Interface};
 
 pub struct D2d {
     factory: ID2D1Factory,
@@ -183,6 +183,7 @@ fn draw_pill(
         return;
     };
     unsafe {
+        let [bg_r, bg_g, bg_b] = pill_background_rgb(snap.state);
         fill_round(
             &rt,
             l.pill_x + 1.0 * scale,
@@ -199,7 +200,7 @@ fn draw_pill(
             l.pill_w,
             l.pill_h,
             radius,
-            rgb(0x10, 0x12, 0x14, 0.98),
+            rgb(bg_r, bg_g, bg_b, 0.98),
         );
         stroke_round(
             &rt,
@@ -212,7 +213,7 @@ fn draw_pill(
             1.0 * scale,
         );
 
-        let digits = face_digits(snap.state, snap.sitting_elapsed, snap.break_remaining);
+        let digits = face_digits(snap.timer_remaining);
         let goal = tag_goal(snap.state, limit, break_dur);
         let paused = snap.state == VisibleState::Paused;
         let (px, py) = l.pause;
@@ -460,10 +461,7 @@ unsafe fn fill_play_triangle(
             D2D1_FIGURE_BEGIN_FILLED,
         );
         sink.AddLines(&[
-            D2D_POINT_2F {
-                x: left + w,
-                y: cy,
-            },
+            D2D_POINT_2F { x: left + w, y: cy },
             D2D_POINT_2F {
                 x: left,
                 y: cy + h * 0.5,
@@ -599,14 +597,15 @@ unsafe fn gdi_fallback(hdc: HDC, bits: *mut core::ffi::c_void, cx: i32, cy: i32,
     }
     let stride = cx * 4;
     let ptr = bits as *mut u8;
+    let [r, g, b] = pill_background_rgb(snap.state);
     for y in 0..cy {
         for x in 0..cx {
             let inside = rounded_contains(x as f32, y as f32, cx as f32, cy as f32, 10.0);
             let i = (y * stride + x * 4) as isize;
             if inside {
-                *ptr.offset(i) = 0x1C;
-                *ptr.offset(i + 1) = 0x19;
-                *ptr.offset(i + 2) = 0x15;
+                *ptr.offset(i) = b;
+                *ptr.offset(i + 1) = g;
+                *ptr.offset(i + 2) = r;
                 *ptr.offset(i + 3) = 240;
             } else {
                 *ptr.offset(i) = 0;
@@ -616,7 +615,7 @@ unsafe fn gdi_fallback(hdc: HDC, bits: *mut core::ffi::c_void, cx: i32, cy: i32,
             }
         }
     }
-    let digits = face_digits(snap.state, snap.sitting_elapsed, snap.break_remaining);
+    let digits = face_digits(snap.timer_remaining);
     let mut text: Vec<u16> = digits.encode_utf16().chain(std::iter::once(0)).collect();
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, COLORREF(0x00F2F5F5));
@@ -626,7 +625,12 @@ unsafe fn gdi_fallback(hdc: HDC, bits: *mut core::ffi::c_void, cx: i32, cy: i32,
         right: cx - 16,
         bottom: cy,
     };
-    let _ = DrawTextW(hdc, &mut text, &mut rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    let _ = DrawTextW(
+        hdc,
+        &mut text,
+        &mut rc,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+    );
     for y in 0..cy {
         for x in 0..cx {
             let i = (y * stride + x * 4) as isize;

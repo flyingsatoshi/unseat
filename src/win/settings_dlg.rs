@@ -1,16 +1,18 @@
-﻿use crate::win::app::App;
+use crate::win::app::App;
 use unseat::{
-    format_today, AlertSound, WidgetSize, ALERT_DURATION_PRESETS_SECS, SNOOZE_PRESETS_SECS,
+    format_today, AlertSound, InactivityBehavior, WidgetSize, ALERT_DURATION_PRESETS_SECS,
+    SNOOZE_PRESETS_SECS,
 };
+use windows::core::{w, Interface};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1RenderTarget,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_HWND_RENDER_TARGET_PROPERTIES,
-    D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT,
-    D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
+    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
+    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
+    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED,
@@ -23,23 +25,24 @@ use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
-use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, ScreenToClient, PAINTSTRUCT};
+use windows::Win32::Graphics::Gdi::{
+    BeginPaint, EndPaint, InvalidateRect, ScreenToClient, PAINTSTRUCT,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_RETURN};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW, GetClientRect, GetWindowLongPtrW,
-    RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA,
-    HTCAPTION, HTCLIENT, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SW_SHOW, WM_CLOSE,
-    WM_CREATE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST,
-    WM_PAINT, WNDCLASSW, WS_POPUP, WS_VISIBLE, WS_EX_TOPMOST,
+    RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    GWLP_USERDATA, HTCAPTION, HTCLIENT, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SW_SHOW,
+    WM_CLOSE, WM_CREATE, WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
-use windows::core::{w, Interface};
 
 pub const CLASS: windows::core::PCWSTR = w!("UnseatSettings");
 
 const WIN_W: i32 = 300;
-const WIN_H: i32 = 800;
+const WIN_H: i32 = 838;
 const BTN_RADIUS: f32 = 4.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -94,6 +97,7 @@ enum Hit {
     SoundKind(usize),
     Duration(usize),
     SnoozePreset(usize),
+    Inactivity(usize),
     Repeat,
     Auto,
     Cancel,
@@ -112,6 +116,7 @@ struct Dialog {
     sitting_min: u64,
     break_min: u64,
     idle_sec: u64,
+    inactivity_behavior: InactivityBehavior,
     every_min: u64,
     step: u64,
     sound_kind: AlertSound,
@@ -146,7 +151,7 @@ pub fn open(app: *mut App) {
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST,
             CLASS,
-            w!(""),
+            w!("Unseat Settings"),
             WS_POPUP | WS_VISIBLE,
             120,
             80,
@@ -228,8 +233,8 @@ struct Lay {
     h: f32,
     scale: f32,
     close: D2D_RECT_F,
-        title: D2D_RECT_F,
-        timer_head: D2D_RECT_F,
+    title: D2D_RECT_F,
+    timer_head: D2D_RECT_F,
     timer_card: D2D_RECT_F,
     sitting_row: D2D_RECT_F,
     step_row: D2D_RECT_F,
@@ -239,6 +244,8 @@ struct Lay {
     breaks_card: D2D_RECT_F,
     break_row: D2D_RECT_F,
     idle_row: D2D_RECT_F,
+    inactivity_row: D2D_RECT_F,
+    inactivity_choices: [D2D_RECT_F; 2],
     alerts_head: D2D_RECT_F,
     alerts_card: D2D_RECT_F,
     sound: D2D_RECT_F,
@@ -278,12 +285,7 @@ impl Lay {
     }
 
     fn row_label(&self, row: D2D_RECT_F, right: f32) -> D2D_RECT_F {
-        rct(
-            row.left + px(12.0, self.scale),
-            row.top,
-            right,
-            row.bottom,
-        )
+        rct(row.left + px(12.0, self.scale), row.top, right, row.bottom)
     }
 }
 
@@ -315,8 +317,18 @@ fn layout(scale: f32) -> Lay {
     let head_h = px(19.0, scale);
     let gap = px(10.0, scale);
 
-    let title = rct(x + px(4.0, scale), px(10.0, scale), px(200.0, scale), px(34.0, scale));
-    let timer_head = rct(x + px(4.0, scale), px(38.0, scale), px(160.0, scale), px(57.0, scale));
+    let title = rct(
+        x + px(4.0, scale),
+        px(10.0, scale),
+        px(200.0, scale),
+        px(34.0, scale),
+    );
+    let timer_head = rct(
+        x + px(4.0, scale),
+        px(38.0, scale),
+        px(160.0, scale),
+        px(57.0, scale),
+    );
     let t0 = px(57.0, scale);
     let step_top = t0 + row_h;
     let overlay_label_top = step_top + row_h + px(8.0, scale);
@@ -340,10 +352,31 @@ fn layout(scale: f32) -> Lay {
     let breaks_head_top = timer_bot + gap;
     let b0 = breaks_head_top + head_h;
     let idle_top = b0 + row_h;
-    let breaks_bot = idle_top + row_h;
+    let inactivity_top = idle_top + row_h;
+    let breaks_bot = inactivity_top + row_h;
     let breaks_card = rct(x, b0, card_r, breaks_bot);
     let break_row = rct(x, b0, card_r, idle_top);
-    let idle_row = rct(x, idle_top, card_r, breaks_bot);
+    let idle_row = rct(x, idle_top, card_r, inactivity_top);
+    let inactivity_row = rct(x, inactivity_top, card_r, breaks_bot);
+    let choice_gap = px(4.0, scale);
+    let choice_w = px(64.0, scale);
+    let choice_h = px(26.0, scale);
+    let choices_right = card_r - px(10.0, scale);
+    let choices_y = inactivity_top + (row_h - choice_h) * 0.5;
+    let inactivity_choices = [
+        rct(
+            choices_right - choice_w * 2.0 - choice_gap,
+            choices_y,
+            choices_right - choice_w - choice_gap,
+            choices_y + choice_h,
+        ),
+        rct(
+            choices_right - choice_w,
+            choices_y,
+            choices_right,
+            choices_y + choice_h,
+        ),
+    ];
 
     let alerts_head_top = breaks_bot + gap;
     let a0 = alerts_head_top + head_h;
@@ -412,24 +445,41 @@ fn layout(scale: f32) -> Lay {
         w,
         h,
         scale,
-        close: rct(w - px(36.0, scale), px(8.0, scale), w - px(12.0, scale), px(32.0, scale)),
+        close: rct(
+            w - px(36.0, scale),
+            px(8.0, scale),
+            w - px(12.0, scale),
+            px(32.0, scale),
+        ),
         title,
         timer_head,
         timer_card,
         sitting_row,
         step_row,
-        overlay_label: rct(x + px(12.0, scale), overlay_label_top, px(200.0, scale), overlay_label_bot),
+        overlay_label: rct(
+            x + px(12.0, scale),
+            overlay_label_top,
+            px(200.0, scale),
+            overlay_label_bot,
+        ),
         sizes,
         breaks_head: rct(x + px(4.0, scale), breaks_head_top, px(160.0, scale), b0),
         breaks_card,
         break_row,
         idle_row,
+        inactivity_row,
+        inactivity_choices,
         alerts_head: rct(x + px(4.0, scale), alerts_head_top, px(160.0, scale), a0),
         alerts_card,
         sound,
         preview,
         sounds,
-        duration_label: rct(x + px(12.0, scale), duration_label_top, px(200.0, scale), duration_label_bot),
+        duration_label: rct(
+            x + px(12.0, scale),
+            duration_label_top,
+            px(200.0, scale),
+            duration_label_bot,
+        ),
         durations,
         repeat: rct(x, repeat_top, card_r, every_top),
         every_row,
@@ -506,6 +556,11 @@ fn hit_at(x: f32, y: f32, scale: f32) -> Hit {
     for (i, rc) in l.snoozes.iter().enumerate() {
         if contains(*rc, x, y) {
             return Hit::SnoozePreset(i);
+        }
+    }
+    for (i, rc) in l.inactivity_choices.iter().enumerate() {
+        if contains(*rc, x, y) {
+            return Hit::Inactivity(i);
         }
     }
     if contains(l.sound, x, y) {
@@ -614,6 +669,7 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
         sitting_min,
         break_min,
         idle_sec,
+        inactivity_behavior,
         every_min,
         step,
         sound_kind,
@@ -624,10 +680,11 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
             WidgetSize::Small,
             true,
             true,
-            true,
+            false,
             60,
             3,
             60,
+            InactivityBehavior::Pause,
             10,
             1,
             AlertSound::Chime,
@@ -643,7 +700,9 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
             s.launch_with_windows,
             (s.sitting_limit_secs / 60).clamp(Field::Limit.min(), Field::Limit.max()),
             (s.break_duration_secs / 60).clamp(Field::Break.min(), Field::Break.max()),
-            s.idle_after_secs.clamp(Field::Idle.min(), Field::Idle.max()),
+            s.idle_after_secs
+                .clamp(Field::Idle.min(), Field::Idle.max()),
+            s.inactivity_behavior,
             (s.repeat_every_secs / 60).clamp(Field::Every.min(), Field::Every.max()),
             s.step.clamp(Field::Step.min(), Field::Step.max()),
             s.alert_sound,
@@ -671,6 +730,7 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
         sitting_min,
         break_min,
         idle_sec,
+        inactivity_behavior,
         every_min,
         step,
         sound_kind,
@@ -705,12 +765,18 @@ unsafe fn ensure_rt(hwnd: HWND, dlg: *mut Dialog) -> Option<ID2D1RenderTarget> {
         };
         let hwnd_props = D2D1_HWND_RENDER_TARGET_PROPERTIES {
             hwnd,
-            pixelSize: D2D_SIZE_U { width: w, height: h },
+            pixelSize: D2D_SIZE_U {
+                width: w,
+                height: h,
+            },
             presentOptions: D2D1_PRESENT_OPTIONS_NONE,
         };
         (*dlg).rt = factory.CreateHwndRenderTarget(&props, &hwnd_props).ok();
     } else if let Some(rt) = (*dlg).rt.as_ref() {
-        let _ = rt.Resize(&D2D_SIZE_U { width: w, height: h });
+        let _ = rt.Resize(&D2D_SIZE_U {
+            width: w,
+            height: h,
+        });
     }
     (*dlg).rt.as_ref().and_then(|rt| rt.cast().ok())
 }
@@ -902,7 +968,12 @@ unsafe fn paint_step(
             rt,
             dwrite,
             &num,
-            rct(step.well.left + px(4.0, s), step.well.top, mid, step.well.bottom),
+            rct(
+                step.well.left + px(4.0, s),
+                step.well.top,
+                mid,
+                step.well.bottom,
+            ),
             px(13.0, s),
             DWRITE_FONT_WEIGHT_SEMI_BOLD,
             DWRITE_TEXT_ALIGNMENT_TRAILING,
@@ -912,7 +983,12 @@ unsafe fn paint_step(
             rt,
             dwrite,
             field.unit(),
-            rct(mid + px(3.0, s), step.well.top, step.well.right - px(4.0, s), step.well.bottom),
+            rct(
+                mid + px(3.0, s),
+                step.well.top,
+                step.well.right - px(4.0, s),
+                step.well.bottom,
+            ),
             px(11.0, s),
             DWRITE_FONT_WEIGHT_MEDIUM,
             DWRITE_TEXT_ALIGNMENT_LEADING,
@@ -971,8 +1047,26 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     let chip_sz = px(10.0, s);
     let card_r = px(10.0, s);
 
-    text(&rt, dwrite, "Unseat", l.title, px(16.0, s), DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, label);
-    text(&rt, dwrite, "Timer", l.timer_head, head_sz, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, head);
+    text(
+        &rt,
+        dwrite,
+        "Unseat",
+        l.title,
+        px(16.0, s),
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        label,
+    );
+    text(
+        &rt,
+        dwrite,
+        "Timer",
+        l.timer_head,
+        head_sz,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        head,
+    );
     fill_round(&rt, l.timer_card, card_r, card);
     text(
         &rt,
@@ -987,7 +1081,12 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     paint_step(&rt, dwrite, &*dlg, &l, Field::Limit, hover);
     fill_round(
         &rt,
-        rct(l.timer_card.left + px(12.0, s), l.sitting_row.bottom, l.timer_card.right - px(12.0, s), l.sitting_row.bottom + px(1.0, s)),
+        rct(
+            l.timer_card.left + px(12.0, s),
+            l.sitting_row.bottom,
+            l.timer_card.right - px(12.0, s),
+            l.sitting_row.bottom + px(1.0, s),
+        ),
         0.5,
         sep,
     );
@@ -1004,11 +1103,25 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     paint_step(&rt, dwrite, &*dlg, &l, Field::Step, hover);
     fill_round(
         &rt,
-        rct(l.timer_card.left + px(12.0, s), l.step_row.bottom, l.timer_card.right - px(12.0, s), l.step_row.bottom + px(1.0, s)),
+        rct(
+            l.timer_card.left + px(12.0, s),
+            l.step_row.bottom,
+            l.timer_card.right - px(12.0, s),
+            l.step_row.bottom + px(1.0, s),
+        ),
         0.5,
         sep,
     );
-    text(&rt, dwrite, "Overlay size", l.overlay_label, label_sz, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_TEXT_ALIGNMENT_LEADING, label);
+    text(
+        &rt,
+        dwrite,
+        "Overlay size",
+        l.overlay_label,
+        label_sz,
+        DWRITE_FONT_WEIGHT_MEDIUM,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        label,
+    );
     for (i, sz) in WidgetSize::ALL.iter().enumerate() {
         let on = *sz == (*dlg).size;
         fill_round(
@@ -1037,7 +1150,16 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
         );
     }
 
-    text(&rt, dwrite, "Breaks", l.breaks_head, head_sz, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, head);
+    text(
+        &rt,
+        dwrite,
+        "Breaks",
+        l.breaks_head,
+        head_sz,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        head,
+    );
     fill_round(&rt, l.breaks_card, card_r, card);
     text(
         &rt,
@@ -1052,7 +1174,12 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     paint_step(&rt, dwrite, &*dlg, &l, Field::Break, hover);
     fill_round(
         &rt,
-        rct(l.breaks_card.left + px(12.0, s), l.idle_row.top, l.breaks_card.right - px(12.0, s), l.idle_row.top + px(1.0, s)),
+        rct(
+            l.breaks_card.left + px(12.0, s),
+            l.idle_row.top,
+            l.breaks_card.right - px(12.0, s),
+            l.idle_row.top + px(1.0, s),
+        ),
         0.5,
         sep,
     );
@@ -1067,8 +1194,65 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
         label,
     );
     paint_step(&rt, dwrite, &*dlg, &l, Field::Idle, hover);
+    fill_round(
+        &rt,
+        rct(
+            l.breaks_card.left + px(12.0, s),
+            l.inactivity_row.top,
+            l.breaks_card.right - px(12.0, s),
+            l.inactivity_row.top + px(1.0, s),
+        ),
+        0.5,
+        sep,
+    );
+    text(
+        &rt,
+        dwrite,
+        "When inactive",
+        l.row_label(l.inactivity_row, l.inactivity_choices[0].left - px(8.0, s)),
+        label_sz,
+        DWRITE_FONT_WEIGHT_MEDIUM,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        label,
+    );
+    for (i, behavior) in InactivityBehavior::ALL.iter().enumerate() {
+        let on = *behavior == (*dlg).inactivity_behavior;
+        fill_round(
+            &rt,
+            l.inactivity_choices[i],
+            px(8.0, s),
+            if on {
+                rgb(0x0A, 0x84, 0xFF, 1.0)
+            } else {
+                rgb(0x3A, 0x3A, 0x3C, 1.0)
+            },
+        );
+        text(
+            &rt,
+            dwrite,
+            behavior.chip_label(),
+            l.inactivity_choices[i],
+            chip_sz,
+            DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_TEXT_ALIGNMENT_CENTER,
+            if on {
+                rgb(255, 255, 255, 1.0)
+            } else {
+                rgb(0xEB, 0xEB, 0xF5, 0.92)
+            },
+        );
+    }
 
-    text(&rt, dwrite, "Alerts", l.alerts_head, head_sz, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, head);
+    text(
+        &rt,
+        dwrite,
+        "Alerts",
+        l.alerts_head,
+        head_sz,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        head,
+    );
     fill_round(&rt, l.alerts_card, card_r, card);
     text(
         &rt,
@@ -1172,7 +1356,12 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     }
     fill_round(
         &rt,
-        rct(l.alerts_card.left + px(12.0, s), l.repeat.top, l.alerts_card.right - px(12.0, s), l.repeat.top + px(1.0, s)),
+        rct(
+            l.alerts_card.left + px(12.0, s),
+            l.repeat.top,
+            l.alerts_card.right - px(12.0, s),
+            l.repeat.top + px(1.0, s),
+        ),
         0.5,
         sep,
     );
@@ -1189,7 +1378,12 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     toggle(&rt, l.repeat, (*dlg).repeat, s);
     fill_round(
         &rt,
-        rct(l.alerts_card.left + px(12.0, s), l.every_row.top, l.alerts_card.right - px(12.0, s), l.every_row.top + px(1.0, s)),
+        rct(
+            l.alerts_card.left + px(12.0, s),
+            l.every_row.top,
+            l.alerts_card.right - px(12.0, s),
+            l.every_row.top + px(1.0, s),
+        ),
         0.5,
         sep,
     );
@@ -1205,7 +1399,16 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     );
     paint_step(&rt, dwrite, &*dlg, &l, Field::Every, hover);
 
-    text(&rt, dwrite, "Snooze", l.snooze_head, head_sz, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, head);
+    text(
+        &rt,
+        dwrite,
+        "Snooze",
+        l.snooze_head,
+        head_sz,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        head,
+    );
     fill_round(&rt, l.snooze_card, card_r, card);
     for (i, mins) in SNOOZE_PRESETS_SECS.iter().map(|secs| secs / 60).enumerate() {
         let on = (*dlg).snooze_min == mins;
@@ -1236,7 +1439,12 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     }
     fill_round(
         &rt,
-        rct(l.snooze_card.left + px(12.0, s), l.snooze_row.top, l.snooze_card.right - px(12.0, s), l.snooze_row.top + px(1.0, s)),
+        rct(
+            l.snooze_card.left + px(12.0, s),
+            l.snooze_row.top,
+            l.snooze_card.right - px(12.0, s),
+            l.snooze_row.top + px(1.0, s),
+        ),
         0.5,
         sep,
     );
@@ -1252,7 +1460,16 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     );
     paint_step(&rt, dwrite, &*dlg, &l, Field::Snooze, hover);
 
-    text(&rt, dwrite, "System", l.system_head, head_sz, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, head);
+    text(
+        &rt,
+        dwrite,
+        "System",
+        l.system_head,
+        head_sz,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        head,
+    );
     fill_round(&rt, l.auto, card_r, card);
     text(
         &rt,
@@ -1271,7 +1488,16 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
     } else {
         format_today((*(*dlg).app).engine.snapshot().today_sitting)
     };
-    text(&rt, dwrite, &today, l.today, px(10.0, s), DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_TEXT_ALIGNMENT_LEADING, head);
+    text(
+        &rt,
+        dwrite,
+        &today,
+        l.today,
+        px(10.0, s),
+        DWRITE_FONT_WEIGHT_MEDIUM,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        head,
+    );
 
     let btn_r = px(BTN_RADIUS, s);
     fill_round(
@@ -1284,7 +1510,16 @@ unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
             rgb(0x3A, 0x3A, 0x3C, 1.0)
         },
     );
-    text(&rt, dwrite, "Cancel", l.cancel, px(12.0, s), DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER, label);
+    text(
+        &rt,
+        dwrite,
+        "Cancel",
+        l.cancel,
+        px(12.0, s),
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_TEXT_ALIGNMENT_CENTER,
+        label,
+    );
     fill_round(
         &rt,
         l.save,
@@ -1389,6 +1624,10 @@ unsafe fn on_click(hwnd: HWND, dlg: *mut Dialog, hit: Hit) {
                 let _ = InvalidateRect(hwnd, None, false);
             }
         }
+        Hit::Inactivity(i) => {
+            (*dlg).inactivity_behavior = InactivityBehavior::from_index(i);
+            let _ = InvalidateRect(hwnd, None, false);
+        }
         Hit::Repeat => {
             (*dlg).repeat = !(*dlg).repeat;
             let _ = InvalidateRect(hwnd, None, false);
@@ -1415,9 +1654,12 @@ unsafe fn save(hwnd: HWND) {
         return;
     }
     let app = (*dlg).app;
+    let autostart_changed = (*app).settings.launch_with_windows != (*dlg).auto;
+    (*app).sync_engine_clock();
     (*app).settings.sitting_limit_secs = (*dlg).sitting_min.saturating_mul(60);
     (*app).settings.break_duration_secs = (*dlg).break_min.saturating_mul(60);
     (*app).settings.idle_after_secs = (*dlg).idle_sec;
+    (*app).settings.inactivity_behavior = (*dlg).inactivity_behavior;
     (*app).settings.repeat_every_secs = (*dlg).every_min.saturating_mul(60);
     (*app).settings.step = (*dlg).step;
     (*app).settings.sound_enabled = (*dlg).sound;
@@ -1431,8 +1673,11 @@ unsafe fn save(hwnd: HWND) {
     (*app)
         .engine
         .set_config(unseat::EngineConfig::from_settings(&(*app).settings));
-    crate::win::autostart::apply((*app).settings.launch_with_windows);
-    (*app).save_settings();
+    (*app).sync_engine_clock();
+    if autostart_changed {
+        crate::win::autostart::apply((*app).settings.launch_with_windows);
+    }
+    (*app).persist_today();
     (*app).force_repaint();
     (*dlg).saved = true;
     close(hwnd);
