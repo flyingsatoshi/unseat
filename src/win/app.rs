@@ -296,6 +296,12 @@ impl App {
         let now = self.clock_now();
         let input = self.current_input();
         let result = self.engine.tick(now, local_date(), input);
+        if testhook::enabled() {
+            testhook::log(&format!(
+                "tick sitting_ms={}",
+                result.snapshot.sitting_elapsed.as_millis()
+            ));
+        }
         self.handle_beep(result.beep);
         if now.saturating_sub(self.last_save_at) >= SAVE_EVERY {
             self.persist_today();
@@ -318,6 +324,8 @@ impl App {
     }
 
     pub fn add_tray(&mut self) {
+        // After an Explorer restart the old icon may or may not survive; start clean.
+        tray::remove(self.hidden);
         self.tray_added = tray::add(self.hidden);
         self.last_tip.clear();
         testhook::log(&format!("tray added={}", self.tray_added));

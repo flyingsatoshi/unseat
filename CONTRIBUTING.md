@@ -5,8 +5,9 @@ Thanks for helping with Unseat.
 1. Open an issue before large changes.
 2. Keep it local-only. No telemetry, accounts, or network calls.
 3. Engine rules live in `src/engine.rs`. Win32 code does not invent timer behavior.
+   Colors come from `src/theme.rs`; settings rows from `sections()` in `src/win/settings_dlg.rs`.
 4. Persist new options through `Settings` with `serde(default)` and `clamp()`.
-5. Run `cargo test --no-default-features` before a PR.
+5. Run `cargo test --no-default-features` before a PR, and `scripts/test_app.ps1` for host changes.
 6. GUI work needs MSVC and `cargo build --release --features gui`.
 7. Alert WAVs are original CC0 tones. Regenerate with `python scripts/gen_sounds.py` rather than adding an audio crate.
 

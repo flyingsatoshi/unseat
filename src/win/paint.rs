@@ -219,6 +219,8 @@ pub fn paint(
     }
 }
 
+/// Hardware rendering. A software target saves ~24 MB of private memory (no Direct3D
+/// device) but measured about 3x the idle CPU, because text is re-rasterized every second.
 fn create_rt(factory: &ID2D1Factory) -> windows::core::Result<ID2D1DCRenderTarget> {
     let props = D2D1_RENDER_TARGET_PROPERTIES {
         r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
