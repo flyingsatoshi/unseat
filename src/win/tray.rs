@@ -3,9 +3,9 @@ use crate::win::{flyout, icon};
 use unseat::format_today;
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NIM_SETVERSION, NIN_POPUPCLOSE, NIN_POPUPOPEN, NIN_SELECT, NOTIFYICONDATAW,
-    NOTIFYICON_VERSION_4,
+    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_LARGE_ICON, NIIF_NOSOUND,
+    NIIF_USER, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_BALLOONUSERCLICK,
+    NIN_POPUPCLOSE, NIN_POPUPOPEN, NIN_SELECT, NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, SetForegroundWindow, TrackPopupMenu,
@@ -163,13 +163,35 @@ fn empty_nid(hwnd: HWND) -> NOTIFYICONDATAW {
 }
 
 fn tip(data: &mut NOTIFYICONDATAW, text: &str) {
-    let mut wide: Vec<u16> = text.encode_utf16().take(127).collect();
-    wide.push(0);
-    for (i, ch) in wide.iter().enumerate() {
-        if i < data.szTip.len() {
-            data.szTip[i] = *ch;
-        }
+    copy_wide(&mut data.szTip, text);
+}
+
+/// Show a Windows notification from the tray icon. Unseat plays its own alert sound, so the
+/// notification is silent; Focus Assist / Do Not Disturb still applies.
+pub fn notify(hwnd: HWND, title: &str, body: &str) {
+    crate::win::testhook::log(&format!("notify {title} | {body}"));
+    unsafe {
+        let mut data = empty_nid(hwnd);
+        data.uFlags = NIF_INFO;
+        data.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON | NIIF_NOSOUND;
+        data.hBalloonIcon = icon::big();
+        copy_wide(&mut data.szInfoTitle, title);
+        copy_wide(&mut data.szInfo, body);
+        let _ = Shell_NotifyIconW(NIM_MODIFY, &mut data);
     }
+}
+
+fn copy_wide(dst: &mut [u16], text: &str) {
+    let mut n = 0;
+    for ch in text.encode_utf16().take(dst.len().saturating_sub(1)) {
+        dst[n] = ch;
+        n += 1;
+    }
+    dst[n] = 0;
+}
+
+pub fn is_balloon_click(msg: u32) -> bool {
+    msg == NIN_BALLOONUSERCLICK
 }
 
 pub fn lparam_msg(lp: LPARAM) -> u32 {

@@ -1,5 +1,6 @@
 use crate::win::app::App;
 use crate::win::paint::widget_size;
+use crate::win::testhook;
 use unseat::{hit_control, layout_scale, Command, Hit, TimerShape, WidgetSize, WIDGET_H, WIDGET_W};
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -178,6 +179,20 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             } else {
                 DefWindowProcW(hwnd, msg, wp, lp)
             }
+        }
+        testhook::MSG_SET_IDLE if testhook::enabled() => {
+            testhook::set_idle(wp.0 as u32);
+            (*app).tick();
+            LRESULT(0)
+        }
+        testhook::MSG_ADVANCE if testhook::enabled() => {
+            testhook::advance(wp.0 as u32);
+            (*app).tick();
+            LRESULT(0)
+        }
+        testhook::MSG_DUMP if testhook::enabled() => {
+            (*app).log_state();
+            LRESULT(0)
         }
         WM_QUERYENDSESSION => {
             (*app).persist_today();

@@ -1794,7 +1794,11 @@ unsafe fn on_click(hwnd: HWND, dlg: *mut Dialog, hit: Hit) {
         }
         Hit::Preview => {
             if !(*dlg).app.is_null() {
-                (*(*dlg).app).preview_sound((*dlg).sound_kind, (*dlg).alert_duration);
+                (*(*dlg).app).preview_sound(
+                    (*dlg).sound_kind,
+                    (*dlg).alert_duration,
+                    (*(*dlg).app).settings.alert_volume,
+                );
             }
         }
         Hit::SoundKind(i) => {

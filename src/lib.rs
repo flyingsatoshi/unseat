@@ -1,9 +1,13 @@
+mod alerts;
+mod audio;
 mod date;
 mod engine;
 mod place;
 mod settings;
 mod view;
 
+pub use alerts::{alert_actions, AlertActions, Notice};
+pub use audio::{scale_wav, volume_peak, wav_peak, MAX_PEAK};
 pub use date::CivilDate;
 pub use engine::{
     clamp_clock, next_tick_delay, restored_today_sitting, Beep, Command, EngineConfig, Input, SittingEngine,

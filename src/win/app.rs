@@ -1,8 +1,10 @@
-use crate::win::{flyout, idle, install, paint, session, settings_dlg, sound, theme, tray, widget};
+use crate::win::{
+    flyout, idle, install, paint, session, settings_dlg, sound, testhook, theme, tray, widget,
+};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use unseat::{
-    clamp_clock, next_tick_delay, restored_today_sitting, timer_render_key, Beep, CivilDate, Command, EngineConfig,
+    alert_actions, clamp_clock, next_tick_delay, restored_today_sitting, timer_render_key, Beep, CivilDate, Command, EngineConfig,
     Input, Settings, SittingEngine, TimerRenderKey, WIDGET_H, WIDGET_W,
 };
 use windows::core::w;
@@ -194,7 +196,8 @@ pub fn run() -> windows::core::Result<()> {
 impl App {
     fn clock_now(&mut self) -> Duration {
         let raw =
-            Duration::from_millis(unsafe { GetTickCount64().saturating_sub(self.clock_origin_ms) });
+            Duration::from_millis(unsafe { GetTickCount64().saturating_sub(self.clock_origin_ms) })
+                + testhook::clock_offset();
         let now = clamp_clock(self.last_clock, raw);
         self.last_clock = Some(now);
         now
@@ -202,7 +205,7 @@ impl App {
 
     fn current_input(&self) -> Input {
         Input {
-            last_input_age: idle::last_input_age(),
+            last_input_age: testhook::idle_override().unwrap_or_else(idle::last_input_age),
             session_locked: self.locked || self.suspended,
         }
     }
@@ -211,8 +214,14 @@ impl App {
         if beep == Beep::None {
             return;
         }
-        if self.settings.sound_enabled {
+        testhook::log(&format!("alert {beep:?}"));
+        let snapshot = self.engine.snapshot();
+        let actions = alert_actions(beep, &self.settings, snapshot.sitting_elapsed);
+        if actions.play_sound {
             self.play_alert_sound();
+        }
+        if let Some(notice) = actions.notification {
+            tray::notify(self.hidden, notice.title, &notice.body);
         }
     }
 
@@ -275,6 +284,36 @@ impl App {
         unsafe {
             let _ = SetTimer(self.hidden, TICK_ID, delay, None);
         }
+    }
+
+    /// One line for `scripts/test_app.ps1`: engine state plus the overlay's window state.
+    pub fn log_state(&mut self) {
+        let snap = self.engine.snapshot();
+        let mut rc = windows::Win32::Foundation::RECT::default();
+        let ex = unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(self.widget, &mut rc);
+            windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(
+                self.widget,
+                windows::Win32::UI::WindowsAndMessaging::GWL_EXSTYLE,
+            )
+        };
+        let topmost = ex as u32 & windows::Win32::UI::WindowsAndMessaging::WS_EX_TOPMOST.0 != 0;
+        testhook::log(&format!(
+            "state {:?} sitting={} remaining={} break={} today={} running={} visible={} topmost={} rect={},{},{},{} tray={}",
+            snap.state,
+            snap.sitting_elapsed.as_secs(),
+            snap.timer_remaining.as_secs(),
+            snap.break_elapsed.as_secs(),
+            snap.today_sitting.as_secs(),
+            snap.running,
+            self.widget_visible,
+            topmost,
+            rc.left,
+            rc.top,
+            rc.right,
+            rc.bottom,
+            self.tray_added,
+        ));
     }
 
     pub fn persist_today(&mut self) {
@@ -382,9 +421,9 @@ impl App {
         )));
     }
 
-    pub fn preview_sound(&mut self, kind: unseat::AlertSound, duration_secs: u64) {
+    pub fn preview_sound(&mut self, kind: unseat::AlertSound, duration_secs: u64, volume: u8) {
         let duration_secs = duration_secs.min(10);
-        sound::play_alert(kind, duration_secs);
+        sound::play_alert(kind, volume, duration_secs > 0);
         unsafe {
             let _ = KillTimer(self.hidden, SOUND_ID);
             if duration_secs > 0 {
@@ -399,7 +438,11 @@ impl App {
     }
 
     fn play_alert_sound(&mut self) {
-        self.preview_sound(self.settings.alert_sound, self.settings.alert_duration_secs);
+        self.preview_sound(
+            self.settings.alert_sound,
+            self.settings.alert_duration_secs,
+            self.settings.alert_volume,
+        );
     }
 
     fn stop_alert_sound(&mut self) {
@@ -453,10 +496,11 @@ fn local_date() -> CivilDate {
 }
 
 fn wall_now_secs() -> u64 {
-    SystemTime::now()
+    (SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
-        .as_secs()
+        + testhook::clock_offset())
+    .as_secs()
 }
 
 fn local_time_since_midnight() -> Duration {
@@ -512,6 +556,8 @@ unsafe extern "system" fn hidden_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 tray::show_flyout(&*app, hwnd);
             } else if tray::is_popup_close(tmsg) {
                 flyout::hide();
+            } else if tray::is_balloon_click(tmsg) {
+                (*app).show_widget();
             } else if tray::is_context(tmsg) {
                 tray::show_menu(&*app, hwnd);
             } else if tray::is_select(tmsg) || tray::is_dblclk(tmsg) {

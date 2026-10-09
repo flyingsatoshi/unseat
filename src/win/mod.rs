@@ -8,6 +8,7 @@ mod paint;
 mod session;
 mod settings_dlg;
 mod sound;
+mod testhook;
 mod theme;
 mod tray;
 mod widget;
