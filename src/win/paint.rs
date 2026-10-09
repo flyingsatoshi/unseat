@@ -1,20 +1,20 @@
 use crate::win::gfx::{self, glyph, Family, Fonts};
 use std::cell::RefCell;
 use unseat::{
-    palette, progress, tag_text, timer_digit_px, timer_face_digits, widget_layout,
-    widget_pixel_size, Palette, Rgba, Snapshot, TimerDisplayMode, TimerShape, VisibleState,
+    chip_center, palette, progress, tag_text, timer_digit_px, timer_face_digits, widget_layout,
+    widget_pixel_size, DockDraw, DockEdge, Palette, Rgba, Snapshot, TimerDisplayMode, TimerShape,
+    VisibleState,
 };
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED,
-    D2D1_PIXEL_FORMAT, D2D_POINT_2F,
+    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory, ID2D1RenderTarget,
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
     D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE,
-    D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+    D2D1_ANTIALIAS_MODE_ALIASED, D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
 };
 use windows::Win32::Graphics::DirectWrite::{DWriteCreateFactory, DWRITE_FACTORY_TYPE_SHARED};
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -46,10 +46,6 @@ impl D2d {
                 surface: RefCell::new(None),
             })
         }
-    }
-
-    pub fn factory(&self) -> &ID2D1Factory {
-        &self.factory
     }
 }
 
@@ -138,24 +134,27 @@ pub fn widget_size(shape: TimerShape, scale: f32) -> (i32, i32) {
     widget_pixel_size(shape, scale)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn paint(
-    d2d: Option<&D2d>,
-    hwnd: HWND,
-    shape: TimerShape,
-    timer_display_mode: TimerDisplayMode,
-    snap: Snapshot,
-    dark: bool,
-    hover: bool,
-    limit: std::time::Duration,
-    break_dur: std::time::Duration,
-    scale: f32,
-) {
-    let (cx, cy) = widget_size(shape, scale);
+/// Everything one overlay frame depends on.
+pub struct OverlayPaint {
+    pub mode: TimerDisplayMode,
+    pub snap: Snapshot,
+    pub dark: bool,
+    pub hover: bool,
+    pub limit: std::time::Duration,
+    pub break_dur: std::time::Duration,
+    pub scale: f32,
+    /// Window size in pixels (smaller than the full overlay while docked or sliding).
+    pub size: (i32, i32),
+    pub dock: Option<(DockEdge, DockDraw)>,
+    pub pinned: bool,
+}
+
+pub fn paint(d2d: Option<&D2d>, hwnd: HWND, p: &OverlayPaint) {
+    let (cx, cy) = p.size;
     if cx <= 0 || cy <= 0 {
         return;
     }
-    let pal = palette(dark);
+    let pal = palette(p.dark);
     let fallback_surface;
     let mut cache = d2d.map(|d| d.surface.borrow_mut());
     unsafe {
@@ -180,22 +179,20 @@ pub fn paint(
             rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
             rt.Clear(Some(&gfx::color(Rgba(0, 0, 0, 0))));
             if let Some(rt) = as_rt(rt) {
-                draw_pill(
-                    &rt,
-                    d2d,
-                    pal,
-                    timer_display_mode,
-                    snap,
-                    hover,
-                    limit,
-                    break_dur,
-                    scale,
-                );
+                let size = (cx as f32, cy as f32);
+                match p.dock {
+                    Some((edge, DockDraw::Tab)) => draw_tab(&rt, d2d, pal, p, edge, size, false),
+                    Some((edge, DockDraw::Peek)) => draw_tab(&rt, d2d, pal, p, edge, size, true),
+                    Some((edge, DockDraw::Pill { dx, dy })) => {
+                        draw_pill(&rt, d2d, pal, p, Some(edge), dx, dy)
+                    }
+                    None => draw_pill(&rt, d2d, pal, p, None, 0.0, 0.0),
+                }
             }
             drew = rt.EndDraw(None, None).is_ok();
         }
         if !drew {
-            gdi_fallback(surface.hdc, surface.bits, cx, cy, pal, timer_display_mode, snap);
+            gdi_fallback(surface.hdc, surface.bits, cx, cy, pal, p);
         }
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
@@ -241,132 +238,179 @@ fn as_rt(rt: &ID2D1DCRenderTarget) -> Option<ID2D1RenderTarget> {
     rt.cast().ok()
 }
 
-#[allow(clippy::too_many_arguments)]
+fn fraction(p: &OverlayPaint) -> f32 {
+    progress(
+        p.snap.state,
+        p.snap.sitting_elapsed,
+        p.limit,
+        p.snap.break_elapsed,
+        p.break_dur,
+    )
+}
+
+/// Corner radii [tl, tr, br, bl] with the corners on the docked edge squared off.
+fn radii(r: f32, edge: Option<DockEdge>) -> [f32; 4] {
+    match edge {
+        None => [r; 4],
+        Some(DockEdge::Left) => [0.0, r, r, 0.0],
+        Some(DockEdge::Right) => [r, 0.0, 0.0, r],
+        Some(DockEdge::Top) => [0.0, 0.0, r, r],
+        Some(DockEdge::Bottom) => [r, r, 0.0, 0.0],
+    }
+}
+
+fn digit_alpha(state: VisibleState) -> f32 {
+    match state {
+        VisibleState::Paused => 0.45,
+        VisibleState::Away => 0.6,
+        _ => 1.0,
+    }
+}
+
 unsafe fn draw_pill(
     rt: &ID2D1RenderTarget,
     d2d: &D2d,
     pal: &Palette,
-    timer_display_mode: TimerDisplayMode,
-    snap: Snapshot,
-    hover: bool,
-    limit: std::time::Duration,
-    break_dur: std::time::Duration,
-    s: f32,
+    p: &OverlayPaint,
+    edge: Option<DockEdge>,
+    dx: f32,
+    dy: f32,
 ) {
     let fonts = &d2d.fonts;
+    let s = p.scale;
     let l = widget_layout(s);
-    let radius = 11.0 * s;
-    let pill = gfx::rect(l.pill_x, l.pill_y, l.pill_x + l.pill_w, l.pill_y + l.pill_h);
+    let fill = fraction(p);
+    let c = pal.overlay(p.snap.state, fill);
+    let pill = gfx::rect(
+        l.pill_x + dx,
+        l.pill_y + dy,
+        l.pill_x + l.pill_w + dx,
+        l.pill_y + l.pill_h + dy,
+    );
+    let corners = radii(l.radius, edge);
 
-    // Two soft shadow layers read better than one hard offset.
-    for (dy, grow, k) in [(2.5, 1.0, 0.55), (1.0, 0.0, 0.45)] {
+    // Soft two-layer shadow below the pill.
+    for (off, grow, k) in [(2.5, 1.0, 0.55), (1.0, 0.0, 0.45)] {
         let shadow = gfx::rect(
             pill.left - grow * s,
-            pill.top + dy * s - grow * s,
+            pill.top + off * s - grow * s,
             pill.right + grow * s,
-            pill.bottom + dy * s + grow * s,
+            pill.bottom + off * s + grow * s,
         );
-        gfx::fill_round(rt, shadow, radius + grow * s, gfx::fade(pal.shadow, k));
+        gfx::fill_corners(rt, shadow, corners.map(|r| if r > 0.0 { r + grow * s } else { 0.0 }), gfx::fade(pal.shadow, k));
     }
-    gfx::fill_round(rt, pill, radius, pal.pill_for(snap.state));
-    gfx::stroke_round(
-        rt,
-        gfx::inflate(pill, -0.5 * s),
-        radius,
-        pal.pill_stroke,
-        1.0 * s,
-    );
+    gfx::fill_corners(rt, pill, corners, c.bg);
+    // The pill is the progress bar: a lighter band fills it from the leading edge.
+    if fill > 0.0 && c.band != c.bg {
+        let band_r = pill.left + (pill.right - pill.left) * fill;
+        rt.PushAxisAlignedClip(
+            &gfx::rect(pill.left, pill.top, band_r, pill.bottom),
+            D2D1_ANTIALIAS_MODE_ALIASED,
+        );
+        gfx::fill_corners(rt, pill, corners, c.band);
+        rt.PopAxisAlignedClip();
+    }
+    if edge.is_none() && p.snap.state != VisibleState::Overdue {
+        gfx::stroke_round(rt, gfx::inflate(pill, -0.5 * s), l.radius, pal.pill_stroke, 1.0 * s);
+    }
 
-    let paused = snap.state == VisibleState::Paused;
-    let away = snap.state == VisibleState::Away;
-    let digits = timer_face_digits(timer_display_mode, snap);
-    let digit_px = timer_digit_px(&digits, l.digit_px, l.digits_r - l.digits_l);
-    let digit_alpha = if paused {
-        0.30
-    } else if away {
-        0.55
+    let digits = timer_face_digits(p.mode, p.snap);
+    let tag = tag_text(p.snap, p.mode, p.limit);
+    let tag_w = gfx::measure(fonts, &tag, l.tag_px, gfx::SEMIBOLD);
+    let lane_r = if p.hover {
+        l.digits_hover_r
     } else {
-        1.0
-    };
-    gfx::text(
+        (l.tag_r - tag_w - 8.0 * s).min(l.digits_r)
+    } + dx;
+    let lane_l = l.digits_l + dx;
+    gfx::digits(
         rt,
         fonts,
-        Family::Ui,
         &digits,
-        gfx::rect(l.digits_l, l.digits_t, l.digits_r, l.digits_b),
-        digit_px,
-        gfx::BOLD,
+        gfx::rect(lane_l, pill.top, lane_r, pill.bottom),
+        l.digit_px,
+        gfx::SEMIBOLD,
         gfx::LEADING,
-        gfx::fade(pal.digits, digit_alpha),
+        gfx::fade(c.digits, digit_alpha(p.snap.state)),
     );
 
-    let fill = progress(
-        snap.state,
-        snap.sitting_elapsed,
-        limit,
-        snap.break_elapsed,
-        break_dur,
-    );
-    let bar = gfx::rect(l.bar_x, l.bar_y, l.bar_x + l.bar_w, l.bar_y + l.bar_h);
-    gfx::fill_round(rt, bar, l.bar_h / 2.0, pal.bar_track);
-    if fill > 0.0 {
-        let fw = (l.bar_w * fill).max(l.bar_h).min(l.bar_w);
-        gfx::fill_round(
-            rt,
-            gfx::rect(bar.left, bar.top, bar.left + fw, bar.bottom),
-            l.bar_h / 2.0,
-            gfx::fade(pal.bar_for(snap.state, fill), if paused { 0.4 } else { 1.0 }),
-        );
-    }
-
-    if paused {
-        let (cx, cy, r) = l.play;
-        fill_play_triangle(rt, d2d.factory(), cx, cy, r * 1.05, gfx::fade(pal.digits, 0.95));
-    }
-
-    if hover {
-        let (px, py) = l.pause;
-        let (rx, ry) = l.reset;
-        let cr = l.control_r;
-        let ink = gfx::fade(pal.digits, 0.92);
-        let chip = gfx::fade(pal.digits, 0.08);
-        if !paused {
-            gfx::fill_round(rt, circle(px, py, cr), cr, chip);
-            draw_icon(rt, fonts, glyph::PAUSE, px, py, cr * 0.85, ink);
+    if p.hover {
+        let ink = c.digits;
+        let chip = gfx::fade(c.digits, 0.14);
+        let r = l.control_r;
+        let paused = p.snap.state == VisibleState::Paused;
+        for (center, kind) in [(l.pause, 0), (l.brk, 1), (l.reset, 2)] {
+            let (cx, cy) = (center.0 + dx, center.1 + dy);
+            gfx::fill_round(rt, circle(cx, cy, r), r, chip);
+            match kind {
+                0 => draw_icon(rt, fonts, if paused { glyph::PLAY } else { glyph::PAUSE }, cx, cy, r * 0.8, ink),
+                1 => draw_cup(rt, cx, cy, r, ink),
+                _ => draw_icon(rt, fonts, glyph::RESET, cx, cy, r * 0.8, ink),
+            }
         }
-        gfx::fill_round(rt, circle(rx, ry, cr), cr, chip);
-        draw_icon(rt, fonts, glyph::RESET, rx, ry, cr * 0.85, ink);
-        draw_close_chip(rt, pal, l.close.0, l.close.1, l.close_r);
+        let (kx, ky) = chip_center(s, edge);
+        draw_corner_chip(rt, fonts, pal, kx, ky, l.close_r, edge.map(|_| p.pinned));
     } else {
-        let (n, unit) = tag_text(snap, limit, break_dur);
-        let mid = l.tag_y + l.tag_h * 0.48;
-        let value_px = if n.chars().count() > 2 { 11.5 } else { 13.0 };
         gfx::text(
             rt,
             fonts,
             Family::Ui,
-            &n,
-            gfx::rect(l.tag_x - 4.0 * s, mid - 15.0 * s, l.tag_x + l.tag_w + 4.0 * s, mid + 3.0 * s),
-            value_px * s,
+            &tag,
+            gfx::rect(l.tag_r - tag_w - 2.0 * s + dx, pill.top, l.tag_r + dx, pill.bottom),
+            l.tag_px,
             gfx::SEMIBOLD,
-            gfx::CENTER,
-            if snap.state == VisibleState::Overdue {
-                pal.bar_over
-            } else {
-                pal.tag
-            },
+            gfx::TRAILING,
+            c.tag,
         );
-        gfx::text(
-            rt,
-            fonts,
-            Family::Ui,
-            unit,
-            gfx::rect(l.tag_x - 4.0 * s, mid + 1.0 * s, l.tag_x + l.tag_w + 4.0 * s, mid + 13.0 * s),
-            8.5 * s,
-            gfx::MEDIUM,
-            gfx::CENTER,
-            pal.tag_sub,
-        );
+    }
+}
+
+/// The docked tab: a thin bar flush with the edge, filled by progress along its length.
+/// Peeking widens it and shows the minutes left.
+unsafe fn draw_tab(
+    rt: &ID2D1RenderTarget,
+    d2d: &D2d,
+    pal: &Palette,
+    p: &OverlayPaint,
+    edge: DockEdge,
+    (w, h): (f32, f32),
+    peek: bool,
+) {
+    let s = p.scale;
+    let fill = fraction(p);
+    let c = pal.overlay(p.snap.state, fill);
+    let thick = if matches!(edge, DockEdge::Left | DockEdge::Right) { w } else { h };
+    let r = (thick / 2.0).min(if peek { 10.0 * s } else { thick });
+    let corners = radii(r, Some(edge));
+    let full = gfx::rect(0.0, 0.0, w, h);
+    gfx::fill_corners(rt, full, corners, c.bg);
+    if fill > 0.0 && c.band != c.bg {
+        let band = match edge {
+            DockEdge::Left | DockEdge::Right => gfx::rect(0.0, h * (1.0 - fill), w, h),
+            DockEdge::Top | DockEdge::Bottom => gfx::rect(0.0, 0.0, w * fill, h),
+        };
+        rt.PushAxisAlignedClip(&band, D2D1_ANTIALIAS_MODE_ALIASED);
+        gfx::fill_corners(rt, full, corners, c.band);
+        rt.PopAxisAlignedClip();
+    }
+    if !peek {
+        return;
+    }
+    let snap = p.snap;
+    let (value, unit) = match snap.state {
+        VisibleState::Overdue => (format!("+{}", snap.overdue_by.as_secs() / 60), "over"),
+        VisibleState::Break => (snap.break_remaining.as_secs().div_ceil(60).to_string(), "break"),
+        _ => (snap.timer_remaining.as_secs().div_ceil(60).to_string(), "min"),
+    };
+    let ink = gfx::fade(c.digits, digit_alpha(snap.state));
+    let fonts = &d2d.fonts;
+    if matches!(edge, DockEdge::Left | DockEdge::Right) {
+        let mid = h / 2.0;
+        gfx::digits(rt, fonts, &value, gfx::rect(0.0, mid - 16.0 * s, w, mid + 4.0 * s), 17.0 * s, gfx::SEMIBOLD, gfx::CENTER, ink);
+        gfx::text(rt, fonts, Family::Ui, unit, gfx::rect(0.0, mid + 3.0 * s, w, mid + 16.0 * s), 9.5 * s, gfx::MEDIUM, gfx::CENTER, c.tag);
+    } else {
+        let label = format!("{value} {unit}");
+        gfx::digits(rt, fonts, &label, full, 13.0 * s, gfx::SEMIBOLD, gfx::CENTER, ink);
     }
 }
 
@@ -396,53 +440,50 @@ unsafe fn draw_icon(
     );
 }
 
-unsafe fn fill_play_triangle(
-    rt: &ID2D1RenderTarget,
-    factory: &ID2D1Factory,
-    cx: f32,
-    cy: f32,
-    size: f32,
-    c: Rgba,
-) {
-    let Ok(geo) = factory.CreatePathGeometry() else {
-        return;
-    };
-    {
-        let Ok(sink) = geo.Open() else {
-            return;
-        };
-        let h = size;
-        let w = size * 0.84;
-        let left = cx - w * 0.28;
-        sink.BeginFigure(
-            D2D_POINT_2F {
-                x: left,
-                y: cy - h * 0.5,
-            },
-            D2D1_FIGURE_BEGIN_FILLED,
-        );
-        sink.AddLines(&[
-            D2D_POINT_2F { x: left + w, y: cy },
-            D2D_POINT_2F {
-                x: left,
-                y: cy + h * 0.5,
-            },
-        ]);
-        sink.EndFigure(D2D1_FIGURE_END_CLOSED);
-        let _ = sink.Close();
-    }
-    if let Ok(brush) = rt.CreateSolidColorBrush(&gfx::color(c), None) {
-        rt.FillGeometry(&geo, &brush, None);
-    }
+/// A small cup for "take a break": body with a rounded bottom and a handle.
+unsafe fn draw_cup(rt: &ID2D1RenderTarget, cx: f32, cy: f32, r: f32, c: Rgba) {
+    let u = r / 12.0;
+    let w = 1.5 * u;
+    let body = gfx::rect(cx - 6.0 * u, cy - 4.0 * u, cx + 3.5 * u, cy + 5.0 * u);
+    gfx::stroke_round(rt, body, 2.5 * u, c, w);
+    gfx::stroke_round(
+        rt,
+        gfx::rect(cx + 3.5 * u, cy - 2.0 * u, cx + 7.0 * u, cy + 2.5 * u),
+        2.2 * u,
+        c,
+        w,
+    );
 }
 
-unsafe fn draw_close_chip(rt: &ID2D1RenderTarget, pal: &Palette, cx: f32, cy: f32, r: f32) {
-    gfx::fill_round(rt, circle(cx, cy, r), r, gfx::fade(pal.digits, 0.10));
-    let arm = r * 0.34;
-    let thick = (r * 0.20).clamp(1.15, 2.0);
-    let ink = gfx::fade(pal.digits, 0.80);
-    gfx::line(rt, (cx - arm, cy - arm), (cx + arm, cy + arm), ink, thick);
-    gfx::line(rt, (cx + arm, cy - arm), (cx - arm, cy + arm), ink, thick);
+/// Corner chip: × to hide the overlay, or a pin when docked (filled while pinned open).
+unsafe fn draw_corner_chip(
+    rt: &ID2D1RenderTarget,
+    fonts: &Fonts,
+    pal: &Palette,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    pinned: Option<bool>,
+) {
+    gfx::fill_round(rt, circle(cx, cy, r), r, pal.control);
+    let ink = pal.text;
+    match pinned {
+        Some(on) => draw_icon(
+            rt,
+            fonts,
+            if on { glyph::PINNED } else { glyph::PIN },
+            cx,
+            cy,
+            r * 0.9,
+            ink,
+        ),
+        None => {
+            let arm = r * 0.34;
+            let thick = (r * 0.20).clamp(1.15, 2.0);
+            gfx::line(rt, (cx - arm, cy - arm), (cx + arm, cy + arm), ink, thick);
+            gfx::line(rt, (cx + arm, cy - arm), (cx - arm, cy + arm), ink, thick);
+        }
+    }
 }
 
 /// Plain GDI rendering for systems where Direct2D cannot start.
@@ -452,15 +493,15 @@ unsafe fn gdi_fallback(
     cx: i32,
     cy: i32,
     pal: &Palette,
-    timer_display_mode: TimerDisplayMode,
-    snap: Snapshot,
+    p: &OverlayPaint,
 ) {
     if bits.is_null() || cx <= 0 || cy <= 0 {
         return;
     }
+    let colors = pal.overlay(p.snap.state, fraction(p));
     let stride = cx * 4;
     let ptr = bits as *mut u8;
-    let Rgba(r, g, b, _) = pal.pill_for(snap.state);
+    let Rgba(r, g, b, _) = colors.bg;
     for y in 0..cy {
         for x in 0..cx {
             let inside = rounded_contains(x as f32, y as f32, cx as f32, cy as f32, 10.0);
@@ -472,16 +513,15 @@ unsafe fn gdi_fallback(
             *ptr.offset(i + 3) = pa;
         }
     }
-    let digits = timer_face_digits(timer_display_mode, snap);
+    let digits = timer_face_digits(p.mode, p.snap);
     let mut text: Vec<u16> = digits.encode_utf16().chain(std::iter::once(0)).collect();
     SetBkMode(hdc, TRANSPARENT);
-    let Rgba(tr, tg, tb, _) = pal.digits;
+    let Rgba(tr, tg, tb, _) = colors.digits;
     SetTextColor(
         hdc,
         COLORREF(u32::from(tr) | u32::from(tg) << 8 | u32::from(tb) << 16),
     );
-    let scale = cy as f32 / unseat::WIDGET_H;
-    let layout = widget_layout(scale);
+    let layout = widget_layout(p.scale);
     let digit_px = timer_digit_px(&digits, layout.digit_px, layout.digits_r - layout.digits_l);
     let font = CreateFontW(
         -digit_px.round() as i32,

@@ -21,6 +21,8 @@ pub const MSG_DUMP: u32 = WM_APP + 0x42;
 /// Write the overlay's premultiplied BGRA pixels to `%APPDATA%\Unseat\overlay.bgra`
 /// (8-byte header: width and height as little-endian u32).
 pub const MSG_SNAPSHOT: u32 = WM_APP + 0x43;
+/// wParam 1/0: the pointer rests on / leaves a docked overlay.
+pub const MSG_DOCK_HOVER: u32 = WM_APP + 0x44;
 
 const NO_OVERRIDE: u64 = u64::MAX;
 static IDLE_OVERRIDE_SECS: AtomicU64 = AtomicU64::new(NO_OVERRIDE);

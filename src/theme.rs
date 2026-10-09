@@ -1,6 +1,8 @@
-//! Light and dark palettes shared by the overlay, settings and flyout.
+//! Signal palettes (light and dark) shared by the overlay, settings, tray panel and cards.
 //!
-//! Colors live in the library so contrast can be checked by tests without Win32.
+//! Colors live in the library so contrast can be checked by tests without Win32. In Signal
+//! the overlay's whole surface carries the state: each state has its own background, a
+//! lighter progress band that fills the pill, digit ink and tag ink.
 
 use crate::engine::VisibleState;
 
@@ -44,109 +46,167 @@ pub fn contrast(a: Rgba, b: Rgba) -> f32 {
     (hi + 0.05) / (lo + 0.05)
 }
 
+/// How one overlay state is painted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverlayColors {
+    pub bg: Rgba,
+    /// The progress band that fills the pill from the leading edge.
+    pub band: Rgba,
+    pub digits: Rgba,
+    pub tag: Rgba,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Palette {
     pub dark: bool,
-    // Settings window and flyout.
+    // Windows: settings, tray panel, alert card, flyout.
     pub window: Rgba,
+    /// Row tiles and secondary buttons.
     pub card: Rgba,
     pub card_stroke: Rgba,
     pub separator: Rgba,
     pub text: Rgba,
     pub text_secondary: Rgba,
     pub text_disabled: Rgba,
+    /// Unselected chips and stepper buttons.
     pub control: Rgba,
     pub control_hover: Rgba,
     pub control_pressed: Rgba,
     pub accent: Rgba,
     pub accent_hover: Rgba,
     pub on_accent: Rgba,
+    /// Selected tab and chip fill, and the primary button.
+    pub selected: Rgba,
+    pub on_selected: Rgba,
     pub toggle_off: Rgba,
     pub knob: Rgba,
     pub focus: Rgba,
     pub window_stroke: Rgba,
+    /// Alert card for "time is up".
+    pub alarm: Rgba,
+    pub on_alarm: Rgba,
     // Overlay.
-    pub pill: Rgba,
-    pub pill_overdue: Rgba,
+    pub sit: OverlayColors,
+    pub warn: OverlayColors,
+    pub over: OverlayColors,
+    pub brk: OverlayColors,
+    pub idle: OverlayColors,
     pub pill_stroke: Rgba,
-    pub digits: Rgba,
-    pub tag: Rgba,
-    pub tag_sub: Rgba,
-    pub bar_track: Rgba,
-    pub bar_normal: Rgba,
-    pub bar_warn: Rgba,
-    pub bar_over: Rgba,
-    pub bar_break: Rgba,
-    pub bar_away: Rgba,
     pub shadow: Rgba,
 }
 
 pub const DARK: Palette = Palette {
     dark: true,
-    window: Rgba::opaque(0x1F1F21),
-    card: Rgba::opaque(0x2A2A2D),
-    card_stroke: Rgba(255, 255, 255, 14),
-    separator: Rgba(255, 255, 255, 20),
-    text: Rgba::opaque(0xF3F3F5),
-    text_secondary: Rgba::opaque(0xB4B4BA),
-    text_disabled: Rgba::opaque(0x75757C),
-    control: Rgba::opaque(0x3A3A3E),
-    control_hover: Rgba::opaque(0x46464B),
-    control_pressed: Rgba::opaque(0x323236),
-    accent: Rgba::opaque(0x3D6CF2),
-    accent_hover: Rgba::opaque(0x4A78F7),
-    on_accent: Rgba::opaque(0xFFFFFF),
-    toggle_off: Rgba::opaque(0x55555B),
+    window: Rgba::opaque(0x1A1918),
+    card: Rgba::opaque(0x262422),
+    card_stroke: Rgba(255, 255, 255, 12),
+    separator: Rgba(255, 255, 255, 16),
+    text: Rgba::opaque(0xF5F4F1),
+    text_secondary: Rgba::opaque(0xA8A29E),
+    text_disabled: Rgba::opaque(0x6B6560),
+    control: Rgba::opaque(0x33302C),
+    control_hover: Rgba::opaque(0x3D3A35),
+    control_pressed: Rgba::opaque(0x2C2A27),
+    accent: Rgba::opaque(0x2EC4A0),
+    accent_hover: Rgba::opaque(0x45D1AE),
+    on_accent: Rgba::opaque(0x08251D),
+    selected: Rgba::opaque(0x2EC4A0),
+    on_selected: Rgba::opaque(0x08251D),
+    toggle_off: Rgba::opaque(0x4A4540),
     knob: Rgba::opaque(0xFFFFFF),
-    focus: Rgba::opaque(0x8DB3FF),
-    window_stroke: Rgba(255, 255, 255, 34),
-    pill: Rgba(0x10, 0x12, 0x14, 248),
-    pill_overdue: Rgba(0x2A, 0x10, 0x16, 248),
-    pill_stroke: Rgba(255, 255, 255, 24),
-    digits: Rgba::opaque(0xFCFCF8),
-    tag: Rgba(0xEC, 0xE0, 0xCC, 242),
-    tag_sub: Rgba(0xD2, 0xD0, 0xC8, 150),
-    bar_track: Rgba(255, 255, 255, 26),
-    bar_normal: Rgba::opaque(0x3D7BFF),
-    bar_warn: Rgba::opaque(0xFF9F0A),
-    bar_over: Rgba::opaque(0xFF453A),
-    bar_break: Rgba::opaque(0x30D158),
-    bar_away: Rgba::opaque(0x64D2FF),
-    shadow: Rgba(0, 0, 0, 60),
+    focus: Rgba::opaque(0x7BE0C6),
+    window_stroke: Rgba(255, 255, 255, 26),
+    alarm: Rgba::opaque(0xC4371F),
+    on_alarm: Rgba::opaque(0xFFFFFF),
+    sit: OverlayColors {
+        bg: Rgba::opaque(0x17211E),
+        band: Rgba::opaque(0x1F3B33),
+        digits: Rgba::opaque(0xEAF6F2),
+        tag: Rgba::opaque(0x9CC9BC),
+    },
+    warn: OverlayColors {
+        bg: Rgba::opaque(0x231C10),
+        band: Rgba::opaque(0x4A3816),
+        digits: Rgba::opaque(0xFFF4E0),
+        tag: Rgba::opaque(0xF2C77E),
+    },
+    over: OverlayColors {
+        bg: Rgba::opaque(0xC4371F),
+        band: Rgba::opaque(0xC4371F),
+        digits: Rgba::opaque(0xFFFFFF),
+        tag: Rgba::opaque(0xFFF1EE),
+    },
+    brk: OverlayColors {
+        bg: Rgba::opaque(0x161C2C),
+        band: Rgba::opaque(0x25345A),
+        digits: Rgba::opaque(0xE8EEFF),
+        tag: Rgba::opaque(0xA9C2FF),
+    },
+    idle: OverlayColors {
+        bg: Rgba::opaque(0x24221F),
+        band: Rgba::opaque(0x33302C),
+        digits: Rgba::opaque(0xF5F4F1),
+        tag: Rgba::opaque(0xA8A29E),
+    },
+    pill_stroke: Rgba(255, 255, 255, 18),
+    shadow: Rgba(0, 0, 0, 70),
 };
 
 pub const LIGHT: Palette = Palette {
     dark: false,
-    window: Rgba::opaque(0xF3F3F5),
-    card: Rgba::opaque(0xFFFFFF),
-    card_stroke: Rgba(0, 0, 0, 16),
-    separator: Rgba(0, 0, 0, 18),
-    text: Rgba::opaque(0x1B1B1F),
-    text_secondary: Rgba::opaque(0x5C5C63),
-    text_disabled: Rgba::opaque(0xA3A3AA),
-    control: Rgba::opaque(0xEDEDF0),
-    control_hover: Rgba::opaque(0xE2E2E6),
-    control_pressed: Rgba::opaque(0xD7D7DC),
-    accent: Rgba::opaque(0x2F5FE6),
-    accent_hover: Rgba::opaque(0x2752CC),
+    window: Rgba::opaque(0xFFFFFF),
+    card: Rgba::opaque(0xF3F1EC),
+    card_stroke: Rgba(0, 0, 0, 10),
+    separator: Rgba(0, 0, 0, 16),
+    text: Rgba::opaque(0x1A1918),
+    text_secondary: Rgba::opaque(0x57534E),
+    text_disabled: Rgba::opaque(0xA8A29E),
+    control: Rgba::opaque(0xE7E4DD),
+    control_hover: Rgba::opaque(0xDDD9D0),
+    control_pressed: Rgba::opaque(0xD2CDC2),
+    accent: Rgba::opaque(0x0F7D62),
+    accent_hover: Rgba::opaque(0x0B6B54),
     on_accent: Rgba::opaque(0xFFFFFF),
-    toggle_off: Rgba::opaque(0xB9B9C0),
+    selected: Rgba::opaque(0x1A1918),
+    on_selected: Rgba::opaque(0xFFFFFF),
+    toggle_off: Rgba::opaque(0xC4BEB5),
     knob: Rgba::opaque(0xFFFFFF),
-    focus: Rgba::opaque(0x2F5FE6),
-    window_stroke: Rgba(0, 0, 0, 40),
-    pill: Rgba(0xFB, 0xFB, 0xFC, 250),
-    pill_overdue: Rgba(0xFD, 0xEB, 0xEC, 250),
-    pill_stroke: Rgba(0, 0, 0, 30),
-    digits: Rgba::opaque(0x15171A),
-    tag: Rgba(0x3A, 0x33, 0x29, 240),
-    tag_sub: Rgba(0x55, 0x55, 0x5C, 200),
-    bar_track: Rgba(0, 0, 0, 22),
-    bar_normal: Rgba::opaque(0x2F5FE6),
-    bar_warn: Rgba::opaque(0xD97706),
-    bar_over: Rgba::opaque(0xDC2626),
-    bar_break: Rgba::opaque(0x16A34A),
-    bar_away: Rgba::opaque(0x0891B2),
-    shadow: Rgba(0, 0, 0, 34),
+    focus: Rgba::opaque(0x0F7D62),
+    window_stroke: Rgba(0, 0, 0, 34),
+    alarm: Rgba::opaque(0xC4371F),
+    on_alarm: Rgba::opaque(0xFFFFFF),
+    sit: OverlayColors {
+        bg: Rgba::opaque(0xEEF6F3),
+        band: Rgba::opaque(0xD3EBE3),
+        digits: Rgba::opaque(0x0C2A22),
+        tag: Rgba::opaque(0x2E5C50),
+    },
+    warn: OverlayColors {
+        bg: Rgba::opaque(0xFDF4E3),
+        band: Rgba::opaque(0xF7DFAE),
+        digits: Rgba::opaque(0x3D2A05),
+        tag: Rgba::opaque(0x7A5410),
+    },
+    over: OverlayColors {
+        bg: Rgba::opaque(0xC4371F),
+        band: Rgba::opaque(0xC4371F),
+        digits: Rgba::opaque(0xFFFFFF),
+        tag: Rgba::opaque(0xFFF1EE),
+    },
+    brk: OverlayColors {
+        bg: Rgba::opaque(0xEEF2FD),
+        band: Rgba::opaque(0xD5E0FB),
+        digits: Rgba::opaque(0x132355),
+        tag: Rgba::opaque(0x3A4F8C),
+    },
+    idle: OverlayColors {
+        bg: Rgba::opaque(0xF1EFEB),
+        band: Rgba::opaque(0xE4E0D9),
+        digits: Rgba::opaque(0x1A1918),
+        tag: Rgba::opaque(0x57534E),
+    },
+    pill_stroke: Rgba(0, 0, 0, 22),
+    shadow: Rgba(0, 0, 0, 40),
 };
 
 pub fn palette(dark: bool) -> &'static Palette {
@@ -157,24 +217,18 @@ pub fn palette(dark: bool) -> &'static Palette {
     }
 }
 
-impl Palette {
-    pub fn pill_for(&self, state: VisibleState) -> Rgba {
-        if state == VisibleState::Overdue {
-            self.pill_overdue
-        } else {
-            self.pill
-        }
-    }
+/// Fraction of the limit after which a sitting session shows the "near limit" colors.
+pub const WARN_AT: f32 = 0.85;
 
-    /// Progress bar color: blue while sitting, amber near the limit, red when overdue,
-    /// green during a break and cyan while away.
-    pub fn bar_for(&self, state: VisibleState, progress: f32) -> Rgba {
+impl Palette {
+    /// Overlay colors for a state; `progress` (0-1) picks the near-limit variant.
+    pub fn overlay(&self, state: VisibleState, progress: f32) -> OverlayColors {
         match state {
-            VisibleState::Overdue => self.bar_over,
-            VisibleState::Break => self.bar_break,
-            VisibleState::Away => self.bar_away,
-            _ if progress >= 0.85 => self.bar_warn,
-            _ => self.bar_normal,
+            VisibleState::Overdue => self.over,
+            VisibleState::Break => self.brk,
+            VisibleState::Away | VisibleState::Paused => self.idle,
+            VisibleState::Sitting if progress >= WARN_AT => self.warn,
+            VisibleState::Sitting => self.sit,
         }
     }
 }

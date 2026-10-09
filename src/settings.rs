@@ -1,3 +1,4 @@
+use crate::dock::{DockEdge, DockReveal};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
@@ -315,6 +316,25 @@ pub struct Settings {
     pub always_on_top: bool,
     #[serde(default = "default_true")]
     pub hotkeys_enabled: bool,
+    /// Docking is allowed: dragging the overlay to a screen edge attaches it there.
+    #[serde(default)]
+    pub dock_enabled: bool,
+    /// The edge the overlay is attached to, or none while it floats.
+    #[serde(default)]
+    pub dock_edge: Option<DockEdge>,
+    /// Position along the edge, 0 (start) to 1 (end).
+    #[serde(default = "default_dock_offset")]
+    pub dock_offset: f32,
+    #[serde(default = "default_true")]
+    pub dock_autohide: bool,
+    #[serde(default = "default_dock_hide")]
+    pub dock_hide_after_secs: u64,
+    #[serde(default)]
+    pub dock_reveal: DockReveal,
+    #[serde(default = "default_dock_reveal")]
+    pub dock_reveal_secs: u64,
+    #[serde(default = "default_true")]
+    pub dock_hide_fullscreen: bool,
     #[serde(default = "default_true")]
     pub stats_enabled: bool,
     #[serde(default)]
@@ -344,6 +364,15 @@ fn default_step() -> u64 {
 }
 fn default_snooze() -> u64 {
     10 * 60
+}
+fn default_dock_offset() -> f32 {
+    0.5
+}
+fn default_dock_hide() -> u64 {
+    3
+}
+fn default_dock_reveal() -> u64 {
+    8
 }
 fn default_volume() -> u8 {
     DEFAULT_ALERT_VOLUME
@@ -378,6 +407,14 @@ impl Default for Settings {
             theme: ThemePreference::System,
             always_on_top: true,
             hotkeys_enabled: true,
+            dock_enabled: false,
+            dock_edge: None,
+            dock_offset: default_dock_offset(),
+            dock_autohide: true,
+            dock_hide_after_secs: default_dock_hide(),
+            dock_reveal: DockReveal::TimeUp,
+            dock_reveal_secs: default_dock_reveal(),
+            dock_hide_fullscreen: true,
             stats_enabled: true,
             history: Vec::new(),
         }
@@ -405,6 +442,7 @@ impl Settings {
         Self {
             window_x: self.window_x,
             window_y: self.window_y,
+            dock_offset: self.dock_offset,
             today_date: self.today_date.clone(),
             today_sitting_secs: self.today_sitting_secs,
             timer_checkpoint: self.timer_checkpoint,
@@ -455,6 +493,16 @@ impl Settings {
             .snooze_secs
             .clamp(SETTINGS_SNOOZE_MIN_SECS, SETTINGS_SNOOZE_MAX_SECS);
         self.alert_volume = self.alert_volume.min(SETTINGS_VOLUME_MAX);
+        self.dock_hide_after_secs = self.dock_hide_after_secs.clamp(1, 30);
+        self.dock_reveal_secs = self.dock_reveal_secs.clamp(3, 60);
+        self.dock_offset = if self.dock_offset.is_finite() {
+            self.dock_offset.clamp(0.0, 1.0)
+        } else {
+            default_dock_offset()
+        };
+        if !self.dock_enabled {
+            self.dock_edge = None;
+        }
         if !self.stats_enabled {
             self.history.clear();
         }

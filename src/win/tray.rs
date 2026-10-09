@@ -1,18 +1,11 @@
-use crate::win::app::App;
 use crate::win::{flyout, icon};
-use unseat::{format_today, status_line};
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_LARGE_ICON, NIIF_NOSOUND,
     NIIF_USER, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_BALLOONUSERCLICK,
     NIN_POPUPCLOSE, NIN_POPUPOPEN, NIN_SELECT, NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, SetForegroundWindow, TrackPopupMenu,
-    MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP,
-    WM_CONTEXTMENU,
-};
-use windows::core::{w, PCWSTR};
+use windows::Win32::UI::WindowsAndMessaging::{WM_APP, WM_CONTEXTMENU};
 
 pub const CALLBACK: u32 = WM_APP + 1;
 pub const ID_PAUSE: u32 = 10;
@@ -55,106 +48,6 @@ pub fn remove(hwnd: HWND) {
     unsafe {
         let mut data = empty_nid(hwnd);
         let _ = Shell_NotifyIconW(NIM_DELETE, &mut data);
-    }
-}
-
-fn wide(text: &str) -> Vec<u16> {
-    text.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-/// Menu caption with the global shortcut shown right-aligned when shortcuts are on.
-fn item(text: &str, key: char, shortcuts: bool) -> Vec<u16> {
-    if shortcuts {
-        wide(&format!("{text}	Ctrl+Alt+Shift+{key}"))
-    } else {
-        wide(text)
-    }
-}
-
-pub fn show_menu(app: &App, hwnd: HWND) {
-    flyout::hide();
-    unsafe {
-        let Ok(menu) = CreatePopupMenu() else {
-            return;
-        };
-        let snap = app.engine.snapshot();
-        let keys = app.settings.hotkeys_enabled;
-        let header = wide(&format!("Unseat · {}", status_line(snap)));
-        let today = wide(&format_today(snap.today_sitting));
-        let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(header.as_ptr()));
-        let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(today.as_ptr()));
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-        let pause = item(if snap.running { "Pause" } else { "Resume" }, 'P', keys);
-        let _ = AppendMenuW(menu, MF_STRING, ID_PAUSE as usize, PCWSTR(pause.as_ptr()));
-        let reset = item("Reset", 'R', keys);
-        let _ = AppendMenuW(menu, MF_STRING, ID_RESET as usize, PCWSTR(reset.as_ptr()));
-        let brk = item(
-            if app.engine.on_break() {
-                "End break"
-            } else {
-                "Start break"
-            },
-            'B',
-            keys,
-        );
-        let _ = AppendMenuW(menu, MF_STRING, ID_BREAK as usize, PCWSTR(brk.as_ptr()));
-        let mut custom = Vec::new();
-        if let Ok(snooze) = CreatePopupMenu() {
-            let enable = if app.engine.can_snooze() {
-                MF_STRING
-            } else {
-                MF_STRING | MF_GRAYED
-            };
-            let _ = AppendMenuW(snooze, enable, ID_SNOOZE_5 as usize, w!("5 minutes"));
-            let _ = AppendMenuW(snooze, enable, ID_SNOOZE_10 as usize, w!("10 minutes"));
-            let _ = AppendMenuW(snooze, enable, ID_SNOOZE_15 as usize, w!("15 minutes"));
-            let _ = AppendMenuW(snooze, enable, ID_SNOOZE_30 as usize, w!("30 minutes"));
-            custom = item(
-                &format!("Default ({} min)", app.settings.snooze_secs / 60),
-                'S',
-                keys,
-            );
-            let _ = AppendMenuW(
-                snooze,
-                enable,
-                ID_SNOOZE_CUSTOM as usize,
-                PCWSTR(custom.as_ptr()),
-            );
-            let popup = if app.engine.can_snooze() {
-                MF_POPUP
-            } else {
-                MF_POPUP | MF_GRAYED
-            };
-            let _ = AppendMenuW(menu, popup, snooze.0 as usize, w!("Snooze"));
-        }
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-        let _ = AppendMenuW(menu, MF_STRING, ID_SETTINGS as usize, w!("Settings…"));
-        let hide = item(
-            if app.widget_visible {
-                "Hide overlay"
-            } else {
-                "Show overlay"
-            },
-            'U',
-            keys,
-        );
-        let _ = AppendMenuW(menu, MF_STRING, ID_HIDE as usize, PCWSTR(hide.as_ptr()));
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-        let _ = AppendMenuW(menu, MF_STRING, ID_QUIT as usize, w!("Quit"));
-        let mut pt = windows::Win32::Foundation::POINT::default();
-        let _ = GetCursorPos(&mut pt);
-        let _ = SetForegroundWindow(hwnd);
-        let _ = TrackPopupMenu(
-            menu,
-            TPM_LEFTALIGN | TPM_RIGHTBUTTON,
-            pt.x,
-            pt.y,
-            0,
-            hwnd,
-            None,
-        );
-        drop(custom);
-        let _ = DestroyMenu(menu);
     }
 }
 

@@ -34,6 +34,18 @@ function Save-Overlay($inst, [string]$path, [bool]$dark, [switch]$Hover) {
   "wrote $path"
 }
 
+# A docked frame pressed against a screen edge on the right of a desktop-like backdrop.
+function Save-Docked($inst, [string]$path, [bool]$dark) {
+  $bmp = Get-OverlayBitmap $inst
+  $w = [Math]::Max(300, $bmp.Width + 40); $h = [Math]::Max(150, $bmp.Height + 40)
+  $canvas, $g = Backdrop $w $h $dark
+  $g.DrawImage($bmp, $w - $bmp.Width, [int](($h - $bmp.Height) / 2), $bmp.Width, $bmp.Height)
+  $g.Dispose(); $bmp.Dispose()
+  $canvas.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+  $canvas.Dispose()
+  "wrote $path"
+}
+
 function Save-Window([IntPtr]$hwnd, [string]$path, [bool]$dark) {
   $r = Get-Rect $hwnd
   $w = $r.Right - $r.Left; $h = $r.Bottom - $r.Top
@@ -81,8 +93,15 @@ foreach ($theme in @("dark", "light")) {
     Save-Overlay $inst (Join-Path $Out "overlay-sitting-$theme.png") $dark
     # Hover reveals pause, reset and hide controls.
     Save-Overlay $inst (Join-Path $Out "overlay-hover-$theme.png") $dark -Hover
-    Advance $inst (1200 - 428 + 7 * 60 + 20)
+    Advance $inst (1200 - 428)
+    $card = Find-TestWindow "UnseatAlertCard" "Unseat alert (test)"
+    Start-Sleep -Milliseconds 300
+    Save-Window $card (Join-Path $Out "card-timeup-$theme.png") $dark
+    Advance $inst (7 * 60 + 20)
     Save-Overlay $inst (Join-Path $Out "overlay-overdue-$theme.png") $dark
+    $panel = Open-TrayPanel $inst
+    Save-Window $panel (Join-Path $Out "tray-panel-overdue-$theme.png") $dark
+    Close-Window $panel
     Send-Command $inst $ID_BREAK
     Advance $inst 41
     Save-Overlay $inst (Join-Path $Out "overlay-break-$theme.png") $dark
@@ -93,7 +112,7 @@ foreach ($theme in @("dark", "light")) {
     Send-Command $inst $ID_PAUSE
 
     $dlg = Open-Settings $inst
-    $tabs = "timer", "breaks", "alerts", "general"
+    $tabs = "timer", "breaks", "alerts", "dock", "general"
     for ($i = 0; $i -lt $tabs.Count; $i++) {
       Click-SettingsTab $dlg $i
       Save-Window $dlg (Join-Path $Out "settings-$($tabs[$i])-$theme.png") $dark
@@ -103,6 +122,32 @@ foreach ($theme in @("dark", "light")) {
     Stop-TestInstance $inst
   }
 }
+# Edge docking: expanded, slid out to a tab, and peeking, against the right edge.
+foreach ($theme in @("dark", "light")) {
+  $dark = $theme -eq "dark"
+  $inst = Start-TestInstance $Exe @{
+    settings_version = 2; theme = $theme; widget_size = "medium"; sitting_limit_secs = 1200
+    dock_enabled = $true; dock_edge = "right"; dock_offset = 0.4; window_x = 240; window_y = 240
+  }
+  try {
+    # Jumping the clock hides it; a click on the tab slides it back in.
+    Advance $inst 428
+    Start-Sleep -Milliseconds 400
+    Click-At $inst.Widget 4 20
+    Start-Sleep -Milliseconds 400
+    Save-Docked $inst (Join-Path $Out "dock-expanded-$theme.png") $dark
+    Advance $inst 4
+    Start-Sleep -Milliseconds 500
+    Save-Docked $inst (Join-Path $Out "dock-tab-$theme.png") $dark
+    Dock-Hover $inst $true
+    Start-Sleep -Milliseconds 200
+    Save-Docked $inst (Join-Path $Out "dock-peek-$theme.png") $dark
+    Dock-Hover $inst $false
+  } finally {
+    Stop-TestInstance $inst
+  }
+}
+
 # One sheet with every overlay state, dark above light.
 $states = "sitting", "hover", "overdue", "break", "paused"
 $first = [System.Drawing.Image]::FromFile((Join-Path $Out "overlay-sitting-dark.png"))

@@ -72,7 +72,8 @@ Scenario "timer keeps running through inactivity by default" {
     Check ($s.state -eq "Overdue") "state at limit: $($s.state)"
     Check ((LogCount $i "alert LimitReached") -eq 1) "one LimitReached alert"
     Check ((LogCount $i "sound chime volume=75*") -ge 1) "alert played at default volume"
-    Check ((LogCount $i "notify Time to stand up*") -eq 1) "time-up notification shown"
+    Check ((LogCount $i "card TimeUp") -eq 1) "time-up card shown beside the visible overlay"
+    Check ((LogCount $i "notify *") -eq 0) "no duplicate toast while the card is up"
   } finally { Stop-TestInstance $i }
 }
 
@@ -119,6 +120,7 @@ Scenario "minimized overlay keeps timing and alerting" {
     Check ($s.state -eq "Overdue") "state while minimized: $($s.state)"
     Check ((LogCount $i "alert LimitReached") -eq 1) "alert while minimized"
     Check ((LogCount $i "sound *") -ge 1) "sound while minimized"
+    Check ((LogCount $i "notify Time to stand up*") -eq 1) "Windows notification while the overlay is hidden"
     Send-Command $i $ID_HIDE
     Check ((Get-State $i).visible -eq "true") "overlay shown again"
   } finally { Stop-TestInstance $i }
@@ -178,7 +180,7 @@ Scenario "explicit break counts down then restarts the session" {
     Check ($s.state -eq "Sitting") "fresh session after break: $($s.state)"
     Near ([int]$s.sitting) 1 4 "new session from zero"
     Check ((LogCount $i "alert BreakOver") -eq 1) "break-over alert"
-    Check ((LogCount $i "notify Break's over*") -eq 1) "break-over notification"
+    Check ((LogCount $i "card BreakOver") -eq 1) "break-over card"
   } finally { Stop-TestInstance $i }
 }
 
@@ -206,7 +208,7 @@ Scenario "volume setting and silent mode reach the player" {
   try {
     Advance $i 1201
     Check ((LogCount $i "sound *") -eq 0) "no sound at 0%"
-    Check ((LogCount $i "notify *") -eq 1) "notification still shown"
+    Check (((LogCount $i "notify *") + (LogCount $i "card *")) -eq 1) "alert still shown"
   } finally { Stop-TestInstance $i }
 }
 
@@ -258,8 +260,8 @@ Scenario "overlay sizes scale with DPI and size choice" {
     try {
       $dpi = [UnseatDpi]::GetDpiForWindow($i.Widget) / 96.0
       $r = Get-Rect $i.Widget
-      Near ($r.Right - $r.Left) ([math]::Round(144 * $factor[$size] * $dpi)) 1 "$size width"
-      Near ($r.Bottom - $r.Top) ([math]::Round(56 * $factor[$size] * $dpi)) 1 "$size height"
+      Near ($r.Right - $r.Left) ([math]::Round(176 * $factor[$size] * $dpi)) 1 "$size width"
+      Near ($r.Bottom - $r.Top) ([math]::Round(60 * $factor[$size] * $dpi)) 1 "$size height"
     } finally { Stop-TestInstance $i }
   }
 }
@@ -308,7 +310,7 @@ Scenario "launch with Windows toggles the startup entry via the keyboard" {
     foreach ($round in @($true, $false)) {
       $dlg = Open-Settings $i
       # Tabs -> General, then Tab past Theme to "Launch with Windows", Space toggles, Enter saves.
-      foreach ($vk in @($VK_RIGHT, $VK_RIGHT, $VK_RIGHT, $VK_TAB, $VK_TAB, $VK_SPACE, $VK_RETURN)) {
+      foreach ($vk in @($VK_RIGHT, $VK_RIGHT, $VK_RIGHT, $VK_RIGHT, $VK_TAB, $VK_TAB, $VK_SPACE, $VK_RETURN)) {
         [void][UnseatTest]::SendMessageW($dlg, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
       }
       Start-Sleep -Milliseconds 300
@@ -348,6 +350,84 @@ Scenario "theme follows the saved preference" {
     $i = Start-TestInstance $Exe (Base @{ theme = $pair[0] })
     try { Check ((Get-State $i).dark -eq $pair[1]) "$($pair[0]) theme" } finally { Stop-TestInstance $i }
   }
+}
+
+Scenario "docked overlay slides out, peeks, slides in and reveals on time up" {
+  $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  $i = Start-TestInstance $Exe (Base @{ dock_enabled = $true; dock_edge = "right"; dock_offset = 0.5; window_x = $wa.Left + 300; window_y = $wa.Top + 300 })
+  try {
+    $dpi = [UnseatDpi]::GetDpiForWindow($i.Widget) / 96.0
+    $s = Get-State $i
+    Check ($s.dock -eq "Some(Right)" -and $s.dockphase -eq "Some(Expanded)") "starts docked and expanded: $($s.dock) $($s.dockphase)"
+    $r = Get-Rect $i.Widget
+    Check ($r.Right -eq $wa.Right) "flush with the right edge ($($r.Right) vs $($wa.Right))"
+    Advance $i 4
+    Start-Sleep -Milliseconds 400
+    $s = Get-State $i
+    $r = Get-Rect $i.Widget
+    Check ($s.dockphase -eq "Some(Hidden)") "hidden after the delay: $($s.dockphase)"
+    Near ($r.Right - $r.Left) ([math]::Round(8 * $dpi)) 1 "slid out to an 8 px tab"
+    Check ($r.Right -eq $wa.Right) "tab stays on the edge"
+    Dock-Hover $i $true
+    Start-Sleep -Milliseconds 100
+    Near ((Get-Rect $i.Widget).Right - (Get-Rect $i.Widget).Left) ([math]::Round(44 * $dpi)) 1 "hover peeks"
+    Click-At $i.Widget 4 20
+    Start-Sleep -Milliseconds 400
+    Check ((Get-State $i).dockphase -eq "Some(Expanded)") "click slides it in"
+    Dock-Hover $i $false
+    Advance $i 4
+    Start-Sleep -Milliseconds 400
+    Check ((Get-State $i).dockphase -eq "Some(Hidden)") "hides again"
+    Advance $i 1200
+    Start-Sleep -Milliseconds 400
+    $s = Get-State $i
+    Check ($s.state -eq "Overdue") "timer kept running while hidden: $($s.state) $($s.sitting)"
+    Check ((LogCount $i "dock reveal alert") -eq 1) "time up revealed the overlay"
+    Check ($s.dockphase -eq "Some(Expanded)") "revealed: $($s.dockphase)"
+    Advance $i 9
+    Start-Sleep -Milliseconds 400
+    Check ((Get-State $i).dockphase -eq "Some(Hidden)") "slides back out after the reveal time"
+  } finally { Stop-TestInstance $i }
+}
+
+Scenario "pinned dock stays open and docking off floats freely" {
+  $i = Start-TestInstance $Exe (Base @{ dock_enabled = $true; dock_edge = "left"; dock_autohide = $false })
+  try {
+    Advance $i 60
+    Start-Sleep -Milliseconds 300
+    $s = Get-State $i
+    Check ($s.dock -eq "Some(Left)" -and $s.dockphase -eq "Some(Expanded)") "pinned on the left: $($s.dock) $($s.dockphase)"
+  } finally { Stop-TestInstance $i }
+  $i = Start-TestInstance $Exe (Base)
+  try { Check ((Get-State $i).dock -eq "None") "floating by default" } finally { Stop-TestInstance $i }
+}
+
+Scenario "tray panel opens and acts from the keyboard" {
+  $i = Start-TestInstance $Exe (Base)
+  try {
+    $panel = Open-TrayPanel $i
+    Check ((LogCount $i "panel shown") -eq 1) "panel shown"
+    foreach ($vk in @($VK_TAB, 0x28, $VK_RETURN)) {
+      [void][UnseatTest]::SendMessageW($panel, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
+    }
+    Start-Sleep -Milliseconds 300
+    Check ((Get-State $i).state -eq "Break") "Tab, Down, Enter took a break"
+    Check (-not [UnseatTest]::IsWindowVisible($panel)) "panel closed after the action"
+  } finally { Stop-TestInstance $i }
+}
+
+Scenario "alert card offers a break when time is up" {
+  $i = Start-TestInstance $Exe (Base)
+  try {
+    Advance $i 1201
+    $card = Find-TestWindow "UnseatAlertCard" "Unseat alert (test)"
+    $r = Get-Rect $card
+    $s = ($r.Right - $r.Left) / 320.0
+    Click-At $card ([int](80 * $s)) ([int](109 * $s))
+    Start-Sleep -Milliseconds 300
+    Check ((Get-State $i).state -eq "Break") "Take a break from the card"
+    Check (-not [UnseatTest]::IsWindowVisible($card)) "card dismissed"
+  } finally { Stop-TestInstance $i }
 }
 
 Scenario "a second launch exits and leaves the first running" {

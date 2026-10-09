@@ -33,6 +33,8 @@ $MSG_SET_IDLE = $WM_APP + 0x40
 $MSG_ADVANCE = $WM_APP + 0x41
 $MSG_DUMP = $WM_APP + 0x42
 $MSG_SNAPSHOT = $WM_APP + 0x43
+$MSG_DOCK_HOVER = $WM_APP + 0x44
+$TRAY_CALLBACK = $WM_APP + 1
 $ID_PAUSE = 10; $ID_RESET = 11; $ID_SETTINGS = 12; $ID_QUIT = 13; $ID_HIDE = 14
 $ID_SNOOZE_5 = 20; $ID_SNOOZE_CUSTOM = 24; $ID_BREAK = 25
 $TestRoot = Join-Path (Split-Path -Parent $PSScriptRoot) "target\test-appdata"
@@ -148,10 +150,12 @@ function Click-At([IntPtr]$hwnd, [int]$x, [int]$y) {
 }
 
 function Click-SettingsTab([IntPtr]$dlg, [int]$index) {
+  # Five equal tab chips across 400 - 2 * 16 logical px with 4 px gaps, centred at y = 77.
   $r = Get-Rect $dlg
-  $s = ($r.Right - $r.Left) / 380.0
-  $x = [int]((16 + 87 * $index + 43.5) * $s)
-  $y = [int](66 * $s)
+  $s = ($r.Right - $r.Left) / 400.0
+  $seg = (368 - 16) / 5.0
+  $x = [int]((16 + ($seg + 4) * $index + $seg / 2) * $s)
+  $y = [int](77 * $s)
   Click-At $dlg $x $y
   Start-Sleep -Milliseconds 250
 }
@@ -159,4 +163,19 @@ function Click-SettingsTab([IntPtr]$dlg, [int]$index) {
 function Close-Window([IntPtr]$hwnd) {
   [void][UnseatTest]::PostMessageW($hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
   Start-Sleep -Milliseconds 300
+}
+
+function Find-TestWindow([string]$class, [string]$title, [int]$ms = 4000) {
+  Wait-Until { $h = [UnseatTest]::FindWindowW($class, $title); if ($h -ne [IntPtr]::Zero -and [UnseatTest]::IsWindowVisible($h)) { $h } } $ms
+}
+
+function Open-TrayPanel($inst) {
+  [void][UnseatTest]::SendMessageW($inst.Hidden, $TRAY_CALLBACK, [IntPtr]::Zero, [IntPtr]0x007B)
+  $panel = Find-TestWindow "UnseatTrayPanel" "Unseat panel (test)"
+  Start-Sleep -Milliseconds 300
+  $panel
+}
+
+function Dock-Hover($inst, [bool]$on) {
+  [void][UnseatTest]::SendMessageW($inst.Widget, $MSG_DOCK_HOVER, [IntPtr]([int]$on), [IntPtr]::Zero)
 }

@@ -1,24 +1,33 @@
+use crate::dock::DockEdge;
 use crate::engine::{Snapshot, VisibleState};
 use crate::settings::{TimerDisplayMode, TimerShape, WidgetSize};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
+    /// Pause, or resume when paused.
     Pause,
+    Break,
     Reset,
+    /// The corner chip: hide the overlay, or pin it open when docked.
     Close,
     Snooze,
 }
 
-pub const WIDGET_W: f32 = 144.0;
-pub const WIDGET_H: f32 = 56.0;
+/// Overlay window size at 96 DPI for size S. Other sizes multiply `scale`.
+pub const WIDGET_W: f32 = 176.0;
+pub const WIDGET_H: f32 = 60.0;
+/// Pill corner radius: a little sharper than a full capsule.
+pub const PILL_RADIUS: f32 = 12.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimerRenderKey {
     timer_display_mode: TimerDisplayMode,
     face_secs: u64,
     overdue_mins: u64,
+    progress_permille: u32,
     scale_milli: u32,
+    dock: u32,
     break_remaining_secs: u64,
     state: VisibleState,
     shape: TimerShape,
@@ -39,7 +48,9 @@ pub fn timer_render_key(
         timer_display_mode,
         face_secs: timer_face_seconds(timer_display_mode, snapshot),
         overdue_mins: snapshot.overdue_by.as_secs() / 60,
+        progress_permille: 0,
         scale_milli: 0,
+        dock: 0,
         break_remaining_secs: countdown_secs(snapshot.break_remaining),
         state: snapshot.state,
         shape,
@@ -55,9 +66,22 @@ impl TimerRenderKey {
         self.scale_milli = (scale * 1000.0).round() as u32;
         self
     }
+
+    /// Include the progress band at the resolution the pill can show (one step per pixel).
+    pub fn with_progress(mut self, progress: f32, pill_px: f32) -> Self {
+        let steps = pill_px.max(1.0);
+        self.progress_permille =
+            ((progress.clamp(0.0, 1.0) * steps).round() / steps * 1000.0) as u32;
+        self
+    }
+
+    /// Include any docking presentation (edge, phase, animation frame).
+    pub fn with_dock(mut self, code: u32) -> Self {
+        self.dock = code;
+        self
+    }
 }
 
-/// Logical layout at 96 DPI for Small. Other sizes multiply `scale`.
 pub fn widget_pixel_size(_shape: TimerShape, scale: f32) -> (i32, i32) {
     (
         (WIDGET_W * scale).round() as i32,
@@ -75,23 +99,21 @@ pub struct WidgetLayout {
     pub pill_y: f32,
     pub pill_w: f32,
     pub pill_h: f32,
-    pub tag_x: f32,
-    pub tag_y: f32,
-    pub tag_w: f32,
-    pub tag_h: f32,
+    pub radius: f32,
+    /// Digit lane while not hovered.
+    pub digits_l: f32,
+    pub digits_r: f32,
+    /// Digit lane while hover controls are shown.
+    pub digits_hover_r: f32,
+    pub tag_l: f32,
+    pub tag_r: f32,
+    pub digit_px: f32,
+    pub tag_px: f32,
+    /// Hover buttons: pause, break and reset centers, and their radius.
     pub pause: (f32, f32),
+    pub brk: (f32, f32),
     pub reset: (f32, f32),
     pub control_r: f32,
-    pub digits_l: f32,
-    pub digits_t: f32,
-    pub digits_r: f32,
-    pub digits_b: f32,
-    pub bar_x: f32,
-    pub bar_y: f32,
-    pub bar_w: f32,
-    pub bar_h: f32,
-    pub digit_px: f32,
-    pub play: (f32, f32, f32),
     pub close: (f32, f32),
     pub close_r: f32,
 }
@@ -102,64 +124,59 @@ pub fn widget_layout(scale: f32) -> WidgetLayout {
     let pill_y = 6.0 * s;
     let pill_w = WIDGET_W * s - pill_x * 2.0;
     let pill_h = WIDGET_H * s - pill_y * 2.0;
-    let pad = 8.0 * s;
-    let control_r = 9.0 * s;
-    let inner_pad = 2.0 * s;
-    let col_gap = 6.0 * s;
-    let tag_w = inner_pad * 2.0 + control_r * 2.0;
-    let chip_inset = 2.0 * s;
-    let tag_h = pill_h - chip_inset * 2.0;
-    let tag_x = pill_x + pill_w - pad - tag_w;
-    let tag_y = pill_y + chip_inset;
-    let pause_x = tag_x + inner_pad + control_r;
-    let gap = (tag_h - inner_pad * 2.0 - control_r * 4.0).max(0.0);
-    let pause = (pause_x, tag_y + inner_pad + control_r);
-    let reset = (pause_x, pause.1 + control_r + gap + control_r);
-    let digits_l = pill_x + pad;
-    let digits_r = tag_x - col_gap;
-    let bar_h = 3.0 * s;
-    let bar_y = pill_y + pill_h - 5.0 * s - bar_h;
-    let play_x = (digits_l + digits_r) * 0.5;
-    let play_y = pill_y + pill_h * 0.5;
-    let close_r = 6.0 * s;
-    let close_inset = 1.0 * s;
+    let pill_r = pill_x + pill_w;
+    let mid_y = pill_y + pill_h * 0.5;
+    let control_r = 12.0 * s;
+    let step = control_r * 2.0 + 4.0 * s;
+    let reset = (pill_r - 8.0 * s - control_r, mid_y);
+    let brk = (reset.0 - step, mid_y);
+    let pause = (brk.0 - step, mid_y);
+    let tag_r = pill_r - 16.0 * s;
+    let tag_l = tag_r - 40.0 * s;
+    let close_r = 7.0 * s;
     WidgetLayout {
         pill_x,
         pill_y,
         pill_w,
         pill_h,
-        tag_x,
-        tag_y,
-        tag_w,
-        tag_h,
+        radius: PILL_RADIUS * s,
+        digits_l: pill_x + 16.0 * s,
+        digits_r: tag_l - 4.0 * s,
+        digits_hover_r: pause.0 - control_r - 6.0 * s,
+        tag_l,
+        tag_r,
+        digit_px: 28.0 * s,
+        tag_px: 12.0 * s,
         pause,
+        brk,
         reset,
         control_r,
-        digits_l,
-        digits_t: pill_y + 3.0 * s,
-        digits_r,
-        digits_b: bar_y - 2.0 * s,
-        bar_x: digits_l,
-        bar_y,
-        bar_w: (digits_r - digits_l).max(8.0 * s),
-        bar_h,
-        digit_px: 26.0 * s,
-        play: (play_x, play_y, 18.0 * s),
-        close: (WIDGET_W * s - close_inset - close_r, close_inset + close_r),
+        close: (WIDGET_W * s - 1.0 * s - close_r, 1.0 * s + close_r),
         close_r,
     }
 }
 
-pub fn play_center(scale: f32) -> (f32, f32, f32) {
-    widget_layout(scale).play
+fn in_circle((cx, cy): (f32, f32), r: f32, x: f32, y: f32) -> bool {
+    (x - cx).hypot(y - cy) <= r
 }
 
-/// Hover chips stacked in a right-edge tag: pause on top, reset below.
-pub fn control_centers(_shape: TimerShape, scale: f32) -> ((f32, f32), (f32, f32), f32) {
+/// Where the corner chip sits: the window's top-right corner, moved to the corner away
+/// from the screen edge when docked so it never hangs off the screen.
+pub fn chip_center(scale: f32, edge: Option<DockEdge>) -> (f32, f32) {
     let l = widget_layout(scale);
-    (l.pause, l.reset, l.control_r)
+    let (x, y) = l.close;
+    // Docked windows drop the shadow margin on the edge side (see `dock_frame`).
+    let margin = l.pill_x;
+    match edge {
+        Some(DockEdge::Right) => (WIDGET_W * scale - x, y),
+        Some(DockEdge::Left) => (x - margin, y),
+        Some(DockEdge::Top) => (x, WIDGET_H * scale - y - margin),
+        Some(DockEdge::Bottom) | None => (x, y),
+    }
 }
 
+/// What a click at (x, y) in window pixels does. Controls only exist while hovered;
+/// clicking a paused pill resumes it, and clicking an overdue time snoozes.
 pub fn hit_control(
     _shape: TimerShape,
     hover: bool,
@@ -168,40 +185,47 @@ pub fn hit_control(
     x: i32,
     y: i32,
 ) -> Option<Hit> {
-    let xf = x as f32;
-    let yf = y as f32;
-    let layout = widget_layout(scale);
-    let paused = state == VisibleState::Paused;
-    if paused {
-        let (cx, cy, r) = layout.play;
-        if (xf - cx).hypot(yf - cy) <= r {
-            return Some(Hit::Pause);
-        }
+    hit_overlay(hover, state, scale, x as f32, y as f32, None)
+}
+
+/// `hit_control` for a docked pill drawn shifted by `(dx, dy)` with its chip moved off the
+/// screen edge.
+pub fn hit_overlay(
+    hover: bool,
+    state: VisibleState,
+    scale: f32,
+    x: f32,
+    y: f32,
+    dock: Option<(DockEdge, f32, f32)>,
+) -> Option<Hit> {
+    let l = widget_layout(scale);
+    if hover && in_circle(chip_center(scale, dock.map(|d| d.0)), l.close_r, x, y) {
+        return Some(Hit::Close);
     }
+    let (xf, yf) = match dock {
+        Some((_, dx, dy)) => (x - dx, y - dy),
+        None => (x, y),
+    };
     if hover {
-        let (cx, cy) = layout.close;
-        if (xf - cx).hypot(yf - cy) <= layout.close_r {
-            return Some(Hit::Close);
-        }
-        let (px, py) = layout.pause;
-        let (rx, ry) = layout.reset;
-        let r = layout.control_r;
-        if !paused && (xf - px).hypot(yf - py) <= r {
-            return Some(Hit::Pause);
-        }
-        if (xf - rx).hypot(yf - ry) <= r {
-            return Some(Hit::Reset);
+        for (center, hit) in [(l.pause, Hit::Pause), (l.brk, Hit::Break), (l.reset, Hit::Reset)] {
+            if in_circle(center, l.control_r, xf, yf) {
+                return Some(hit);
+            }
         }
     }
-    if state == VisibleState::Overdue
-        && xf >= layout.digits_l
-        && xf <= layout.digits_r
-        && yf >= layout.digits_t
-        && yf <= layout.digits_b
-    {
-        return Some(Hit::Snooze);
+    let in_pill = xf >= l.pill_x
+        && xf <= l.pill_x + l.pill_w
+        && yf >= l.pill_y
+        && yf <= l.pill_y + l.pill_h;
+    if !in_pill {
+        return None;
     }
-    None
+    let lane_r = if hover { l.digits_hover_r } else { l.digits_r };
+    match state {
+        VisibleState::Paused => Some(Hit::Pause),
+        VisibleState::Overdue if xf >= l.digits_l && xf <= lane_r => Some(Hit::Snooze),
+        _ => None,
+    }
 }
 
 pub fn format_elapsed(d: Duration) -> String {
@@ -256,20 +280,6 @@ fn countdown_secs(remaining: Duration) -> u64 {
         .saturating_add(u64::from(remaining.subsec_nanos() != 0))
 }
 
-pub fn pill_background_rgb(state: VisibleState) -> [u8; 3] {
-    match state {
-        VisibleState::Overdue => [0x2A, 0x10, 0x16],
-        _ => [0x10, 0x12, 0x14],
-    }
-}
-
-pub fn format_break_remaining(d: Duration) -> String {
-    let total = d.as_secs();
-    let minutes = total / 60;
-    let seconds = total % 60;
-    format!("{minutes}:{seconds:02}")
-}
-
 pub fn format_goal_parts(d: Duration) -> (String, &'static str) {
     let mins = d.as_secs() / 60;
     if mins >= 120 && mins % 60 == 0 {
@@ -279,18 +289,18 @@ pub fn format_goal_parts(d: Duration) -> (String, &'static str) {
     }
 }
 
-pub fn tag_goal(_state: VisibleState, limit: Duration, _break_dur: Duration) -> Duration {
-    limit
-}
-
-/// The overlay's right-hand tag: the session goal normally, how far over when overdue, the
-/// break length during a break, and "away" while paused for inactivity.
-pub fn tag_text(snapshot: Snapshot, limit: Duration, break_dur: Duration) -> (String, &'static str) {
+/// The overlay's tag beside the digits: the goal ("20m", or "/ 20m" for a stopwatch),
+/// minutes over when overdue, or the state when on a break, away or paused.
+pub fn tag_text(snapshot: Snapshot, mode: TimerDisplayMode, limit: Duration) -> String {
+    let (n, unit) = format_goal_parts(limit);
+    let goal = format!("{n}{}", if unit == "hr" { "h" } else { "m" });
     match snapshot.state {
-        VisibleState::Overdue => (format!("+{}", snapshot.overdue_by.as_secs() / 60), "over"),
-        VisibleState::Break => ((break_dur.as_secs() / 60).to_string(), "break"),
-        VisibleState::Away => (format_goal_parts(limit).0, "away"),
-        VisibleState::Sitting | VisibleState::Paused => format_goal_parts(limit),
+        VisibleState::Overdue => format!("+{}m", snapshot.overdue_by.as_secs() / 60),
+        VisibleState::Break => "break".to_string(),
+        VisibleState::Away => "away".to_string(),
+        VisibleState::Paused => "paused".to_string(),
+        VisibleState::Sitting if mode == TimerDisplayMode::Stopwatch => format!("/ {goal}"),
+        VisibleState::Sitting => goal,
     }
 }
 
@@ -311,36 +321,6 @@ pub fn format_today_hm(d: Duration) -> String {
     let hours = total_mins / 60;
     let minutes = total_mins % 60;
     format!("{hours}h {minutes}m")
-}
-
-pub fn status_word(state: VisibleState) -> &'static str {
-    match state {
-        VisibleState::Sitting => "ACTIVE",
-        VisibleState::Away => "AWAY",
-        VisibleState::Break => "BREAK",
-        VisibleState::Paused => "PAUSED",
-        VisibleState::Overdue => "OVERDUE",
-    }
-}
-
-pub fn state_label(state: VisibleState) -> &'static str {
-    match state {
-        VisibleState::Sitting => "on",
-        VisibleState::Away => "away",
-        VisibleState::Break => "break",
-        VisibleState::Paused => "paused",
-        VisibleState::Overdue => "over",
-    }
-}
-
-pub fn card_kicker(state: VisibleState) -> &'static str {
-    match state {
-        VisibleState::Sitting => "Active",
-        VisibleState::Away => "Away",
-        VisibleState::Break => "Break",
-        VisibleState::Paused => "Paused",
-        VisibleState::Overdue => "Overdue",
-    }
 }
 
 pub fn progress(

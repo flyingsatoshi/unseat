@@ -1,4 +1,5 @@
 use crate::win::{
+    alert_card, tray_panel,
     autostart, flyout, hotkeys, idle, install, paint, session, settings_dlg, sound, testhook,
     theme, tray, widget,
 };
@@ -57,6 +58,9 @@ pub struct App {
     hotkeys_on: bool,
     pub widget_visible: bool,
     pub suspended: bool,
+    pub dock: Option<unseat::DockController>,
+    pub dock_frame: Option<unseat::DockFrame>,
+    pub dock_suppressed: bool,
 }
 
 pub fn run() -> windows::core::Result<()> {
@@ -78,6 +82,8 @@ pub fn run() -> windows::core::Result<()> {
         widget::register()?;
         settings_dlg::register();
         flyout::register();
+        tray_panel::register();
+        alert_card::register();
         register_hidden()?;
 
         let path = settings_file();
@@ -141,6 +147,9 @@ pub fn run() -> windows::core::Result<()> {
             hotkeys_on: false,
             widget_visible: true,
             suspended: false,
+            dock: None,
+            dock_frame: None,
+            dock_suppressed: false,
         });
         let ptr = Box::into_raw(app);
 
@@ -182,6 +191,7 @@ pub fn run() -> windows::core::Result<()> {
         );
         (*ptr).widget = widget::create(ptr, x, y)?;
         (*ptr).apply_topmost();
+        (*ptr).sync_dock();
         (*ptr).repaint();
         (*ptr).tick();
 
@@ -197,6 +207,8 @@ pub fn run() -> windows::core::Result<()> {
         let _ = KillTimer(hidden, TICK_ID);
         let _ = KillTimer(hidden, SOUND_ID);
         flyout::shutdown();
+        tray_panel::shutdown();
+        alert_card::shutdown();
         settings_dlg::shutdown();
         tray::remove(hidden);
         drop(Box::from_raw(ptr));
@@ -207,7 +219,7 @@ pub fn run() -> windows::core::Result<()> {
 }
 
 impl App {
-    fn clock_now(&mut self) -> Duration {
+    pub fn clock_now(&mut self) -> Duration {
         let raw =
             Duration::from_millis(unsafe { GetTickCount64().saturating_sub(self.clock_origin_ms) })
                 + testhook::clock_offset();
@@ -236,8 +248,29 @@ impl App {
         if actions.play_sound {
             self.play_alert_sound();
         }
+        self.dock_alert(beep == Beep::LimitReached);
         if let Some(notice) = actions.notification {
-            tray::notify(self.hidden, notice.title, &notice.body);
+            // While the overlay is on screen the alert card beside it replaces the toast.
+            let on_screen = self.widget_visible && !self.dock_suppressed;
+            let card = match beep {
+                Beep::LimitReached => Some(alert_card::Card::TimeUp),
+                Beep::BreakOver => Some(alert_card::Card::BreakOver),
+                _ => None,
+            };
+            match card {
+                Some(card) if on_screen => {
+                    let body = match card {
+                        alert_card::Card::TimeUp => format!(
+                            "{} minutes in your seat. A {} minute break resets the clock.",
+                            self.settings.sitting_limit_secs / 60,
+                            self.settings.break_duration_secs / 60
+                        ),
+                        alert_card::Card::BreakOver => notice.body.clone(),
+                    };
+                    alert_card::show(self as *mut App, self.widget, card, notice.title, &body);
+                }
+                _ => tray::notify(self.hidden, notice.title, &notice.body),
+            }
         }
     }
 
@@ -266,7 +299,10 @@ impl App {
         let result = self.engine.apply_at(command, now, local_date(), input);
         testhook::log(&format!("command {command:?}"));
         match command {
-            Command::Reset | Command::Snooze(_) | Command::StartBreak => self.stop_alert_sound(),
+            Command::Reset | Command::Snooze(_) | Command::StartBreak => {
+                self.stop_alert_sound();
+                alert_card::hide();
+            }
             Command::TogglePause => self.handle_beep(result.beep),
         }
         self.persist_today();
@@ -311,7 +347,11 @@ impl App {
             self.add_tray();
         }
         self.update_tray();
-        self.repaint();
+        if self.docked_edge().is_some() {
+            self.dock_tick();
+        } else {
+            self.repaint();
+        }
         self.schedule_tick(&result.snapshot);
     }
 
@@ -397,7 +437,7 @@ impl App {
         };
         let topmost = ex as u32 & windows::Win32::UI::WindowsAndMessaging::WS_EX_TOPMOST.0 != 0;
         testhook::log(&format!(
-            "state {:?} sitting={} remaining={} break={} today={} running={} visible={} topmost={} rect={},{},{},{} tray={} hotkeys={} dark={}",
+            "state {:?} sitting={} remaining={} break={} today={} running={} visible={} topmost={} rect={},{},{},{} tray={} hotkeys={} dark={} dock={:?} dockphase={:?} dockrect={:?}",
             snap.state,
             snap.sitting_elapsed.as_secs(),
             snap.timer_remaining.as_secs(),
@@ -413,6 +453,9 @@ impl App {
             self.tray_added,
             self.hotkeys_on,
             self.is_dark(),
+            self.docked_edge(),
+            self.dock.as_ref().map(|d| d.phase()),
+            self.dock_frame.map(|f| f.rect),
         ));
     }
 
@@ -462,6 +505,8 @@ impl App {
         self.last_tip.clear();
         self.update_tray();
         self.force_repaint();
+        self.sync_dock();
+        self.force_repaint();
         testhook::log("settings saved");
     }
 
@@ -494,6 +539,9 @@ impl App {
     }
 
     pub fn show_widget(&mut self) {
+        if self.dock_hidden() {
+            self.dock_click();
+        }
         self.widget_visible = true;
         unsafe {
             let _ = ShowWindow(self.widget, SW_SHOWNOACTIVATE);
@@ -513,6 +561,10 @@ impl App {
     }
 
     pub fn toggle_widget(&mut self) {
+        if self.dock_hidden() && self.widget_visible {
+            self.dock_click();
+            return;
+        }
         if self.widget_visible {
             self.hide_widget();
         } else {
@@ -529,6 +581,12 @@ impl App {
         let snap = self.engine.snapshot();
         let scale = widget::paint_scale(self.widget, self.settings.widget_size);
         let dark = self.is_dark();
+        let limit = Duration::from_secs(self.settings.sitting_limit_secs);
+        let break_dur = Duration::from_secs(self.settings.break_duration_secs);
+        let frame = self.current_dock_frame(scale);
+        let full = unseat::widget_pixel_size(self.settings.timer_shape, scale);
+        let fill = unseat::progress(snap.state, snap.sitting_elapsed, limit, snap.break_elapsed, break_dur);
+        let pinned = !self.settings.dock_autohide;
         let key = timer_render_key(
             snap,
             self.settings.timer_display_mode,
@@ -537,27 +595,40 @@ impl App {
             self.hover,
             dark,
         )
-        .at_scale(scale);
+        .at_scale(scale)
+        .with_progress(fill, unseat::widget_layout(scale).pill_w)
+        .with_dock(frame.map_or(0, |f| f.code() * 2 + u32::from(pinned)));
+        match frame {
+            Some(frame) => self.place_docked(frame),
+            None => {
+                self.dock_frame = None;
+                widget::resize_to_shape(
+                    self.widget,
+                    self.settings.timer_shape,
+                    self.settings.widget_size,
+                );
+            }
+        }
         if self.last_key == Some(key) {
             return;
         }
         self.last_key = Some(key);
-        widget::resize_to_shape(
-            self.widget,
-            self.settings.timer_shape,
-            self.settings.widget_size,
-        );
+        let size = frame.map_or(full, |f| (f.rect.2 - f.rect.0, f.rect.3 - f.rect.1));
         paint::paint(
             self.d2d.as_ref(),
             self.widget,
-            self.settings.timer_shape,
-            self.settings.timer_display_mode,
-            snap,
-            dark,
-            self.hover,
-            Duration::from_secs(self.settings.sitting_limit_secs),
-            Duration::from_secs(self.settings.break_duration_secs),
-            scale,
+            &paint::OverlayPaint {
+                mode: self.settings.timer_display_mode,
+                snap,
+                dark,
+                hover: self.hover,
+                limit,
+                break_dur,
+                scale,
+                size,
+                dock: frame.map(|f| (f.edge, f.draw)),
+                pinned,
+            },
         );
     }
 
@@ -700,6 +771,8 @@ unsafe extern "system" fn hidden_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             if wp.0 == SOUND_ID {
                 sound::stop();
                 let _ = KillTimer(hwnd, SOUND_ID);
+            } else if wp.0 == crate::win::docking::DOCK_ID {
+                (*app).dock_tick();
             } else if wp.0 == TICK_ID {
                 (*app).tick();
             }
@@ -724,7 +797,8 @@ unsafe extern "system" fn hidden_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             } else if tray::is_balloon_click(tmsg) {
                 (*app).show_widget();
             } else if tray::is_context(tmsg) {
-                tray::show_menu(&*app, hwnd);
+                flyout::hide();
+                tray_panel::show(app, hwnd);
             } else if tray::is_select(tmsg) || tray::is_dblclk(tmsg) {
                 let now = Instant::now();
                 let dbl = tray::is_dblclk(tmsg)

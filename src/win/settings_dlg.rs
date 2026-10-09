@@ -1,4 +1,4 @@
-//! Settings window: four tabs of grouped rows, drawn with Direct2D.
+//! Settings window: five tabs of setting tiles, drawn with Direct2D in the Signal style.
 //!
 //! The UI is data-driven: `sections()` lists each tab's rows, `layout()` turns them into
 //! rectangles, and painting, hit testing and keyboard focus all walk the same layout, so a
@@ -8,9 +8,9 @@
 use crate::win::app::App;
 use crate::win::gfx::{self, glyph, Family, Fonts};
 use unseat::{
-    average_secs, format_today_hm, palette, recent_days, weekday_initial, AlertSound, CivilDate,
-    InactivityBehavior, Palette, Rgba, Settings, ThemePreference, TimerDisplayMode, WidgetSize,
-    ALERT_DURATION_PRESETS_SECS, SNOOZE_PRESETS_SECS,
+    average_secs, format_today_hm, palette, recent_days, status_line, weekday_initial, AlertSound,
+    CivilDate, DockEdge, DockReveal, InactivityBehavior, Palette, Rgba, Settings, ThemePreference,
+    TimerDisplayMode, VisibleState, WidgetSize, ALERT_DURATION_PRESETS_SECS, SNOOZE_PRESETS_SECS,
 };
 use windows::core::{w, Interface};
 use windows::Foundation::Numerics::Matrix3x2;
@@ -53,14 +53,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 pub const CLASS: windows::core::PCWSTR = w!("UnseatSettings");
 
-const WIN_W: f32 = 380.0;
+const WIN_W: f32 = 400.0;
 const PAD: f32 = 16.0;
-const HEADER_H: f32 = 50.0;
-const TABS_H: f32 = 32.0;
+const HEADER_H: f32 = 60.0;
+const TABS_H: f32 = 34.0;
 const BODY_TOP: f32 = HEADER_H + TABS_H + 10.0;
-const FOOTER_H: f32 = 60.0;
+const FOOTER_H: f32 = 68.0;
 const SECTION_HEAD: f32 = 26.0;
-const SECTION_GAP: f32 = 10.0;
+const SECTION_GAP: f32 = 8.0;
+const ROW_GAP: f32 = 6.0;
+const TILE_R: f32 = 10.0;
+const CHIP_R: f32 = 8.0;
 const WORK_AREA_MARGIN: i32 = 12;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -68,17 +71,19 @@ enum Tab {
     Timer,
     Breaks,
     Alerts,
+    Dock,
     General,
 }
 
 impl Tab {
-    const ALL: [Self; 4] = [Self::Timer, Self::Breaks, Self::Alerts, Self::General];
+    const ALL: [Self; 5] = [Self::Timer, Self::Breaks, Self::Alerts, Self::Dock, Self::General];
 
     fn label(self) -> &'static str {
         match self {
             Self::Timer => "Timer",
             Self::Breaks => "Breaks",
             Self::Alerts => "Alerts",
+            Self::Dock => "Dock",
             Self::General => "General",
         }
     }
@@ -96,12 +101,14 @@ enum Field {
     Idle,
     Every,
     Snooze,
+    HideAfter,
+    RevealFor,
 }
 
 impl Field {
     fn unit(self) -> &'static str {
         match self {
-            Self::Idle => "sec",
+            Self::Idle | Self::HideAfter | Self::RevealFor => "sec",
             _ => "min",
         }
     }
@@ -114,6 +121,8 @@ impl Field {
             Self::Idle => (15, 600),
             Self::Every => (2, 60),
             Self::Snooze => (1, 60),
+            Self::HideAfter => (1, 30),
+            Self::RevealFor => (3, 60),
         }
     }
 
@@ -125,6 +134,8 @@ impl Field {
             Self::Idle => s.idle_after_secs,
             Self::Every => s.repeat_every_secs / 60,
             Self::Snooze => s.snooze_secs / 60,
+            Self::HideAfter => s.dock_hide_after_secs,
+            Self::RevealFor => s.dock_reveal_secs,
         }
     }
 
@@ -138,6 +149,8 @@ impl Field {
             Self::Idle => s.idle_after_secs = v,
             Self::Every => s.repeat_every_secs = v * 60,
             Self::Snooze => s.snooze_secs = v * 60,
+            Self::HideAfter => s.dock_hide_after_secs = v,
+            Self::RevealFor => s.dock_reveal_secs = v,
         }
     }
 
@@ -161,6 +174,9 @@ enum Flag {
     OnTop,
     Hotkeys,
     Stats,
+    Dock,
+    DockAutohide,
+    DockFullscreen,
 }
 
 impl Flag {
@@ -174,6 +190,9 @@ impl Flag {
             Self::OnTop => s.always_on_top,
             Self::Hotkeys => s.hotkeys_enabled,
             Self::Stats => s.stats_enabled,
+            Self::Dock => s.dock_enabled,
+            Self::DockAutohide => s.dock_autohide,
+            Self::DockFullscreen => s.dock_hide_fullscreen,
         }
     }
 
@@ -193,6 +212,9 @@ impl Flag {
             Self::OnTop => s.always_on_top = on,
             Self::Hotkeys => s.hotkeys_enabled = on,
             Self::Stats => s.stats_enabled = on,
+            Self::Dock => s.dock_enabled = on,
+            Self::DockAutohide => s.dock_autohide = on,
+            Self::DockFullscreen => s.dock_hide_fullscreen = on,
         }
     }
 }
@@ -205,6 +227,8 @@ enum Group {
     Length,
     Snooze,
     Theme,
+    DockEdge,
+    DockReveal,
 }
 
 impl Group {
@@ -234,6 +258,14 @@ impl Group {
                 .iter()
                 .map(|t| t.chip_label().to_string())
                 .collect(),
+            Self::DockEdge => DockEdge::ALL
+                .iter()
+                .map(|e| e.chip_label().to_string())
+                .collect(),
+            Self::DockReveal => DockReveal::ALL
+                .iter()
+                .map(|r| r.chip_label().to_string())
+                .collect(),
         }
     }
 
@@ -243,6 +275,8 @@ impl Group {
             Self::Size => 36.0,
             Self::Length | Self::Snooze => 46.0,
             Self::Theme => 64.0,
+            Self::DockEdge => 58.0,
+            Self::DockReveal => 70.0,
             Self::SoundKind => 0.0,
         }
     }
@@ -260,6 +294,10 @@ impl Group {
                 .position(|&d| d == s.alert_duration_secs),
             Self::Snooze => SNOOZE_PRESETS_SECS.iter().position(|&d| d == s.snooze_secs),
             Self::Theme => ThemePreference::ALL.iter().position(|&t| t == s.theme),
+            Self::DockEdge => DockEdge::ALL
+                .iter()
+                .position(|&e| e == s.dock_edge.unwrap_or_default()),
+            Self::DockReveal => DockReveal::ALL.iter().position(|&r| r == s.dock_reveal),
         }
     }
 
@@ -279,6 +317,8 @@ impl Group {
                 }
             }
             Self::Theme => s.theme = ThemePreference::from_index(i),
+            Self::DockEdge => s.dock_edge = Some(DockEdge::from_index(i)),
+            Self::DockReveal => s.dock_reveal = DockReveal::from_index(i),
         }
     }
 }
@@ -299,14 +339,19 @@ enum Row {
 impl Row {
     fn height(self) -> f32 {
         match self {
-            Row::Step(_, _, Some(_)) | Row::Flag(_, _, Some(_)) => 56.0,
-            Row::Step(..) | Row::Flag(..) | Row::Group(..) => 42.0,
-            Row::WideGroup(..) => 76.0,
-            Row::Volume => 44.0,
-            Row::Note(_) => 46.0,
+            Row::Step(_, _, Some(_)) | Row::Flag(_, _, Some(_)) => 58.0,
+            Row::Step(..) | Row::Flag(..) | Row::Group(..) => 46.0,
+            Row::WideGroup(..) => 80.0,
+            Row::Volume => 48.0,
+            Row::Note(_) => 38.0,
             Row::Stats => 112.0,
-            Row::Defaults => 46.0,
+            Row::Defaults => 48.0,
         }
+    }
+
+    /// Notes sit under the tile above them rather than in a tile of their own.
+    fn tiled(self) -> bool {
+        !matches!(self, Row::Note(_))
     }
 }
 
@@ -319,11 +364,7 @@ fn sections(tab: Tab) -> &'static [Section] {
                 "Session",
                 &[
                     Row::Step("Sitting limit", Field::Limit, None),
-                    Row::Step(
-                        "Adjust step",
-                        Field::Step,
-                        Some("How far − and + move the limit"),
-                    ),
+                    Row::Step("Adjust step", Field::Step, Some("How far − and + move the limit")),
                     Row::Group("Display", Group::Display),
                 ],
             ),
@@ -331,11 +372,7 @@ fn sections(tab: Tab) -> &'static [Section] {
                 "Overlay",
                 &[
                     Row::Group("Size", Group::Size),
-                    Row::Flag(
-                        "Always on top",
-                        Flag::OnTop,
-                        Some("Keep the timer above other windows"),
-                    ),
+                    Row::Flag("Always on top", Flag::OnTop, Some("Keep the timer above other windows")),
                 ],
             ),
         ],
@@ -344,9 +381,7 @@ fn sections(tab: Tab) -> &'static [Section] {
                 "Breaks",
                 &[
                     Row::Step("Break length", Field::Break, None),
-                    Row::Note(
-                        "Start a break from the tray menu or Ctrl+Alt+Shift+B. A fresh session starts when it ends.",
-                    ),
+                    Row::Note("Start one from the overlay, the tray or Ctrl+Alt+Shift+B. A fresh session follows."),
                 ],
             ),
             (
@@ -357,14 +392,14 @@ fn sections(tab: Tab) -> &'static [Section] {
                         Flag::PauseInactive,
                         Some("Off: the timer keeps running while you're away"),
                     ),
-                    Row::Step(
-                        "Inactive after",
-                        Field::Idle,
-                        Some("No input, or a locked screen"),
-                    ),
-                    Row::Note(
-                        "While paused this way, being away for the break length starts a fresh session.",
-                    ),
+                    Row::Step("Inactive after", Field::Idle, Some("No input, or a locked screen")),
+                ],
+            ),
+            (
+                "Snooze",
+                &[
+                    Row::Group("Snooze for", Group::Snooze),
+                    Row::Step("Custom", Field::Snooze, None),
                 ],
             ),
         ],
@@ -381,20 +416,37 @@ fn sections(tab: Tab) -> &'static [Section] {
             (
                 "Reminders",
                 &[
-                    Row::Flag(
-                        "Show notification",
-                        Flag::Notify,
-                        Some("When time is up and when a break ends"),
-                    ),
+                    Row::Flag("Show notification", Flag::Notify, Some("When time is up and when a break ends")),
                     Row::Flag("Repeat while overdue", Flag::Repeat, None),
                     Row::Step("Remind every", Field::Every, None),
                 ],
             ),
+        ],
+        Tab::Dock => &[
             (
-                "Snooze",
+                "Edge",
                 &[
-                    Row::Group("Snooze for", Group::Snooze),
-                    Row::Step("Custom", Field::Snooze, None),
+                    Row::Flag("Dock to a screen edge", Flag::Dock, Some("Or drag the overlay against any edge")),
+                    Row::Group("Edge", Group::DockEdge),
+                ],
+            ),
+            (
+                "Auto-hide",
+                &[
+                    Row::Flag("Slide out when not in use", Flag::DockAutohide, Some("Off keeps it open, like the pin")),
+                    Row::Step("Hide after", Field::HideAfter, None),
+                ],
+            ),
+            (
+                "Alerts",
+                &[
+                    Row::Group("Reveal for", Group::DockReveal),
+                    Row::Step("Stay revealed", Field::RevealFor, None),
+                    Row::Flag(
+                        "Stay hidden over fullscreen apps",
+                        Flag::DockFullscreen,
+                        Some("Games, presentations and video"),
+                    ),
                 ],
             ),
         ],
@@ -404,21 +456,13 @@ fn sections(tab: Tab) -> &'static [Section] {
                 "System",
                 &[
                     Row::Flag("Launch with Windows", Flag::Auto, None),
-                    Row::Flag(
-                        "Keyboard shortcuts",
-                        Flag::Hotkeys,
-                        Some("Ctrl+Alt+Shift + P, R, S, B or U"),
-                    ),
+                    Row::Flag("Keyboard shortcuts", Flag::Hotkeys, Some("Ctrl+Alt+Shift + P, R, S, B or U")),
                 ],
             ),
             (
                 "Statistics",
                 &[
-                    Row::Flag(
-                        "Daily statistics",
-                        Flag::Stats,
-                        Some("Kept on this PC for 14 days"),
-                    ),
+                    Row::Flag("Daily statistics", Flag::Stats, Some("Kept on this PC for 14 days")),
                     Row::Stats,
                 ],
             ),
@@ -488,12 +532,11 @@ struct Lay {
     body_top: f32,
     body_bottom: f32,
     content_h: f32,
-    cards: Vec<D2D_RECT_F>,
-    seps: Vec<D2D_RECT_F>,
+    tiles: Vec<D2D_RECT_F>,
     labels: Vec<Label>,
     controls: Vec<Placed>,
     stats: Option<D2D_RECT_F>,
-    today: D2D_RECT_F,
+    status: D2D_RECT_F,
 }
 
 impl Lay {
@@ -516,11 +559,9 @@ fn content_height(tab: Tab, draft: &Settings) -> f32 {
         if !title.is_empty() {
             y += SECTION_HEAD;
         }
-        y += rows
-            .iter()
-            .filter(|r| row_visible(**r, draft))
-            .map(|r| r.height())
-            .sum::<f32>();
+        let visible: Vec<Row> = rows.iter().copied().filter(|r| row_visible(*r, draft)).collect();
+        y += visible.iter().map(|r| r.height()).sum::<f32>();
+        y += ROW_GAP * visible.len().saturating_sub(1) as f32;
         y += SECTION_GAP;
     }
     y + 6.0
@@ -537,8 +578,6 @@ fn window_logical_h() -> f32 {
     BODY_TOP + body + FOOTER_H
 }
 
-/// Lay out the chrome and the active tab at `scale` for a `win_h` pixel-tall window,
-/// with the body scrolled by `scroll` pixels.
 fn layout(tab: Tab, draft: &Settings, scale: f32, win_h: f32, scroll: f32) -> Lay {
     let s = scale;
     let w = px(WIN_W, s);
@@ -549,31 +588,35 @@ fn layout(tab: Tab, draft: &Settings, scale: f32, win_h: f32, scroll: f32) -> La
     let body_bottom = h - px(FOOTER_H, s);
     let mut labels = Vec::new();
     let mut controls = Vec::new();
-    let mut cards = Vec::new();
-    let mut seps = Vec::new();
+    let mut tiles = Vec::new();
     let mut stats = None;
 
+    // Header: the tab's name, a live status chip and close.
     labels.push(Label {
-        text: "Unseat settings",
-        rect: gfx::rect(x0 + px(2.0, s), px(12.0, s), w - px(60.0, s), px(42.0, s)),
+        text: tab.label(),
+        rect: gfx::rect(x0 + px(2.0, s), px(14.0, s), x0 + px(170.0, s), px(50.0, s)),
         kind: TextKind::Title,
         owner: None,
     });
+    let close = gfx::rect(x1 - px(32.0, s), px(17.0, s), x1, px(49.0, s));
     controls.push(Placed {
         ctl: Ctl::Close,
-        rect: gfx::rect(w - px(46.0, s), px(12.0, s), w - px(16.0, s), px(42.0, s)),
+        rect: close,
         parts: vec![],
         in_body: false,
     });
+    let status = gfx::rect(close.left - px(8.0, s) - px(150.0, s), px(19.0, s), close.left - px(8.0, s), px(47.0, s));
 
     let tabs = gfx::rect(x0, px(HEADER_H, s), x1, px(HEADER_H + TABS_H, s));
-    let seg = (tabs.right - tabs.left) / Tab::ALL.len() as f32;
+    let gap = px(4.0, s);
+    let n = Tab::ALL.len() as f32;
+    let seg = (tabs.right - tabs.left - gap * (n - 1.0)) / n;
     controls.push(Placed {
         ctl: Ctl::Tabs,
         rect: tabs,
         parts: (0..Tab::ALL.len())
             .map(|i| {
-                let l = tabs.left + seg * i as f32;
+                let l = tabs.left + (seg + gap) * i as f32;
                 (Part::Option(i), gfx::rect(l, tabs.top, l + seg, tabs.bottom))
             })
             .collect(),
@@ -591,46 +634,35 @@ fn layout(tab: Tab, draft: &Settings, scale: f32, win_h: f32, scroll: f32) -> La
             });
             y += px(SECTION_HEAD, s);
         }
-        let card_top = y;
         let mut first = true;
         for &row in rows.iter().filter(|r| row_visible(**r, draft)) {
-            let rh = px(row.height(), s);
-            let rc = gfx::rect(x0, y, x1, y + rh);
-            if !first && !matches!(row, Row::Note(_)) {
-                seps.push(gfx::rect(
-                    x0 + px(14.0, s),
-                    y,
-                    x1 - px(14.0, s),
-                    y + px(1.0, s),
-                ));
+            if !first {
+                y += px(ROW_GAP, s);
             }
             first = false;
+            let rh = px(row.height(), s);
+            let rc = gfx::rect(x0, y, x1, y + rh);
+            if row.tiled() {
+                tiles.push(rc);
+            }
             place_row(row, rc, s, &mut labels, &mut controls, &mut stats);
             y += rh;
         }
-        cards.push(gfx::rect(x0, card_top, x1, y));
         y += px(SECTION_GAP, s);
     }
 
-    let btn_h = px(32.0, s);
-    let btn_w = px(84.0, s);
+    let btn_h = px(40.0, s);
     let by = h - px(FOOTER_H, s) + (px(FOOTER_H, s) - btn_h) * 0.5;
-    let save = gfx::rect(x1 - btn_w, by, x1, by + btn_h);
-    let cancel = gfx::rect(
-        save.left - px(8.0, s) - btn_w,
-        by,
-        save.left - px(8.0, s),
-        by + btn_h,
-    );
+    let mid = (x0 + x1) / 2.0;
     controls.push(Placed {
         ctl: Ctl::Cancel,
-        rect: cancel,
+        rect: gfx::rect(x0, by, mid - px(4.0, s), by + btn_h),
         parts: vec![],
         in_body: false,
     });
     controls.push(Placed {
         ctl: Ctl::Save,
-        rect: save,
+        rect: gfx::rect(mid + px(4.0, s), by, x1, by + btn_h),
         parts: vec![],
         in_body: false,
     });
@@ -642,12 +674,11 @@ fn layout(tab: Tab, draft: &Settings, scale: f32, win_h: f32, scroll: f32) -> La
         body_top,
         body_bottom,
         content_h: px(content_height(tab, draft), s),
-        cards,
-        seps,
+        tiles,
         labels,
         controls,
         stats,
-        today: gfx::rect(x0 + px(2.0, s), by, cancel.left - px(8.0, s), by + btn_h),
+        status,
     }
 }
 
@@ -787,7 +818,7 @@ fn place_row(
         }
         Row::Note(text) => labels.push(Label {
             text,
-            rect: gfx::rect(inner_l, rc.top + px(6.0, s), inner_r, rc.bottom - px(4.0, s)),
+            rect: gfx::rect(rc.left + px(4.0, s), rc.top + px(2.0, s), inner_r, rc.bottom),
             kind: TextKind::Note,
             owner: None,
         }),
@@ -820,12 +851,19 @@ fn place_row(
 }
 
 fn enabled(ctl: Ctl, d: &Settings) -> bool {
+    let docking = d.dock_enabled;
     match ctl {
         Ctl::Step(Field::Idle) => d.inactivity_behavior == InactivityBehavior::Pause,
         Ctl::Step(Field::Every) => d.repeat_reminders,
         Ctl::Group(Group::SoundKind) | Ctl::Group(Group::Length) | Ctl::Volume | Ctl::Preview => {
             d.sound_enabled
         }
+        Ctl::Step(Field::HideAfter) => docking && d.dock_autohide,
+        Ctl::Group(Group::DockEdge)
+        | Ctl::Group(Group::DockReveal)
+        | Ctl::Step(Field::RevealFor)
+        | Ctl::Flag(Flag::DockAutohide)
+        | Ctl::Flag(Flag::DockFullscreen) => docking,
         _ => true,
     }
 }
@@ -1496,10 +1534,10 @@ fn label_style(
     s: f32,
 ) -> (f32, windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT) {
     match kind {
-        TextKind::Title => (px(17.0, s), gfx::SEMIBOLD),
-        TextKind::Head => (px(12.0, s), gfx::SEMIBOLD),
-        TextKind::Label => (px(13.0, s), gfx::REGULAR),
-        TextKind::Hint | TextKind::Note => (px(11.5, s), gfx::REGULAR),
+        TextKind::Title => (px(24.0, s), gfx::SEMIBOLD),
+        TextKind::Head => (px(11.5, s), gfx::SEMIBOLD),
+        TextKind::Label => (px(13.0, s), gfx::MEDIUM),
+        TextKind::Hint | TextKind::Note => (px(11.0, s), gfx::REGULAR),
     }
 }
 
@@ -1520,17 +1558,13 @@ unsafe fn paint_ui(hwnd: HWND, d: &mut Dialog) {
     rt.SetTransform(&Matrix3x2::identity());
     rt.Clear(Some(&gfx::color(pal.window)));
 
-    // Body, clipped between the tab strip and the footer.
+    // Body, clipped between the tab chips and the footer. Every setting is its own tile.
     rt.PushAxisAlignedClip(
         &gfx::rect(0.0, l.body_top, l.w, l.body_bottom),
         D2D1_ANTIALIAS_MODE_ALIASED,
     );
-    for card in &l.cards {
-        gfx::fill_round(&rt, *card, px(8.0, s), pal.card);
-        gfx::stroke_round(&rt, gfx::inflate(*card, -0.5), px(8.0, s), pal.card_stroke, 1.0);
-    }
-    for sep in &l.seps {
-        gfx::fill_round(&rt, *sep, 0.0, pal.separator);
+    for tile in &l.tiles {
+        gfx::fill_round(&rt, *tile, px(TILE_R, s), pal.card);
     }
     if let Some(rc) = l.stats {
         paint_stats(&rt, fonts, pal, d, rc, s);
@@ -1543,35 +1577,45 @@ unsafe fn paint_ui(hwnd: HWND, d: &mut Dialog) {
     }
     rt.PopAxisAlignedClip();
 
-    // Chrome: title, close, tabs and footer.
+    // Chrome: title, live status chip, close, tabs and footer.
     for label in l.labels.iter().filter(|lb| lb.kind == TextKind::Title) {
         paint_label(&rt, fonts, pal, d, label, s);
     }
-    gfx::fill_round(
-        &rt,
-        gfx::rect(0.0, l.body_bottom, l.w, l.body_bottom + px(1.0, s)),
-        0.0,
-        pal.separator,
-    );
-    for p in l.controls.iter().filter(|p| !p.in_body) {
-        paint_control(&rt, fonts, pal, d, p, s);
-    }
     if !d.app.is_null() {
-        let today = format!(
-            "Today {}",
-            format_today_hm((*d.app).engine.snapshot().today_sitting)
+        let snap = (*d.app).engine.snapshot();
+        let dot = match snap.state {
+            VisibleState::Overdue => pal.alarm,
+            VisibleState::Break => pal.brk.tag,
+            VisibleState::Sitting => pal.accent,
+            VisibleState::Away | VisibleState::Paused => pal.text_disabled,
+        };
+        let line = status_line(snap);
+        let text_w = gfx::measure(fonts, &line, px(12.0, s), gfx::MEDIUM);
+        let chip_w = (text_w + px(34.0, s)).min(l.status.right - l.status.left);
+        let chip = gfx::rect(l.status.right - chip_w, l.status.top, l.status.right, l.status.bottom);
+        gfx::fill_round(&rt, chip, px(CHIP_R, s), pal.card);
+        let cy = (chip.top + chip.bottom) / 2.0;
+        let r = px(4.0, s);
+        gfx::fill_round(
+            &rt,
+            gfx::rect(chip.left + px(12.0, s), cy - r, chip.left + px(12.0, s) + 2.0 * r, cy + r),
+            r,
+            dot,
         );
         gfx::text(
             &rt,
             fonts,
             Family::Ui,
-            &today,
-            l.today,
+            &line,
+            gfx::rect(chip.left + px(26.0, s), chip.top, chip.right - px(8.0, s), chip.bottom),
             px(12.0, s),
-            gfx::REGULAR,
+            gfx::MEDIUM,
             gfx::LEADING,
-            pal.text_secondary,
+            pal.text,
         );
+    }
+    for p in l.controls.iter().filter(|p| !p.in_body) {
+        paint_control(&rt, fonts, pal, d, p, s);
     }
     if scroll_max > 0.0 {
         let view = l.body_bottom - l.body_top;
@@ -1673,7 +1717,7 @@ unsafe fn paint_control(
     let on = enabled(p.ctl, draft);
     let ink = if on { pal.text } else { pal.text_disabled };
     let focused = d.focus_visible && d.focus == p.ctl;
-    let r = px(6.0, s);
+    let r = px(CHIP_R, s);
     match p.ctl {
         Ctl::Close => {
             if hovered_any(d, Ctl::Close) {
@@ -1681,22 +1725,22 @@ unsafe fn paint_control(
             }
             let (cx, cy) = center(p.rect);
             let arm = px(5.0, s);
-            let w = px(1.4, s);
+            let w = px(1.5, s);
             gfx::line(rt, (cx - arm, cy - arm), (cx + arm, cy + arm), pal.text_secondary, w);
             gfx::line(rt, (cx + arm, cy - arm), (cx - arm, cy + arm), pal.text_secondary, w);
         }
         Ctl::Tabs => {
-            gfx::fill_round(rt, p.rect, px(8.0, s), pal.control);
             for (part, rc) in &p.parts {
                 let Part::Option(i) = *part else { continue };
                 let selected = Tab::ALL[i] == d.tab;
-                let seg = gfx::inflate(*rc, -px(3.0, s));
-                if selected {
-                    gfx::fill_round(rt, seg, px(6.0, s), pal.card);
-                    gfx::stroke_round(rt, seg, px(6.0, s), pal.card_stroke, 1.0);
+                let fill = if selected {
+                    pal.selected
                 } else if hovered(d, Ctl::Tabs, *part) {
-                    gfx::fill_round(rt, seg, px(6.0, s), pal.control_hover);
-                }
+                    pal.control_hover
+                } else {
+                    pal.card
+                };
+                gfx::fill_round(rt, *rc, r, fill);
                 gfx::text(
                     rt,
                     fonts,
@@ -1704,13 +1748,13 @@ unsafe fn paint_control(
                     Tab::ALL[i].label(),
                     *rc,
                     px(12.5, s),
-                    if selected { gfx::SEMIBOLD } else { gfx::REGULAR },
+                    if selected { gfx::SEMIBOLD } else { gfx::MEDIUM },
                     gfx::CENTER,
-                    if selected { pal.text } else { pal.text_secondary },
+                    if selected { pal.on_selected } else { pal.text },
                 );
             }
             if focused {
-                paint_focus(rt, pal, p.rect, px(8.0, s), s);
+                paint_focus(rt, pal, p.rect, r, s);
             }
         }
         Ctl::Step(field) => {
@@ -1723,26 +1767,15 @@ unsafe fn paint_control(
                     };
                     gfx::fill_round(rt, *rc, r, fill);
                     let glyph = if *part == Part::Minus { "\u{2212}" } else { "+" };
-                    gfx::text(
-                        rt,
-                        fonts,
-                        Family::Ui,
-                        glyph,
-                        *rc,
-                        px(15.0, s),
-                        gfx::MEDIUM,
-                        gfx::CENTER,
-                        ink,
-                    );
+                    gfx::text(rt, fonts, Family::Ui, glyph, *rc, px(15.0, s), gfx::MEDIUM, gfx::CENTER, ink);
                 } else {
                     let mid = rc.left + (rc.right - rc.left) * 0.56;
-                    gfx::text(
+                    gfx::digits(
                         rt,
                         fonts,
-                        Family::Ui,
                         &field.get(draft).to_string(),
                         gfx::rect(rc.left, rc.top, mid, rc.bottom),
-                        px(13.5, s),
+                        px(14.0, s),
                         gfx::SEMIBOLD,
                         gfx::TRAILING,
                         ink,
@@ -1768,12 +1801,14 @@ unsafe fn paint_control(
             let value = flag.get(draft);
             let track = p.parts[0].1;
             let h = track.bottom - track.top;
-            let hot = hovered_any(d, p.ctl);
-            let fill = match (value, hot) {
-                (true, true) => pal.accent_hover,
-                (true, false) => pal.accent,
-                (false, true) => pal.text_secondary,
-                (false, false) => pal.toggle_off,
+            let hot = on && hovered_any(d, p.ctl);
+            let fill = match (on, value, hot) {
+                (false, true, _) => pal.text_disabled,
+                (false, false, _) => gfx::fade(pal.toggle_off, 0.6),
+                (true, true, true) => pal.accent_hover,
+                (true, true, false) => pal.accent,
+                (true, false, true) => pal.text_secondary,
+                (true, false, false) => pal.toggle_off,
             };
             gfx::fill_round(rt, track, h / 2.0, fill);
             let knob = h - px(6.0, s);
@@ -1783,30 +1818,26 @@ unsafe fn paint_control(
                 track.left + px(3.0, s)
             };
             let ky = track.top + px(3.0, s);
-            gfx::fill_round(
-                rt,
-                gfx::rect(kx, ky, kx + knob, ky + knob),
-                knob / 2.0,
-                pal.knob,
-            );
+            gfx::fill_round(rt, gfx::rect(kx, ky, kx + knob, ky + knob), knob / 2.0, pal.knob);
             if focused {
                 paint_focus(rt, pal, track, h / 2.0, s);
             }
         }
         Ctl::Group(group) => {
-            gfx::fill_round(rt, p.rect, px(7.0, s), pal.control);
             let selected = group.get(draft);
             let options = group.options();
             for (part, rc) in &p.parts {
                 let Part::Option(i) = *part else { continue };
-                let seg = gfx::inflate(*rc, -px(2.0, s));
+                let chip = gfx::inflate(*rc, -px(1.5, s));
                 let is_sel = selected == Some(i);
-                if is_sel {
-                    let fill = if on { pal.accent } else { pal.toggle_off };
-                    gfx::fill_round(rt, seg, px(5.0, s), fill);
+                let fill = if is_sel {
+                    if on { pal.selected } else { pal.toggle_off }
                 } else if on && hovered(d, p.ctl, *part) {
-                    gfx::fill_round(rt, seg, px(5.0, s), pal.control_hover);
-                }
+                    pal.control_hover
+                } else {
+                    pal.control
+                };
+                gfx::fill_round(rt, chip, r, fill);
                 gfx::text(
                     rt,
                     fonts,
@@ -1814,39 +1845,38 @@ unsafe fn paint_control(
                     &options[i],
                     *rc,
                     px(12.0, s),
-                    if is_sel { gfx::SEMIBOLD } else { gfx::REGULAR },
+                    if is_sel { gfx::SEMIBOLD } else { gfx::MEDIUM },
                     gfx::CENTER,
-                    if is_sel { pal.on_accent } else { ink },
+                    if is_sel { pal.on_selected } else { ink },
                 );
             }
             if focused {
-                paint_focus(rt, pal, p.rect, px(7.0, s), s);
+                paint_focus(rt, pal, p.rect, r, s);
             }
         }
         Ctl::Volume => {
             let (_, mid) = center(p.rect);
-            let th = px(4.0, s);
+            let th = px(8.0, s);
             let track = gfx::rect(p.rect.left, mid - th / 2.0, p.rect.right, mid + th / 2.0);
             let kx = track.left + (track.right - track.left) * f32::from(draft.alert_volume) / 100.0;
-            gfx::fill_round(rt, track, th / 2.0, pal.toggle_off);
+            gfx::fill_round(rt, track, th / 2.0, pal.control);
             gfx::fill_round(
                 rt,
-                gfx::rect(track.left, track.top, kx, track.bottom),
+                gfx::rect(track.left, track.top, kx.max(track.left + th), track.bottom),
                 th / 2.0,
                 if on { pal.accent } else { pal.text_disabled },
             );
-            let kr = px(if hovered_any(d, Ctl::Volume) || d.dragging_volume { 8.0 } else { 7.0 }, s);
+            let kr = px(if hovered_any(d, Ctl::Volume) || d.dragging_volume { 9.0 } else { 8.0 }, s);
             let knob = gfx::rect(kx - kr, mid - kr, kx + kr, mid + kr);
             gfx::fill_round(rt, knob, kr, pal.knob);
             gfx::stroke_round(rt, knob, kr, pal.window_stroke, 1.0);
-            gfx::text(
+            gfx::digits(
                 rt,
                 fonts,
-                Family::Ui,
                 &format!("{}%", draft.alert_volume),
                 gfx::rect(p.rect.right + px(10.0, s), p.rect.top, p.rect.right + px(48.0, s), p.rect.bottom),
                 px(12.0, s),
-                gfx::REGULAR,
+                gfx::MEDIUM,
                 gfx::LEADING,
                 if on { pal.text_secondary } else { pal.text_disabled },
             );
@@ -1856,35 +1886,37 @@ unsafe fn paint_control(
         }
         Ctl::Preview | Ctl::Defaults | Ctl::Cancel | Ctl::Save => {
             let primary = p.ctl == Ctl::Save;
+            let br = px(9.0, s);
             let fill = if primary {
-                if hovered_any(d, p.ctl) {
-                    pal.accent_hover
-                } else {
-                    pal.accent
-                }
+                pal.selected
+            } else if p.ctl == Ctl::Cancel {
+                if hovered_any(d, p.ctl) { pal.control_hover } else { pal.card }
             } else if on {
                 button_fill(pal, d, p.ctl, Part::Whole)
             } else {
                 pal.control
             };
-            gfx::fill_round(rt, p.rect, r, fill);
+            gfx::fill_round(rt, p.rect, br, fill);
+            if primary && hovered_any(d, p.ctl) {
+                gfx::fill_round(rt, p.rect, br, gfx::fade(pal.on_selected, 0.10));
+            }
             let caption = match p.ctl {
                 Ctl::Preview => "Test",
                 Ctl::Defaults => "Restore",
                 Ctl::Cancel => "Cancel",
                 _ => "Save",
             };
-            let color = if primary { pal.on_accent } else { ink };
+            let color = if primary { pal.on_selected } else { ink };
             if p.ctl == Ctl::Preview {
                 let icon = gfx::rect(p.rect.left + px(8.0, s), p.rect.top, p.rect.left + px(28.0, s), p.rect.bottom);
                 gfx::text(rt, fonts, Family::Icons, glyph::VOLUME, icon, px(13.0, s), gfx::REGULAR, gfx::CENTER, color);
                 let label = gfx::rect(icon.right, p.rect.top, p.rect.right - px(6.0, s), p.rect.bottom);
                 gfx::text(rt, fonts, Family::Ui, caption, label, px(12.5, s), gfx::SEMIBOLD, gfx::CENTER, color);
             } else {
-                gfx::text(rt, fonts, Family::Ui, caption, p.rect, px(13.0, s), gfx::SEMIBOLD, gfx::CENTER, color);
+                gfx::text(rt, fonts, Family::Ui, caption, p.rect, px(13.5, s), gfx::SEMIBOLD, gfx::CENTER, color);
             }
             if focused {
-                paint_focus(rt, pal, p.rect, r, s);
+                paint_focus(rt, pal, p.rect, br, s);
             }
         }
     }
@@ -1944,7 +1976,7 @@ unsafe fn paint_stats(
         gfx::fill_round(
             rt,
             gfx::rect(cx - bw / 2.0, chart.top, cx + bw / 2.0, chart.bottom),
-            px(3.0, s),
+            px(4.0, s),
             pal.control,
         );
         gfx::fill_round(
@@ -2018,7 +2050,7 @@ mod tests {
             bottom: 900,
         };
         let (x, y, w, h) = fit_window_to_work_area(work, 1.5);
-        assert_eq!(w, 570);
+        assert_eq!(w, 600);
         assert_eq!(h, 900 - WORK_AREA_MARGIN * 2);
         assert!(x >= WORK_AREA_MARGIN && x + w <= 1920 - WORK_AREA_MARGIN);
         assert_eq!(y, WORK_AREA_MARGIN);
@@ -2100,6 +2132,7 @@ mod tests {
     fn every_setting_is_reachable_by_keyboard() {
         let d = Settings {
             inactivity_behavior: InactivityBehavior::Pause,
+            dock_enabled: true,
             ..Settings::default()
         };
         let mut seen = Vec::new();
@@ -2115,6 +2148,13 @@ mod tests {
             Ctl::Step(Field::Idle),
             Ctl::Step(Field::Every),
             Ctl::Step(Field::Snooze),
+            Ctl::Step(Field::HideAfter),
+            Ctl::Step(Field::RevealFor),
+            Ctl::Flag(Flag::Dock),
+            Ctl::Flag(Flag::DockAutohide),
+            Ctl::Flag(Flag::DockFullscreen),
+            Ctl::Group(Group::DockEdge),
+            Ctl::Group(Group::DockReveal),
             Ctl::Flag(Flag::PauseInactive),
             Ctl::Flag(Flag::Sound),
             Ctl::Flag(Flag::Repeat),
@@ -2145,6 +2185,13 @@ mod tests {
         assert!(!enabled(Ctl::Step(Field::Idle), &d), "idle threshold is moot while running");
         let l = layout(Tab::Breaks, &d, 1.0, window_logical_h(), 0.0);
         assert!(!focus_order(&l, &d).contains(&Ctl::Step(Field::Idle)));
+
+        assert!(!enabled(Ctl::Group(Group::DockEdge), &d), "docking options wait for docking");
+        let mut docked = Settings::default();
+        docked.dock_enabled = true;
+        docked.dock_autohide = false;
+        assert!(enabled(Ctl::Group(Group::DockEdge), &docked));
+        assert!(!enabled(Ctl::Step(Field::HideAfter), &docked), "no delay while pinned");
 
         let mut quiet = Settings::default();
         quiet.sound_enabled = false;

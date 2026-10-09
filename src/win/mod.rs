@@ -1,5 +1,7 @@
+mod alert_card;
 mod app;
 mod autostart;
+mod docking;
 mod flyout;
 mod gfx;
 mod hotkeys;
@@ -13,6 +15,7 @@ mod sound;
 mod testhook;
 mod theme;
 mod tray;
+mod tray_panel;
 mod widget;
 
 pub use app::run;

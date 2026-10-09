@@ -1,6 +1,6 @@
 use unseat::{
     average_secs, contrast, palette, recent_days, weekday_initial, CivilDate, DayTotal, Palette,
-    Rgba, VisibleState, DARK, LIGHT,
+    Rgba, VisibleState, DARK, LIGHT, WARN_AT,
 };
 
 fn both() -> [&'static Palette; 2] {
@@ -29,31 +29,40 @@ fn focus_ring_and_toggles_are_visible_against_their_surroundings() {
 }
 
 #[test]
-fn overlay_digits_are_high_contrast_in_every_state() {
+fn overlay_ink_is_legible_on_every_state_surface_and_band() {
     for p in both() {
-        for state in [VisibleState::Sitting, VisibleState::Overdue] {
-            let bg = p.pill_for(state).over(if p.dark { Rgba::opaque(0) } else { Rgba::opaque(0xFFFFFF) });
-            assert!(contrast(p.digits, bg) >= 12.0, "digits dark={} {state:?}", p.dark);
-            assert!(contrast(p.tag.over(bg), bg) >= 4.5, "tag dark={} {state:?}", p.dark);
+        let ground = if p.dark { Rgba::opaque(0) } else { Rgba::opaque(0xFFFFFF) };
+        for (state, prog) in [
+            (VisibleState::Sitting, 0.3),
+            (VisibleState::Sitting, 0.9),
+            (VisibleState::Overdue, 1.0),
+            (VisibleState::Break, 0.5),
+            (VisibleState::Away, 0.5),
+            (VisibleState::Paused, 0.5),
+        ] {
+            let c = p.overlay(state, prog);
+            for surface in [c.bg.over(ground), c.band.over(ground)] {
+                // Digits are large text (3:1); the small tag needs 4.5:1.
+                assert!(contrast(c.digits, surface) >= 4.5, "digits dark={} {state:?}", p.dark);
+                assert!(contrast(c.tag, surface) >= 4.5, "tag dark={} {state:?}", p.dark);
+            }
         }
+        assert!(contrast(p.on_alarm, p.alarm) >= 4.5, "alert card dark={}", p.dark);
+        assert!(contrast(p.on_selected, p.selected) >= 4.5, "selected chip dark={}", p.dark);
     }
 }
 
 #[test]
-fn bar_colors_separate_states() {
+fn overlay_state_colors_follow_the_state() {
     let p = palette(true);
-    assert_eq!(p.bar_for(VisibleState::Sitting, 0.2), p.bar_normal);
-    assert_eq!(p.bar_for(VisibleState::Sitting, 0.9), p.bar_warn);
-    assert_eq!(p.bar_for(VisibleState::Overdue, 1.0), p.bar_over);
-    assert_eq!(p.bar_for(VisibleState::Break, 0.5), p.bar_break);
-    assert_eq!(p.bar_for(VisibleState::Away, 0.5), p.bar_away);
+    assert_eq!(p.overlay(VisibleState::Sitting, 0.2), p.sit);
+    assert_eq!(p.overlay(VisibleState::Sitting, WARN_AT), p.warn);
+    assert_eq!(p.overlay(VisibleState::Overdue, 1.0), p.over);
+    assert_eq!(p.overlay(VisibleState::Break, 0.5), p.brk);
+    assert_eq!(p.overlay(VisibleState::Away, 0.5), p.idle);
+    assert_eq!(p.overlay(VisibleState::Paused, 0.5), p.idle);
+    assert_ne!(p.sit.bg, p.over.bg);
     assert!(!palette(false).dark);
-}
-
-#[test]
-fn dark_overlay_keeps_the_established_surfaces() {
-    assert_eq!(DARK.pill_for(VisibleState::Sitting).0, 0x10);
-    assert_eq!(DARK.pill_for(VisibleState::Overdue), Rgba(0x2A, 0x10, 0x16, 248));
 }
 
 fn d(year: i32, month: u8, day: u8) -> CivilDate {

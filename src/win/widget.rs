@@ -2,8 +2,8 @@ use crate::win::app::App;
 use crate::win::paint::widget_size;
 use crate::win::testhook;
 use unseat::{
-    hit_control, layout_scale, snap_to_edges, Command, Hit, TimerShape, WidgetSize, WIDGET_H,
-    WIDGET_W,
+    hit_overlay, layout_scale, snap_to_edges, Command, DockDraw, DockFrame, Hit, TimerShape,
+    WidgetSize, WIDGET_H, WIDGET_W,
 };
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -172,10 +172,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_DISPLAYCHANGE | WM_DPICHANGED => {
             // A monitor was removed, rearranged or rescaled: keep the overlay on screen.
-            let mut rc = RECT::default();
-            let _ = GetWindowRect(hwnd, &mut rc);
-            let (x, y) = clamp_to_work_area(rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
-            let _ = SetWindowPos(hwnd, HWND::default(), x, y, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
+            if (*app).docked_edge().is_none() {
+                let mut rc = RECT::default();
+                let _ = GetWindowRect(hwnd, &mut rc);
+                let (x, y) =
+                    clamp_to_work_area(rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND::default(),
+                    x,
+                    y,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE,
+                );
+            }
+            (*app).dock_frame = None;
             (*app).force_repaint();
             LRESULT(0)
         }
@@ -260,6 +272,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             LRESULT(0)
         }
+        testhook::MSG_DOCK_HOVER if testhook::enabled() => {
+            (*app).dock_pointer(wp.0 == 1);
+            LRESULT(0)
+        }
         testhook::MSG_DUMP if testhook::enabled() => {
             (*app).log_state();
             LRESULT(0)
@@ -286,7 +302,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 }
 
 impl App {
-    pub fn on_widget_mouse(&mut self, hwnd: HWND, lp: LPARAM, track: bool) {
+    pub fn on_widget_mouse(&mut self, hwnd: HWND, _lp: LPARAM, track: bool) {
         if track {
             unsafe {
                 let mut tme = TRACKMOUSEEVENT {
@@ -298,10 +314,6 @@ impl App {
                 let _ = TrackMouseEvent(&mut tme);
             }
         }
-        let x = (lp.0 as i32) & 0xFFFF;
-        let y = ((lp.0 as i32) >> 16) & 0xFFFF;
-        let x = x as i16 as i32;
-        let y = y as i16 as i32;
         if self.dragging {
             unsafe {
                 let mut pt = POINT::default();
@@ -321,9 +333,12 @@ impl App {
         }
         if !self.hover {
             self.hover = true;
-            self.repaint();
+            if self.docked_edge().is_some() {
+                self.dock_pointer(true);
+            } else {
+                self.repaint();
+            }
         }
-        let _ = (x, y);
         unsafe {
             let _ = SetCursor(LoadCursorW(None, IDC_ARROW).unwrap_or_default());
         }
@@ -341,25 +356,36 @@ impl App {
             }
         }
         self.hover = false;
-        self.repaint();
+        if self.docked_edge().is_some() {
+            self.dock_pointer(false);
+        } else {
+            self.repaint();
+        }
     }
 
     pub fn on_widget_down(&mut self, hwnd: HWND, lp: LPARAM) {
-        let x = lp.0 as i16 as i32;
-        let y = (lp.0 >> 16) as i16 as i32;
+        // On a docked tab (or mid-slide) a click just slides the overlay in.
+        if self.dock_click() {
+            return;
+        }
+        let x = lp.0 as i16 as f32;
+        let y = (lp.0 >> 16) as i16 as f32;
         let s = paint_scale(hwnd, self.settings.widget_size);
-        if let Some(hit) = hit_control(
-            self.settings.timer_shape,
-            self.hover,
-            self.engine.snapshot().state,
-            s,
-            x,
-            y,
-        ) {
+        let dock = match self.dock_frame {
+            Some(DockFrame {
+                edge,
+                draw: DockDraw::Pill { dx, dy },
+                ..
+            }) => Some((edge, dx, dy)),
+            _ => None,
+        };
+        if let Some(hit) = hit_overlay(self.hover, self.engine.snapshot().state, s, x, y, dock) {
             match hit {
                 Hit::Pause => self.apply_engine_command(Command::TogglePause),
+                Hit::Break => self.toggle_break(),
                 Hit::Reset => self.apply_engine_command(Command::Reset),
                 Hit::Snooze => self.snooze_default(),
+                Hit::Close if dock.is_some() => self.toggle_pin(),
                 Hit::Close => self.hide_widget(),
             }
             return;
@@ -374,6 +400,8 @@ impl App {
             self.dragging = true;
             let _ = SetCapture(hwnd);
         }
+        // Undock while dragging: the overlay returns to its full, free-floating shape.
+        self.force_repaint();
     }
 
     pub fn on_widget_up(&mut self, hwnd: HWND) {
@@ -381,11 +409,8 @@ impl App {
             self.dragging = false;
             unsafe {
                 let _ = ReleaseCapture();
-                let mut rc = RECT::default();
-                let _ = GetWindowRect(hwnd, &mut rc);
-                self.settings.window_x = rc.left;
-                self.settings.window_y = rc.top;
             }
+            self.end_drag_dock(hwnd);
             self.save_settings();
         }
     }
