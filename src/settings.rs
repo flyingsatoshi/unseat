@@ -18,6 +18,12 @@ pub const SETTINGS_SNOOZE_MAX_SECS: u64 = 60 * 60;
 pub const SETTINGS_ALERT_DURATION_MAX_SECS: u64 = 10;
 pub const SNOOZE_PRESETS_SECS: [u64; 4] = [5 * 60, 10 * 60, 15 * 60, 30 * 60];
 pub const ALERT_DURATION_PRESETS_SECS: [u64; 4] = [0, 2, 4, 8];
+pub const SETTINGS_VOLUME_MAX: u8 = 100;
+pub const DEFAULT_ALERT_VOLUME: u8 = 75;
+pub const HISTORY_DAYS: usize = 14;
+/// Version 2 made "continue while inactive" the default. Files written before it stored the
+/// old `pause` default without the user ever choosing it, so loading migrates them.
+pub const SETTINGS_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -54,8 +60,8 @@ impl TimerDisplayMode {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InactivityBehavior {
-    #[default]
     Pause,
+    #[default]
     Continue,
 }
 
@@ -74,12 +80,55 @@ impl InactivityBehavior {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemePreference {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemePreference {
+    pub const ALL: [Self; 3] = [Self::System, Self::Light, Self::Dark];
+
+    pub fn chip_label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        Self::ALL.get(index).copied().unwrap_or_default()
+    }
+
+    pub fn is_dark(self, system_dark: bool) -> bool {
+        match self {
+            Self::System => system_dark,
+            Self::Light => false,
+            Self::Dark => true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimerCheckpoint {
     pub sitting_elapsed_secs: u64,
     pub snooze_until_secs: u64,
     pub running: bool,
     pub saved_at_unix_secs: u64,
+    #[serde(default)]
+    pub on_break: bool,
+    #[serde(default)]
+    pub break_elapsed_secs: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DayTotal {
+    pub date: String,
+    pub sitting_secs: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,6 +264,8 @@ impl<'de> serde::Deserialize<'de> for AlertSound {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
+    pub settings_version: u32,
+    #[serde(default)]
     pub timer_shape: TimerShape,
     #[serde(default)]
     pub widget_size: WidgetSize,
@@ -254,6 +305,20 @@ pub struct Settings {
     pub snooze_secs: u64,
     #[serde(default)]
     pub timer_checkpoint: Option<TimerCheckpoint>,
+    #[serde(default = "default_volume")]
+    pub alert_volume: u8,
+    #[serde(default = "default_true")]
+    pub notify_enabled: bool,
+    #[serde(default)]
+    pub theme: ThemePreference,
+    #[serde(default = "default_true")]
+    pub always_on_top: bool,
+    #[serde(default = "default_true")]
+    pub hotkeys_enabled: bool,
+    #[serde(default = "default_true")]
+    pub stats_enabled: bool,
+    #[serde(default)]
+    pub history: Vec<DayTotal>,
 }
 
 fn default_sitting_limit() -> u64 {
@@ -280,17 +345,21 @@ fn default_step() -> u64 {
 fn default_snooze() -> u64 {
     10 * 60
 }
+fn default_volume() -> u8 {
+    DEFAULT_ALERT_VOLUME
+}
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            settings_version: SETTINGS_VERSION,
             timer_shape: TimerShape::Capsule,
             widget_size: WidgetSize::Small,
             timer_display_mode: TimerDisplayMode::Countdown,
             sitting_limit_secs: default_sitting_limit(),
             break_duration_secs: default_break(),
             idle_after_secs: default_idle(),
-            inactivity_behavior: InactivityBehavior::Pause,
+            inactivity_behavior: InactivityBehavior::Continue,
             sound_enabled: true,
             repeat_reminders: true,
             repeat_every_secs: default_repeat(),
@@ -304,6 +373,13 @@ impl Default for Settings {
             alert_duration_secs: 0,
             snooze_secs: default_snooze(),
             timer_checkpoint: None,
+            alert_volume: DEFAULT_ALERT_VOLUME,
+            notify_enabled: true,
+            theme: ThemePreference::System,
+            always_on_top: true,
+            hotkeys_enabled: true,
+            stats_enabled: true,
+            history: Vec::new(),
         }
     }
 }
@@ -311,8 +387,47 @@ impl Default for Settings {
 impl Settings {
     pub fn from_json(bytes: &[u8]) -> Self {
         let mut settings = serde_json::from_slice::<Settings>(bytes).unwrap_or_default();
+        settings.migrate();
         settings.clamp();
         settings
+    }
+
+    fn migrate(&mut self) {
+        if self.settings_version < 2 {
+            self.inactivity_behavior = InactivityBehavior::Continue;
+        }
+        self.settings_version = self.settings_version.max(SETTINGS_VERSION);
+    }
+
+    /// User preferences reset to defaults; position, today's total, the running timer and
+    /// history are kept.
+    pub fn with_default_preferences(&self) -> Self {
+        Self {
+            window_x: self.window_x,
+            window_y: self.window_y,
+            today_date: self.today_date.clone(),
+            today_sitting_secs: self.today_sitting_secs,
+            timer_checkpoint: self.timer_checkpoint,
+            history: self.history.clone(),
+            ..Self::default()
+        }
+    }
+
+    /// Record a finished day's sitting total, keeping the most recent `HISTORY_DAYS`.
+    pub fn archive_day(&mut self, date: &str, sitting_secs: u64) {
+        if !self.stats_enabled || date.is_empty() {
+            return;
+        }
+        match self.history.iter_mut().find(|d| d.date == date) {
+            Some(day) => day.sitting_secs = sitting_secs,
+            None => self.history.push(DayTotal {
+                date: date.to_string(),
+                sitting_secs,
+            }),
+        }
+        self.history.sort_by(|a, b| a.date.cmp(&b.date));
+        let excess = self.history.len().saturating_sub(HISTORY_DAYS);
+        self.history.drain(..excess);
     }
 
     pub fn to_json(&self) -> Vec<u8> {
@@ -339,6 +454,12 @@ impl Settings {
         self.snooze_secs = self
             .snooze_secs
             .clamp(SETTINGS_SNOOZE_MIN_SECS, SETTINGS_SNOOZE_MAX_SECS);
+        self.alert_volume = self.alert_volume.min(SETTINGS_VOLUME_MAX);
+        if !self.stats_enabled {
+            self.history.clear();
+        }
+        let excess = self.history.len().saturating_sub(HISTORY_DAYS);
+        self.history.drain(..excess);
     }
 
     pub fn load_from(path: &Path) -> Self {

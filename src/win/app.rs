@@ -2,7 +2,7 @@ use crate::win::{flyout, idle, install, paint, session, settings_dlg, sound, the
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use unseat::{
-    clamp_clock, restored_today_sitting, timer_render_key, Beep, CivilDate, Command, EngineConfig,
+    clamp_clock, next_tick_delay, restored_today_sitting, timer_render_key, Beep, CivilDate, Command, EngineConfig,
     Input, Settings, SittingEngine, TimerRenderKey, WIDGET_H, WIDGET_W,
 };
 use windows::core::w;
@@ -208,9 +208,11 @@ impl App {
     }
 
     fn handle_beep(&mut self, beep: Beep) {
-        match beep {
-            Beep::None => {}
-            Beep::LimitReached | Beep::Progressive => self.play_alert_sound(),
+        if beep == Beep::None {
+            return;
+        }
+        if self.settings.sound_enabled {
+            self.play_alert_sound();
         }
     }
 
@@ -226,7 +228,7 @@ impl App {
         let input = self.current_input();
         let result = self.engine.apply_at(command, now, local_date(), input);
         match command {
-            Command::Reset | Command::Snooze(_) => self.stop_alert_sound(),
+            Command::Reset | Command::Snooze(_) | Command::StartBreak => self.stop_alert_sound(),
             Command::TogglePause => self.handle_beep(result.beep),
         }
     }
@@ -264,6 +266,15 @@ impl App {
             result.snapshot.running,
         );
         self.repaint();
+        self.schedule_tick(&result.snapshot);
+    }
+
+    /// Re-arm the update timer so the next update lands just after the face's next second.
+    fn schedule_tick(&self, snapshot: &unseat::Snapshot) {
+        let delay = next_tick_delay(snapshot).as_millis() as u32;
+        unsafe {
+            let _ = SetTimer(self.hidden, TICK_ID, delay, None);
+        }
     }
 
     pub fn persist_today(&mut self) {

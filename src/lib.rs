@@ -6,13 +6,14 @@ mod view;
 
 pub use date::CivilDate;
 pub use engine::{
-    clamp_clock, restored_today_sitting, Beep, Command, EngineConfig, Input, SittingEngine,
+    clamp_clock, next_tick_delay, restored_today_sitting, Beep, Command, EngineConfig, Input, SittingEngine,
     Snapshot, TickResult, VisibleState,
 };
 pub use place::{installed_exe, is_dev_build};
 pub use settings::{
-    AlertSound, InactivityBehavior, Settings, TimerCheckpoint, TimerDisplayMode, TimerShape,
-    WidgetSize, ALERT_DURATION_PRESETS_SECS, SNOOZE_PRESETS_SECS,
+    AlertSound, DayTotal, InactivityBehavior, Settings, ThemePreference, TimerCheckpoint,
+    TimerDisplayMode, TimerShape, WidgetSize, ALERT_DURATION_PRESETS_SECS, DEFAULT_ALERT_VOLUME,
+    HISTORY_DAYS, SETTINGS_VERSION, SNOOZE_PRESETS_SECS,
 };
 pub use view::{
     card_kicker, control_centers, face_digits, format_break_remaining, format_elapsed,

@@ -1,16 +1,16 @@
 use std::time::Duration;
 use unseat::{
-    clamp_clock, restored_today_sitting, Beep, CivilDate, Command, EngineConfig,
-    InactivityBehavior, Input, SittingEngine, TimerCheckpoint, VisibleState,
+    clamp_clock, next_tick_delay, restored_today_sitting, Beep, CivilDate, Command, EngineConfig,
+    InactivityBehavior, Input, Settings, SittingEngine, TimerCheckpoint, VisibleState,
 };
 
+/// "Pause when inactive" turned on. Most legacy tests exercise that opt-in mode.
 fn cfg() -> EngineConfig {
     EngineConfig {
         sitting_limit: Duration::from_secs(3600),
         break_duration: Duration::from_secs(180),
         idle_after: Duration::from_secs(60),
         inactivity_behavior: InactivityBehavior::Pause,
-        sound_enabled: true,
         repeat_reminders: true,
         repeat_every: Duration::from_secs(600),
     }
@@ -31,12 +31,12 @@ fn continue_mode_counts_a_delayed_idle_gap_as_running_time() {
 }
 
 #[test]
-fn switching_to_continue_mode_leaves_break_state_without_resetting_progress() {
+fn switching_to_continue_mode_leaves_away_state_without_resetting_progress() {
     let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
     e.tick(Duration::ZERO, day(), active());
     e.tick(Duration::from_secs(10), day(), active());
     e.tick(Duration::from_secs(10), day(), idle());
-    assert_eq!(e.snapshot().state, VisibleState::Break);
+    assert_eq!(e.snapshot().state, VisibleState::Away);
 
     let mut c = cfg();
     c.inactivity_behavior = InactivityBehavior::Continue;
@@ -60,7 +60,7 @@ fn pause_mode_splits_a_delayed_tick_at_the_idle_threshold() {
         },
     );
 
-    assert_eq!(r.snapshot.state, VisibleState::Break);
+    assert_eq!(r.snapshot.state, VisibleState::Away);
     assert_eq!(r.snapshot.sitting_elapsed, Duration::from_secs(60));
     assert_eq!(r.snapshot.break_elapsed, Duration::from_secs(40));
 }
@@ -175,12 +175,12 @@ fn reset_while_paused_starts_again_from_zero() {
 }
 
 #[test]
-fn idle_threshold_starts_break_and_does_not_add_idle_to_sitting() {
+fn idle_threshold_pauses_as_away_and_does_not_add_idle_to_sitting() {
     let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
     e.tick(Duration::from_secs(0), day(), active());
     e.tick(Duration::from_secs(50), day(), active());
     let r = e.tick(Duration::from_secs(50), day(), idle());
-    assert_eq!(r.snapshot.state, VisibleState::Break);
+    assert_eq!(r.snapshot.state, VisibleState::Away);
     assert_eq!(r.snapshot.sitting_elapsed, Duration::from_secs(50));
 }
 
@@ -197,25 +197,25 @@ fn short_break_resumes_previous_sitting() {
 }
 
 #[test]
-fn qualifying_break_resets_sitting_and_stays_in_break_until_return() {
+fn away_for_the_break_length_resets_sitting_and_stays_away_until_return() {
     let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
     e.tick(Duration::ZERO, day(), active());
     e.tick(Duration::from_secs(50), day(), active());
     e.tick(Duration::from_secs(50), day(), idle());
     let still_away = e.tick(Duration::from_secs(50 + 180), day(), idle());
     assert_eq!(still_away.snapshot.sitting_elapsed, Duration::ZERO);
-    assert_eq!(still_away.snapshot.state, VisibleState::Break);
+    assert_eq!(still_away.snapshot.state, VisibleState::Away);
     let back = e.tick(Duration::from_secs(50 + 180), day(), active());
     assert_eq!(back.snapshot.state, VisibleState::Sitting);
     assert_eq!(back.snapshot.sitting_elapsed, Duration::ZERO);
 }
 
 #[test]
-fn lock_enters_break_immediately() {
+fn lock_pauses_as_away_immediately() {
     let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
     e.tick(Duration::ZERO, day(), active());
     let r = e.tick(Duration::from_secs(5), day(), locked());
-    assert_eq!(r.snapshot.state, VisibleState::Break);
+    assert_eq!(r.snapshot.state, VisibleState::Away);
 }
 
 #[test]
@@ -268,13 +268,13 @@ fn progressive_beep_every_ten_minutes_while_overdue() {
 }
 
 #[test]
-fn no_beep_when_sound_disabled() {
-    let mut c = cfg();
-    c.sound_enabled = false;
-    let mut e = SittingEngine::new(c, day(), Duration::ZERO);
+fn engine_reports_alerts_even_when_sound_is_off_so_notifications_still_work() {
+    let mut settings = Settings::default();
+    settings.sound_enabled = false;
+    let mut e = SittingEngine::new(EngineConfig::from_settings(&settings), day(), Duration::ZERO);
     e.tick(Duration::ZERO, day(), active());
     let r = e.tick(Duration::from_secs(3600), day(), active());
-    assert_eq!(r.beep, Beep::None);
+    assert_eq!(r.beep, Beep::LimitReached);
     assert_eq!(r.snapshot.state, VisibleState::Overdue);
 }
 
@@ -311,7 +311,7 @@ fn delayed_active_tick_accounts_for_the_full_elapsed_gap() {
 }
 
 #[test]
-fn delayed_tick_at_the_idle_threshold_counts_the_prior_gap_and_finishes_overdue() {
+fn delayed_tick_at_the_idle_threshold_counts_the_prior_gap_then_pauses_as_away() {
     let mut e = SittingEngine::new(cfg_30_min(), day(), Duration::ZERO);
     e.tick(Duration::ZERO, day(), active());
     e.tick(Duration::from_secs(15 * 60 + 55), day(), active());
@@ -322,7 +322,9 @@ fn delayed_tick_at_the_idle_threshold_counts_the_prior_gap_and_finishes_overdue(
         r.snapshot.sitting_elapsed,
         Duration::from_secs(35 * 60 + 55)
     );
-    assert_eq!(r.snapshot.state, VisibleState::Overdue);
+    assert_eq!(r.beep, Beep::LimitReached);
+    assert_eq!(r.snapshot.timer_remaining, Duration::ZERO);
+    assert_eq!(r.snapshot.state, VisibleState::Away);
     assert_eq!(r.snapshot.break_elapsed, Duration::ZERO);
 }
 
@@ -369,22 +371,41 @@ fn completion_clamps_countdown_remaining_to_zero() {
 }
 
 #[test]
-fn completed_timer_stays_overdue_during_inactivity() {
+fn completed_timer_stays_overdue_through_a_short_absence() {
     let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
     e.tick(Duration::ZERO, day(), active());
     e.tick(Duration::from_secs(3600), day(), active());
 
-    let idle_result = e.tick(Duration::from_secs(3900), day(), idle());
+    let idle_result = e.tick(Duration::from_secs(3660), day(), idle());
     assert_eq!(idle_result.snapshot.timer_remaining, Duration::ZERO);
-    assert_eq!(idle_result.snapshot.state, VisibleState::Overdue);
+    assert_eq!(idle_result.snapshot.state, VisibleState::Away);
 
-    let return_result = e.tick(Duration::from_secs(3901), day(), active());
+    let return_result = e.tick(Duration::from_secs(3661), day(), active());
     assert_eq!(return_result.snapshot.timer_remaining, Duration::ZERO);
     assert_eq!(return_result.snapshot.state, VisibleState::Overdue);
 }
 
 #[test]
-fn delayed_idle_update_that_crosses_zero_finishes_overdue_not_on_break() {
+fn away_for_the_break_length_while_overdue_counts_as_a_break() {
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(3600), day(), active());
+    e.tick(Duration::from_secs(3600), day(), idle());
+    e.tick(Duration::from_secs(3600 + 180), day(), idle());
+    let back = e.tick(
+        Duration::from_secs(3600 + 181),
+        day(),
+        Input {
+            last_input_age: Duration::from_secs(1),
+            session_locked: false,
+        },
+    );
+    assert_eq!(back.snapshot.state, VisibleState::Sitting);
+    assert_eq!(back.snapshot.sitting_elapsed, Duration::from_secs(1));
+}
+
+#[test]
+fn delayed_idle_update_that_crosses_zero_still_reports_completion() {
     let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
     e.tick(Duration::ZERO, day(), active());
     e.tick(Duration::from_secs(3590), day(), active());
@@ -401,6 +422,7 @@ fn delayed_idle_update_that_crosses_zero_finishes_overdue_not_on_break() {
     assert_eq!(result.beep, Beep::LimitReached);
     assert_eq!(result.snapshot.timer_remaining, Duration::ZERO);
     assert_eq!(result.snapshot.state, VisibleState::Overdue);
+    assert_eq!(result.snapshot.sitting_elapsed, Duration::from_secs(3650));
 }
 
 #[test]
@@ -432,6 +454,8 @@ fn pause_mode_restores_without_counting_time_while_the_app_was_closed() {
         snooze_until_secs: 0,
         running: true,
         saved_at_unix_secs: 1_000,
+        on_break: false,
+        break_elapsed_secs: 0,
     };
 
     let restored =
@@ -454,6 +478,8 @@ fn relaunch_reconstructs_only_the_current_days_continuing_time() {
         snooze_until_secs: 0,
         running: true,
         saved_at_unix_secs: 1_000,
+        on_break: false,
+        break_elapsed_secs: 0,
     };
     let next_day = CivilDate {
         year: 2026,
@@ -595,4 +621,238 @@ fn snooze_resets_progressive_beeps() {
     assert_eq!(mid.beep, Beep::None);
     let again = e.tick(Duration::from_secs(4200 + 10 * 60), day(), active());
     assert_eq!(again.beep, Beep::LimitReached);
+}
+
+fn default_cfg() -> EngineConfig {
+    EngineConfig::from_settings(&Settings::default())
+}
+
+fn long_idle() -> Input {
+    Input {
+        last_input_age: Duration::from_secs(45 * 60),
+        session_locked: false,
+    }
+}
+
+#[test]
+fn default_settings_keep_counting_through_idle_lock_and_sleep() {
+    assert_eq!(
+        default_cfg().inactivity_behavior,
+        InactivityBehavior::Continue
+    );
+    let mut e = SittingEngine::new(default_cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    let idle_r = e.tick(Duration::from_secs(10 * 60), day(), long_idle());
+    assert_eq!(idle_r.snapshot.state, VisibleState::Sitting);
+    let locked_r = e.tick(Duration::from_secs(20 * 60), day(), locked());
+    assert_eq!(locked_r.snapshot.state, VisibleState::Sitting);
+    // A 25 minute suspend arrives as one large monotonic gap.
+    let resumed = e.tick(Duration::from_secs(45 * 60), day(), active());
+    assert_eq!(resumed.snapshot.state, VisibleState::Sitting);
+    assert_eq!(resumed.snapshot.sitting_elapsed, Duration::from_secs(45 * 60));
+    assert_eq!(resumed.snapshot.today_sitting, Duration::from_secs(45 * 60));
+}
+
+#[test]
+fn default_settings_reach_the_limit_and_keep_reminding_while_unattended() {
+    let mut e = SittingEngine::new(default_cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    let done = e.tick(Duration::from_secs(3600), day(), long_idle());
+    assert_eq!(done.beep, Beep::LimitReached);
+    assert_eq!(done.snapshot.state, VisibleState::Overdue);
+    let reminder = e.tick(Duration::from_secs(4200), day(), locked());
+    assert_eq!(reminder.beep, Beep::Progressive);
+    let quiet = e.tick(Duration::from_secs(4201), day(), locked());
+    assert_eq!(quiet.beep, Beep::None);
+}
+
+#[test]
+fn a_delayed_reminder_tick_fires_one_reminder_not_a_burst() {
+    let mut e = SittingEngine::new(default_cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(3600), day(), active());
+    // Three reminder intervals pass in one message (e.g. after resume from sleep).
+    let r = e.tick(Duration::from_secs(3600 + 3 * 600 + 5), day(), active());
+    assert_eq!(r.beep, Beep::Progressive);
+    let next = e.tick(Duration::from_secs(3600 + 3 * 600 + 6), day(), active());
+    assert_eq!(next.beep, Beep::None);
+}
+
+#[test]
+fn manual_pause_inactivity_pause_and_break_are_distinct_states() {
+    let mut paused = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    paused.apply(Command::TogglePause);
+    assert_eq!(paused.snapshot().state, VisibleState::Paused);
+
+    let mut away = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    away.tick(Duration::ZERO, day(), active());
+    away.tick(Duration::from_secs(1), day(), locked());
+    assert_eq!(away.snapshot().state, VisibleState::Away);
+
+    let mut on_break = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    on_break.apply(Command::StartBreak);
+    assert_eq!(on_break.snapshot().state, VisibleState::Break);
+}
+
+#[test]
+fn break_counts_down_then_starts_a_fresh_session() {
+    let mut e = SittingEngine::new(default_cfg(), day(), Duration::from_secs(100));
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(3700), day(), active());
+    e.apply(Command::StartBreak);
+    let mid = e.tick(Duration::from_secs(3700 + 60), day(), active());
+    assert_eq!(mid.snapshot.state, VisibleState::Break);
+    assert_eq!(mid.snapshot.break_remaining, Duration::from_secs(120));
+    assert_eq!(mid.snapshot.today_sitting, Duration::from_secs(3800));
+    assert_eq!(mid.beep, Beep::None);
+
+    let over = e.tick(Duration::from_secs(3700 + 185), day(), active());
+    assert_eq!(over.beep, Beep::BreakOver);
+    assert_eq!(over.snapshot.state, VisibleState::Sitting);
+    assert_eq!(over.snapshot.sitting_elapsed, Duration::from_secs(5));
+    assert_eq!(over.snapshot.today_sitting, Duration::from_secs(3805));
+}
+
+#[test]
+fn break_ignores_inactivity_even_when_pause_when_inactive_is_on() {
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.apply(Command::StartBreak);
+    let r = e.tick(Duration::from_secs(90), day(), locked());
+    assert_eq!(r.snapshot.state, VisibleState::Break);
+    assert_eq!(r.snapshot.break_elapsed, Duration::from_secs(90));
+}
+
+#[test]
+fn pausing_a_break_freezes_its_countdown() {
+    let mut e = SittingEngine::new(default_cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.apply(Command::StartBreak);
+    e.apply_at(Command::TogglePause, Duration::from_secs(30), day(), active());
+    e.apply_at(Command::TogglePause, Duration::from_secs(300), day(), active());
+    let r = e.tick(Duration::from_secs(301), day(), active());
+    assert_eq!(r.snapshot.state, VisibleState::Break);
+    assert_eq!(r.snapshot.break_elapsed, Duration::from_secs(31));
+}
+
+#[test]
+fn reset_ends_a_break_early_and_snooze_is_unavailable_during_one() {
+    let mut e = SittingEngine::new(default_cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(3600), day(), active());
+    e.apply(Command::StartBreak);
+    assert!(!e.can_snooze());
+    e.apply(Command::Snooze(Duration::from_secs(600)));
+    assert_eq!(e.snapshot().state, VisibleState::Break);
+    e.apply(Command::Reset);
+    assert_eq!(e.snapshot().state, VisibleState::Sitting);
+    assert_eq!(e.snapshot().sitting_elapsed, Duration::ZERO);
+}
+
+#[test]
+fn starting_a_break_while_paused_runs_the_break() {
+    let mut e = SittingEngine::new(default_cfg(), day(), Duration::ZERO);
+    e.apply(Command::TogglePause);
+    e.apply(Command::StartBreak);
+    assert_eq!(e.snapshot().state, VisibleState::Break);
+    assert!(e.snapshot().running);
+}
+
+#[test]
+fn a_break_survives_restart_and_counts_the_time_the_app_was_closed() {
+    let mut e = SittingEngine::new(default_cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.apply(Command::StartBreak);
+    e.tick(Duration::from_secs(30), day(), active());
+    let cp = e.checkpoint(5_000);
+    assert!(cp.on_break);
+    assert_eq!(cp.break_elapsed_secs, 30);
+
+    let resumed = SittingEngine::restore(default_cfg(), day(), Duration::ZERO, cp, 5_060);
+    assert_eq!(resumed.snapshot().state, VisibleState::Break);
+    assert_eq!(resumed.snapshot().break_elapsed, Duration::from_secs(90));
+
+    let finished = SittingEngine::restore(default_cfg(), day(), Duration::ZERO, cp, 5_600);
+    assert_eq!(finished.snapshot().state, VisibleState::Sitting);
+    assert_eq!(finished.snapshot().sitting_elapsed, Duration::ZERO);
+    assert_eq!(
+        restored_today_sitting(
+            Duration::from_secs(10),
+            day(),
+            day(),
+            InactivityBehavior::Continue,
+            cp,
+            5_600,
+            Duration::from_secs(3600),
+        ),
+        Duration::from_secs(10)
+    );
+}
+
+#[test]
+fn restart_restores_a_manual_pause_without_counting_closed_time() {
+    let mut e = SittingEngine::new(default_cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(300), day(), active());
+    e.apply(Command::TogglePause);
+    let cp = e.checkpoint(1_000);
+    let restored = SittingEngine::restore(default_cfg(), day(), Duration::ZERO, cp, 9_000);
+    assert_eq!(restored.snapshot().state, VisibleState::Paused);
+    assert_eq!(restored.snapshot().sitting_elapsed, Duration::from_secs(300));
+}
+
+#[test]
+fn restart_into_overdue_does_not_replay_missed_alerts() {
+    let cp = TimerCheckpoint {
+        sitting_elapsed_secs: 3000,
+        snooze_until_secs: 0,
+        running: true,
+        saved_at_unix_secs: 1_000,
+        on_break: false,
+        break_elapsed_secs: 0,
+    };
+    let mut e = SittingEngine::restore(default_cfg(), day(), Duration::ZERO, cp, 1_000 + 2_000);
+    assert_eq!(e.snapshot().state, VisibleState::Overdue);
+    e.tick(Duration::ZERO, day(), active());
+    let r = e.tick(Duration::from_secs(1), day(), active());
+    assert_eq!(r.beep, Beep::None);
+}
+
+#[test]
+fn older_checkpoints_without_break_fields_still_load() {
+    let json = br#"{"timer_checkpoint":{"sitting_elapsed_secs":5,"snooze_until_secs":0,"running":true,"saved_at_unix_secs":9}}"#;
+    let cp = Settings::from_json(json).timer_checkpoint.unwrap();
+    assert!(!cp.on_break);
+    assert_eq!(cp.break_elapsed_secs, 0);
+}
+
+#[test]
+fn backwards_clock_jump_never_subtracts_time() {
+    let cp = TimerCheckpoint {
+        sitting_elapsed_secs: 100,
+        snooze_until_secs: 0,
+        running: true,
+        saved_at_unix_secs: 10_000,
+        on_break: false,
+        break_elapsed_secs: 0,
+    };
+    let e = SittingEngine::restore(default_cfg(), day(), Duration::ZERO, cp, 4_000);
+    assert_eq!(e.snapshot().sitting_elapsed, Duration::from_secs(100));
+}
+
+#[test]
+fn next_tick_lands_just_after_the_next_second_boundary() {
+    let mut e = SittingEngine::new(default_cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    let r = e.tick(Duration::from_millis(12_340), day(), active());
+    assert_eq!(next_tick_delay(&r.snapshot), Duration::from_millis(680));
+
+    let on_boundary = e.tick(Duration::from_millis(13_000), day(), active());
+    assert_eq!(
+        next_tick_delay(&on_boundary.snapshot),
+        Duration::from_millis(1020)
+    );
+
+    e.apply(Command::TogglePause);
+    assert_eq!(next_tick_delay(&e.snapshot()), Duration::from_secs(1));
 }

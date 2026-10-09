@@ -1,7 +1,8 @@
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use unseat::{
-    AlertSound, InactivityBehavior, Settings, TimerCheckpoint, TimerDisplayMode, TimerShape,
+    AlertSound, InactivityBehavior, Settings, ThemePreference, TimerCheckpoint, TimerDisplayMode,
+    TimerShape, DEFAULT_ALERT_VOLUME, HISTORY_DAYS, SETTINGS_VERSION,
 };
 
 fn temp_settings_path() -> std::path::PathBuf {
@@ -32,7 +33,15 @@ fn defaults_match_spec() {
     assert_eq!(s.alert_sound, AlertSound::Chime);
     assert_eq!(s.alert_duration_secs, 0);
     assert_eq!(s.snooze_secs, 10 * 60);
-    assert_eq!(s.inactivity_behavior, InactivityBehavior::Pause);
+    assert_eq!(s.inactivity_behavior, InactivityBehavior::Continue);
+    assert_eq!(s.settings_version, SETTINGS_VERSION);
+    assert_eq!(s.alert_volume, DEFAULT_ALERT_VOLUME);
+    assert!(s.notify_enabled);
+    assert_eq!(s.theme, ThemePreference::System);
+    assert!(s.always_on_top);
+    assert!(s.hotkeys_enabled);
+    assert!(s.stats_enabled);
+    assert!(s.history.is_empty());
 }
 
 #[test]
@@ -65,22 +74,125 @@ fn round_trip_json_preserves_fields() {
     s.widget_size = unseat::WidgetSize::ExtraLarge;
     s.sitting_limit_secs = 2700;
     s.step = 5;
-    s.inactivity_behavior = InactivityBehavior::Continue;
+    s.inactivity_behavior = InactivityBehavior::Pause;
     s.timer_display_mode = TimerDisplayMode::Stopwatch;
     let parsed = Settings::from_json(&s.to_json());
     assert_eq!(parsed.timer_shape, TimerShape::Disc);
     assert_eq!(parsed.widget_size, unseat::WidgetSize::ExtraLarge);
     assert_eq!(parsed.sitting_limit_secs, 2700);
     assert_eq!(parsed.step, 5);
-    assert_eq!(parsed.inactivity_behavior, InactivityBehavior::Continue);
+    assert_eq!(parsed.inactivity_behavior, InactivityBehavior::Pause);
     assert_eq!(parsed.timer_display_mode, TimerDisplayMode::Stopwatch);
 }
 
 #[test]
-fn older_settings_default_to_pausing_during_inactivity() {
+fn older_settings_keep_running_during_inactivity() {
     let s = Settings::from_json(br#"{"sitting_limit_secs":3600}"#);
-    assert_eq!(s.inactivity_behavior, InactivityBehavior::Pause);
+    assert_eq!(s.inactivity_behavior, InactivityBehavior::Continue);
     assert_eq!(s.timer_display_mode, TimerDisplayMode::Countdown);
+}
+
+#[test]
+fn version_one_files_migrate_the_old_pause_default_and_keep_everything_else() {
+    // A real 0.1.1 settings file.
+    let v1 = br#"{
+      "timer_shape": "capsule", "widget_size": "extra_large", "timer_display_mode": "countdown",
+      "sitting_limit_secs": 900, "break_duration_secs": 180, "idle_after_secs": 60,
+      "inactivity_behavior": "pause", "sound_enabled": true, "repeat_reminders": true,
+      "repeat_every_secs": 600, "launch_with_windows": true, "window_x": -528, "window_y": 1591,
+      "today_date": "2026-10-09", "today_sitting_secs": 42155, "step": 5, "alert_sound": "glass",
+      "alert_duration_secs": 2, "snooze_secs": 900,
+      "timer_checkpoint": {"sitting_elapsed_secs": 10101, "snooze_until_secs": 10552,
+        "running": true, "saved_at_unix_secs": 1791562628}
+    }"#;
+    let s = Settings::from_json(v1);
+    assert_eq!(s.inactivity_behavior, InactivityBehavior::Continue);
+    assert_eq!(s.settings_version, SETTINGS_VERSION);
+    assert_eq!(s.widget_size, unseat::WidgetSize::ExtraLarge);
+    assert_eq!(s.sitting_limit_secs, 900);
+    assert_eq!((s.window_x, s.window_y), (-528, 1591));
+    assert_eq!(s.today_sitting_secs, 42155);
+    assert_eq!(s.step, 5);
+    assert_eq!(s.alert_sound, AlertSound::Glass);
+    assert_eq!(s.alert_duration_secs, 2);
+    assert!(s.launch_with_windows);
+    assert_eq!(s.timer_checkpoint.unwrap().sitting_elapsed_secs, 10101);
+    assert_eq!(s.alert_volume, DEFAULT_ALERT_VOLUME);
+}
+
+#[test]
+fn pause_when_inactive_chosen_after_migration_is_preserved() {
+    let v2 = br#"{"settings_version": 2, "inactivity_behavior": "pause"}"#;
+    assert_eq!(
+        Settings::from_json(v2).inactivity_behavior,
+        InactivityBehavior::Pause
+    );
+}
+
+#[test]
+fn volume_is_clamped_and_round_trips() {
+    let mut s = Settings::from_json(br#"{"settings_version":2,"alert_volume":250}"#);
+    assert_eq!(s.alert_volume, 100);
+    s.alert_volume = 40;
+    assert_eq!(Settings::from_json(&s.to_json()).alert_volume, 40);
+}
+
+#[test]
+fn unknown_theme_falls_back_to_defaults_instead_of_failing() {
+    let s = Settings::from_json(br#"{"theme":"dark"}"#);
+    assert_eq!(s.theme, ThemePreference::Dark);
+    assert!(ThemePreference::System.is_dark(true));
+    assert!(!ThemePreference::System.is_dark(false));
+    assert!(!ThemePreference::Light.is_dark(true));
+}
+
+#[test]
+fn archive_day_keeps_the_most_recent_two_weeks_in_order() {
+    let mut s = Settings::default();
+    for day in (1..=20).rev() {
+        s.archive_day(&format!("2026-09-{day:02}"), day * 60);
+    }
+    s.archive_day("2026-09-20", 99);
+    assert_eq!(s.history.len(), HISTORY_DAYS);
+    assert_eq!(s.history.first().unwrap().date, "2026-09-07");
+    assert_eq!(s.history.last().unwrap().date, "2026-09-20");
+    assert_eq!(s.history.last().unwrap().sitting_secs, 99);
+}
+
+#[test]
+fn disabling_statistics_clears_history_and_stops_recording() {
+    let mut s = Settings::default();
+    s.archive_day("2026-09-01", 60);
+    s.stats_enabled = false;
+    s.clamp();
+    assert!(s.history.is_empty());
+    s.archive_day("2026-09-02", 60);
+    assert!(s.history.is_empty());
+}
+
+#[test]
+fn reset_to_defaults_keeps_position_timer_and_history() {
+    let mut s = Settings::default();
+    s.window_x = 900;
+    s.sitting_limit_secs = 1200;
+    s.alert_volume = 10;
+    s.today_sitting_secs = 77;
+    s.archive_day("2026-09-01", 60);
+    s.timer_checkpoint = Some(TimerCheckpoint {
+        sitting_elapsed_secs: 1,
+        snooze_until_secs: 0,
+        running: true,
+        saved_at_unix_secs: 5,
+        on_break: false,
+        break_elapsed_secs: 0,
+    });
+    let d = s.with_default_preferences();
+    assert_eq!(d.sitting_limit_secs, 3600);
+    assert_eq!(d.alert_volume, DEFAULT_ALERT_VOLUME);
+    assert_eq!(d.window_x, 900);
+    assert_eq!(d.today_sitting_secs, 77);
+    assert_eq!(d.history.len(), 1);
+    assert_eq!(d.timer_checkpoint, s.timer_checkpoint);
 }
 
 #[test]
@@ -103,6 +215,8 @@ fn timer_checkpoint_round_trips_for_relaunch_recovery() {
         snooze_until_secs: 900,
         running: false,
         saved_at_unix_secs: 2_000,
+        on_break: true,
+        break_elapsed_secs: 42,
     });
 
     let parsed = Settings::from_json(&s.to_json());
@@ -186,6 +300,8 @@ fn saving_again_replaces_the_existing_settings_file() {
         snooze_until_secs: 0,
         running: true,
         saved_at_unix_secs: 2_000,
+        on_break: false,
+        break_elapsed_secs: 0,
     });
     s.save_to(&path).unwrap();
 

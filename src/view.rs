@@ -229,6 +229,9 @@ pub fn timer_digit_px(digits: &str, base_px: f32, lane_width: f32) -> f32 {
 }
 
 fn timer_face_seconds(timer_display_mode: TimerDisplayMode, snapshot: Snapshot) -> u64 {
+    if snapshot.state == VisibleState::Break {
+        return countdown_secs(snapshot.break_remaining);
+    }
     match timer_display_mode {
         TimerDisplayMode::Countdown => countdown_secs(snapshot.timer_remaining),
         TimerDisplayMode::Stopwatch => snapshot.sitting_elapsed.as_secs(),
@@ -290,6 +293,7 @@ pub fn format_today_hm(d: Duration) -> String {
 pub fn status_word(state: VisibleState) -> &'static str {
     match state {
         VisibleState::Sitting => "ACTIVE",
+        VisibleState::Away => "AWAY",
         VisibleState::Break => "BREAK",
         VisibleState::Paused => "PAUSED",
         VisibleState::Overdue => "OVERDUE",
@@ -299,6 +303,7 @@ pub fn status_word(state: VisibleState) -> &'static str {
 pub fn state_label(state: VisibleState) -> &'static str {
     match state {
         VisibleState::Sitting => "on",
+        VisibleState::Away => "away",
         VisibleState::Break => "break",
         VisibleState::Paused => "paused",
         VisibleState::Overdue => "over",
@@ -308,6 +313,7 @@ pub fn state_label(state: VisibleState) -> &'static str {
 pub fn card_kicker(state: VisibleState) -> &'static str {
     match state {
         VisibleState::Sitting => "Active",
+        VisibleState::Away => "Away",
         VisibleState::Break => "Break",
         VisibleState::Paused => "Paused",
         VisibleState::Overdue => "Overdue",
@@ -322,7 +328,7 @@ pub fn progress(
     break_dur: Duration,
 ) -> f32 {
     match state {
-        VisibleState::Break => {
+        VisibleState::Break | VisibleState::Away => {
             let denom = break_dur.as_secs_f32().max(0.001);
             (break_elapsed.as_secs_f32() / denom).clamp(0.0, 1.0)
         }

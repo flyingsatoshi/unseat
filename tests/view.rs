@@ -151,8 +151,33 @@ fn running_hides_controls_until_hover() {
 }
 
 #[test]
-fn break_keeps_sitting_digits_instead_of_swapping_to_break_remaining() {
-    assert_eq!(face_digits(Duration::from_secs(15 * 60 + 55)), "15:55");
+fn away_keeps_sitting_digits_instead_of_swapping_to_break_remaining() {
+    let away = Snapshot {
+        state: VisibleState::Away,
+        sitting_elapsed: Duration::from_secs(4 * 60 + 5),
+        timer_remaining: Duration::from_secs(15 * 60 + 55),
+        break_elapsed: Duration::from_secs(20),
+        break_remaining: Duration::from_secs(160),
+        today_sitting: Duration::ZERO,
+        running: true,
+    };
+    assert_eq!(timer_face_digits(TimerDisplayMode::Countdown, away), "15:55");
+    assert_eq!(timer_face_digits(TimerDisplayMode::Stopwatch, away), "04:05");
+}
+
+#[test]
+fn an_explicit_break_shows_its_own_countdown_in_both_modes() {
+    let on_break = Snapshot {
+        state: VisibleState::Break,
+        sitting_elapsed: Duration::from_secs(3700),
+        timer_remaining: Duration::ZERO,
+        break_elapsed: Duration::from_millis(20_500),
+        break_remaining: Duration::from_millis(159_500),
+        today_sitting: Duration::ZERO,
+        running: true,
+    };
+    assert_eq!(timer_face_digits(TimerDisplayMode::Countdown, on_break), "02:40");
+    assert_eq!(timer_face_digits(TimerDisplayMode::Stopwatch, on_break), "02:40");
 }
 
 #[test]
