@@ -1473,8 +1473,8 @@ unsafe fn on_key(hwnd: HWND, dlg: *mut Dialog, vk: VIRTUAL_KEY) {
             }
             return;
         }
-        // Ctrl+1..4 jumps to a tab.
-        _ if ctrl && (0x31..=0x34).contains(&vk.0) => {
+        // Ctrl+1..5 jumps to a tab.
+        _ if ctrl && (0x31..=0x35).contains(&vk.0) => {
             select_tab(d, Tab::ALL[usize::from(vk.0 - 0x31)]);
         }
         _ => return,

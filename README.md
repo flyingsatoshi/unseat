@@ -14,12 +14,17 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/overlay-states.png" alt="Unseat overlay: counting, hover controls, overdue, break and paused, in dark and light themes" width="820">
+  <img src="assets/screenshots/overlay-states.png" alt="Unseat overlay: counting, hover controls, overdue, break and paused, in dark and light themes. The pill fills as you sit and its colour shows the state." width="820">
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/settings.png" alt="Unseat alert settings with sound, volume, reminders and snooze" width="320">
-  <img src="assets/screenshots/settings-light.png" alt="Unseat general settings in the light theme with daily statistics" width="320">
+  <img src="assets/screenshots/settings.png" alt="Unseat alert settings: sound, volume, alert length and reminders" width="300">
+  <img src="assets/screenshots/settings-light.png" alt="Unseat general settings in the light theme with the weekly statistics chart" width="300">
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/tray-panel.png" alt="Tray panel with the countdown, progress, Pause, Take a break, Snooze and Reset" width="300">
+  <img src="assets/screenshots/alert-card.png" alt="Alert card beside the overlay: Time to stand up, with Take a break and Snooze" width="300">
 </p>
 
 ## Sitting timer for Windows
@@ -32,7 +37,10 @@ Unseat is a local desktop **timer** and break reminder. It stays on top of your 
 - Manual pause, inactivity pause (*away*) and breaks each look different on the overlay
 - Reverse countdown or ascending stopwatch, without resetting the session
 - Timer, pause and break state survive restarts; only Reset starts over
-- One alert at the limit, optional repeats while overdue, and a Windows notification when time is up
+- The overlay pill is the progress bar: it fills as you sit and its colour shows the state (sitting, near the limit, overdue, break, away or paused)
+- One alert at the limit, optional repeats while overdue; an alert card beside the overlay (Take a break / Snooze), or a Windows notification while the overlay is hidden
+- **Edge docking** (optional): attach the overlay to any screen edge; it slides out to a slim progress tab, peeks when you point at it, slides in on click and reveals itself when time is up
+- A tray panel with the countdown and one-click Pause, Take a break, Snooze and Reset
 - Five bundled sounds with a volume slider and Test button; every sound plays at the same loudness
 - Snooze from the overlay (click the overdue time), tray, or `Ctrl+Alt+Shift+S`
 - XS–XL overlay sizes, optional always-on-top, drag anywhere (snaps to screen edges), position remembered
@@ -64,7 +72,15 @@ Global shortcuts (Settings → General → Keyboard shortcuts, on by default). S
 | `Ctrl+Alt+Shift+B` | Start / end a break |
 | `Ctrl+Alt+Shift+U` | Show / hide the overlay |
 
-In settings: `Tab` / `Shift+Tab` move focus, arrow keys change values and tabs, `Space` toggles, `Ctrl+Tab` or `Ctrl+1…4` switch tabs, `Enter` saves and `Esc` cancels.
+In settings: `Tab` / `Shift+Tab` move focus, arrow keys change values and tabs, `Space` toggles, `Ctrl+Tab` or `Ctrl+1…5` switch tabs, `Enter` saves and `Esc` cancels.
+
+## Edge docking
+
+Settings → Dock → **Dock to a screen edge**, or with it on, drag the overlay against any edge of any monitor. Docked, it waits **Hide after** seconds (3 by default) once the pointer leaves, then slides out to an 8 px tab whose fill shows progress. Point at the tab to see the minutes left; click it or press `Ctrl+Alt+Shift+U` to slide it in. When time is up it slides in on its own for **Stay revealed** seconds (choose time up only, all alerts, or never). The pin on the hovered overlay (or turning off **Slide out when not in use**) keeps it open. It stays clear of the taskbar, stays hidden while a fullscreen app has the monitor, remembers its edge and position, and follows monitor and scaling changes. The timer never pauses while it is hidden.
+
+<p align="center">
+  <img src="assets/screenshots/dock-states.png" alt="Docked overlay expanded, slid out to a tab, and peeking with 13 min, in dark and light" width="700">
+</p>
 
 ## Upgrading from 0.1.x
 
@@ -74,7 +90,7 @@ Settings are kept. Earlier versions paused the timer during inactivity by defaul
 
 Settings → Alerts picks **Chime**, **Bell**, **Pulse**, **Glass**, or **Soft**, a volume (75% by default, a little louder than before), and **Test**. **Once** plays the clip; **2s / 4s / 8s** loops it for that long. Repeat reminders fire on the interval you set and never stack: after sleep only one plays. A new sound always stops the previous one.
 
-When the sitting limit is reached, snooze **5 / 10 / 15 / 30** minutes or a custom duration. The last choice is saved. Click the overdue time on the overlay, or use the tray **Snooze** menu.
+When the sitting limit is reached, snooze **5 / 10 / 15 / 30** minutes or a custom duration (Settings → Breaks). The last choice is saved. Click the overdue time on the overlay, the alert card's **Snooze**, or the tray panel.
 
 ## Build from source
 
@@ -115,6 +131,6 @@ Unseat never phones home. It does not upload usage, crash reports, or identity. 
 
 ## License
 
-[Apache License 2.0](LICENSE). Contributions are accepted under the same terms. Alert sounds in `assets/sounds/` are [CC0](assets/sounds/LICENSE.txt). See [NOTICE](NOTICE) for third-party crate notes.
+[Apache License 2.0](LICENSE). Contributions are accepted under the same terms. Alert sounds in `assets/sounds/` are [CC0](assets/sounds/LICENSE.txt). The embedded [Sora](https://github.com/sora-xor/sora-font) typeface is under the [SIL Open Font License 1.1](assets/fonts/OFL.txt). See [NOTICE](NOTICE) for third-party notes.
 
 **Unseat** is a name of this project. Forks may use the code; they should not present themselves as the official Unseat app.

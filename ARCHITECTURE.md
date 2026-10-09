@@ -12,7 +12,8 @@ No Win32. Everything that decides behavior lives here and is unit-tested:
 | `settings` | `Settings` JSON under `%APPDATA%\Unseat\settings.json`: defaults, clamping, schema migration, reset to defaults, 14-day history |
 | `alerts` / `audio` | Which alert events play a sound or show a notification; PCM16 volume scaling |
 | `view` | Overlay layout and hit targets at 96 DPI, face digits, tag text, tray status line, edge snapping |
-| `theme` | Light and dark palettes, contrast-checked in tests |
+| `theme` | Signal palettes (light and dark): per-state overlay surface, band, digit and tag colours; contrast-checked in tests |
+| `dock` | Edge docking: geometry for every edge (`dock_frame`) and a time-driven `DockController` (hide delay, peek, click, alert reveal, pin, fullscreen) |
 | `stats`, `date` | Weekly chart data and civil-date arithmetic |
 
 The host must not invent timer rules. If a behavior cannot be asked of the engine, it does not exist.
@@ -42,9 +43,12 @@ The engine reports `LimitReached`, `Progressive` and `BreakOver` regardless of s
 | --- | --- |
 | `app` | Owns the engine; feeds time, last-input age and lock/sleep state; persists every 60 s, on every command and at shutdown |
 | `widget` | Layered Direct2D overlay (no-activate, optionally topmost). Receives the broadcasts the message-only window cannot: theme change, `TaskbarCreated`, display/DPI changes, power, end-session |
-| `paint`, `gfx` | Overlay painter with a cached back buffer and render target; shared Direct2D helpers and text-format cache |
+| `paint`, `gfx` | Overlay painter (pill as progress bar, docked tab and peek) with a cached back buffer; shared Direct2D helpers, text-format cache, the embedded Sora font loaded from memory, tabular digits measured to fit |
+| `docking` | Applies `DockController` to the overlay window: placement, slide frames (~16 ms timer only while sliding), drag-to-dock, fullscreen detection |
+| `tray_panel` | Custom tray panel that replaces the native menu; keyboard operable |
+| `alert_card` | Non-activating card beside the overlay when time is up or a break ends |
 | `settings_dlg` | Tabbed settings. One row table drives layout, painting, hit testing and keyboard focus |
-| `tray`, `flyout` | Tray menu, status tooltip (updated only when its text changes), notifications, hover card |
+| `tray`, `flyout` | Tray icon, status tooltip (updated only when its text changes), notifications, hover card |
 | `sound` | Embedded WAVs via `PlaySoundW(SND_MEMORY)` from a volume-scaled copy kept alive while playing |
 | `hotkeys` | Optional `Ctrl+Alt+Shift` shortcuts |
 | `autostart` | Opt-in `HKCU\...\Run` value; reads Task Manager's StartupApproved state; repairs a stale path |
