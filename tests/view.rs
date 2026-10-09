@@ -160,6 +160,7 @@ fn away_keeps_sitting_digits_instead_of_swapping_to_break_remaining() {
         break_remaining: Duration::from_secs(160),
         today_sitting: Duration::ZERO,
         running: true,
+        overdue_by: Duration::ZERO,
     };
     assert_eq!(timer_face_digits(TimerDisplayMode::Countdown, away), "15:55");
     assert_eq!(timer_face_digits(TimerDisplayMode::Stopwatch, away), "04:05");
@@ -175,6 +176,7 @@ fn an_explicit_break_shows_its_own_countdown_in_both_modes() {
         break_remaining: Duration::from_millis(159_500),
         today_sitting: Duration::ZERO,
         running: true,
+        overdue_by: Duration::ZERO,
     };
     assert_eq!(timer_face_digits(TimerDisplayMode::Countdown, on_break), "02:40");
     assert_eq!(timer_face_digits(TimerDisplayMode::Stopwatch, on_break), "02:40");
@@ -204,6 +206,7 @@ fn timer_display_modes_use_remaining_or_elapsed_time_without_changing_session_st
         break_remaining: Duration::from_secs(180),
         today_sitting: Duration::from_secs(34),
         running: true,
+        overdue_by: Duration::ZERO,
     };
 
     assert_eq!(
@@ -227,6 +230,7 @@ fn stopwatch_keeps_ascending_after_the_goal_is_reached() {
         break_remaining: Duration::from_secs(180),
         today_sitting: Duration::from_secs(5 * 60 + 29),
         running: true,
+        overdue_by: Duration::ZERO,
     };
 
     assert_eq!(
@@ -271,6 +275,7 @@ fn render_key_tracks_countdown_state_without_hash_collisions() {
         break_remaining: Duration::from_secs(180),
         today_sitting: Duration::from_secs(10),
         running: true,
+        overdue_by: Duration::ZERO,
     };
     let same = timer_render_key(
         snapshot,
@@ -502,4 +507,83 @@ fn overdue_controls_still_beat_snooze() {
         hit_control(TimerShape::Card, true, VisibleState::Overdue, 1.0, px, py),
         Some(Hit::Pause)
     );
+}
+
+fn snap(state: VisibleState) -> Snapshot {
+    Snapshot {
+        state,
+        sitting_elapsed: Duration::from_secs(3600 + 7 * 60 + 30),
+        timer_remaining: Duration::ZERO,
+        break_elapsed: Duration::ZERO,
+        break_remaining: Duration::from_secs(180),
+        today_sitting: Duration::ZERO,
+        running: true,
+        overdue_by: Duration::from_secs(7 * 60 + 30),
+    }
+}
+
+#[test]
+fn tag_shows_goal_overdue_minutes_break_length_or_away() {
+    let limit = Duration::from_secs(3600);
+    let brk = Duration::from_secs(300);
+    assert_eq!(
+        unseat::tag_text(snap(VisibleState::Sitting), limit, brk),
+        ("60".to_string(), "min")
+    );
+    assert_eq!(
+        unseat::tag_text(snap(VisibleState::Overdue), limit, brk),
+        ("+7".to_string(), "over")
+    );
+    assert_eq!(
+        unseat::tag_text(snap(VisibleState::Break), limit, brk),
+        ("5".to_string(), "break")
+    );
+    assert_eq!(
+        unseat::tag_text(snap(VisibleState::Away), limit, brk).1,
+        "away"
+    );
+}
+
+#[test]
+fn render_key_changes_with_overdue_minutes_and_dpi_but_not_every_overdue_second() {
+    let key = |s: Snapshot, scale: f32| {
+        timer_render_key(s, TimerDisplayMode::Countdown, TimerShape::Capsule, WidgetSize::Small, false, true)
+            .at_scale(scale)
+    };
+    let a = snap(VisibleState::Overdue);
+    let mut b = a;
+    b.overdue_by += Duration::from_secs(5);
+    let mut c = a;
+    c.overdue_by += Duration::from_secs(60);
+    assert_eq!(key(a, 1.0), key(b, 1.0));
+    assert_ne!(key(a, 1.0), key(c, 1.0));
+    assert_ne!(key(a, 1.0), key(a, 1.5));
+}
+
+#[test]
+fn status_line_reads_naturally_in_every_state() {
+    let mut s = snap(VisibleState::Sitting);
+    s.timer_remaining = Duration::from_secs(12 * 60 + 1);
+    assert_eq!(unseat::status_line(s), "13 min left");
+    s.timer_remaining = Duration::from_secs(12 * 60);
+    assert_eq!(unseat::status_line(s), "12 min left");
+    s.timer_remaining = Duration::from_secs(30);
+    assert_eq!(unseat::status_line(s), "Under a minute left");
+    assert_eq!(unseat::status_line(snap(VisibleState::Overdue)), "Overdue by 7 min");
+    let mut just = snap(VisibleState::Overdue);
+    just.overdue_by = Duration::from_secs(20);
+    assert_eq!(unseat::status_line(just), "Time to stand up");
+    assert_eq!(unseat::status_line(snap(VisibleState::Paused)), "Paused");
+    assert!(unseat::status_line(snap(VisibleState::Away)).starts_with("Away"));
+    assert_eq!(unseat::status_line(snap(VisibleState::Break)), "On break · 3 min left");
+}
+
+#[test]
+fn dragging_snaps_to_nearby_work_area_edges_only() {
+    let work = (0, 0, 1920, 1040);
+    assert_eq!(unseat::snap_to_edges(8, 500, 144, 56, work, 12), (0, 500));
+    assert_eq!(unseat::snap_to_edges(1770, 990, 144, 56, work, 12), (1776, 984));
+    assert_eq!(unseat::snap_to_edges(400, 300, 144, 56, work, 12), (400, 300));
+    let second_monitor = (-1280, 200, 0, 1224);
+    assert_eq!(unseat::snap_to_edges(-1275, 210, 144, 56, second_monitor, 12), (-1280, 200));
 }

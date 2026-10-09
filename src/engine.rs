@@ -79,6 +79,8 @@ pub struct Snapshot {
     pub break_remaining: Duration,
     pub today_sitting: Duration,
     pub running: bool,
+    /// How far past the (snoozed) limit the session is; zero until it completes.
+    pub overdue_by: Duration,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -246,6 +248,7 @@ impl SittingEngine {
                 .saturating_sub(self.break_elapsed),
             today_sitting: self.today_sitting,
             running: self.running,
+            overdue_by: self.sitting_elapsed.saturating_sub(self.effective_limit()),
         }
     }
 

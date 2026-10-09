@@ -1,11 +1,13 @@
 use crate::win::{
-    flyout, idle, install, paint, session, settings_dlg, sound, testhook, theme, tray, widget,
+    autostart, flyout, hotkeys, idle, install, paint, session, settings_dlg, sound, testhook,
+    theme, tray, widget,
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use unseat::{
-    alert_actions, clamp_clock, next_tick_delay, restored_today_sitting, timer_render_key, Beep, CivilDate, Command, EngineConfig,
-    Input, Settings, SittingEngine, TimerRenderKey, WIDGET_H, WIDGET_W,
+    alert_actions, clamp_clock, format_today, next_tick_delay, restored_today_sitting,
+    status_line, timer_render_key, Beep, CivilDate, Command, EngineConfig, Input, Settings,
+    SittingEngine, ThemePreference, TimerRenderKey, WidgetSize, WIDGET_H, WIDGET_W,
 };
 use windows::core::w;
 use windows::Win32::Foundation::{
@@ -20,15 +22,16 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW, GetMessageW,
     GetWindowLongPtrW, KillTimer, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer,
-    SetWindowLongPtrW, ShowWindow, TranslateMessage, CREATESTRUCTW, GWLP_USERDATA, HWND_MESSAGE,
-    MSG, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_SETTINGCHANGE, WM_TIMER, WM_WTSSESSION_CHANGE,
-    WNDCLASSW, WS_OVERLAPPED,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, CREATESTRUCTW, GWLP_USERDATA,
+    HWND_MESSAGE, HWND_NOTOPMOST, HWND_TOPMOST, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_HOTKEY,
+    WM_TIMER, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_OVERLAPPED,
 };
 
 const HIDDEN_CLASS: windows::core::PCWSTR = w!("UnseatHidden");
 const TICK_ID: usize = 1;
 const SOUND_ID: usize = 2;
-const SINGLETON: windows::core::PCWSTR = w!("Local\\UnseatSingleton");
+const SAVE_EVERY: Duration = Duration::from_secs(60);
 
 pub struct App {
     pub engine: SittingEngine,
@@ -42,14 +45,16 @@ pub struct App {
     pub dragging: bool,
     pub drag_dx: i32,
     pub drag_dy: i32,
-    pub dark: bool,
+    /// Windows "apps use dark theme"; the effective theme also honors the user's choice.
+    pub system_dark: bool,
     pub tray_added: bool,
-    pub tray_retried: bool,
     pub d2d: Option<paint::D2d>,
     last_key: Option<TimerRenderKey>,
     last_save_at: Duration,
     last_tray_select: Option<Instant>,
     last_clock: Option<Duration>,
+    last_tip: String,
+    hotkeys_on: bool,
     pub widget_visible: bool,
     pub suspended: bool,
 }
@@ -58,19 +63,15 @@ pub fn run() -> windows::core::Result<()> {
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         install::set_aumid();
-        let mutex = CreateMutexW(None, true, SINGLETON)?;
+        let mutex = CreateMutexW(None, true, &testhook::singleton())?;
         if GetLastError() == ERROR_ALREADY_EXISTS {
-            if let Ok(existing) = FindWindowW(widget::CLASS, None) {
-                let _ = ShowWindow(
-                    existing,
-                    windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
-                );
+            // A second launch just brings the running overlay forward.
+            if let Ok(existing) = FindWindowW(widget::CLASS, &testhook::title("Unseat")) {
+                let _ = ShowWindow(existing, SW_SHOWNOACTIVATE);
                 let _ = SetForegroundWindow(existing);
             }
-            if let Ok(host) = FindWindowW(HIDDEN_CLASS, None) {
-                let _ = SetForegroundWindow(host);
-            }
             let _ = ReleaseMutex(mutex);
+            let _ = CloseHandle(mutex);
             return Ok(());
         }
 
@@ -85,6 +86,10 @@ pub fn run() -> windows::core::Result<()> {
         let saved_date = CivilDate::parse_ymd(&settings.today_date).unwrap_or(today);
         let wall_now = wall_now_secs();
         let saved_today = Duration::from_secs(settings.today_sitting_secs);
+        if saved_date != today {
+            let date = settings.today_date.clone();
+            settings.archive_day(&date, saved_today.as_secs());
+        }
         let today_sitting = settings.timer_checkpoint.map_or_else(
             || {
                 if saved_date == today {
@@ -125,14 +130,15 @@ pub fn run() -> windows::core::Result<()> {
             dragging: false,
             drag_dx: 0,
             drag_dy: 0,
-            dark: theme::apps_use_dark(),
+            system_dark: theme::apps_use_dark(),
             tray_added: false,
-            tray_retried: false,
             d2d: paint::D2d::new(),
             last_key: None,
             last_save_at: Duration::ZERO,
             last_tray_select: None,
             last_clock: None,
+            last_tip: String::new(),
+            hotkeys_on: false,
             widget_visible: true,
             suspended: false,
         });
@@ -141,7 +147,7 @@ pub fn run() -> windows::core::Result<()> {
         let hidden = CreateWindowExW(
             Default::default(),
             HIDDEN_CLASS,
-            w!("Unseat"),
+            &testhook::title("Unseat"),
             WS_OVERLAPPED,
             0,
             0,
@@ -157,12 +163,16 @@ pub fn run() -> windows::core::Result<()> {
         if SetTimer(hidden, TICK_ID, 1000, None) == 0 {
             let error = windows::core::Error::from_win32();
             let _ = DestroyWindow(hidden);
-            let _ = Box::from_raw(ptr);
+            drop(Box::from_raw(ptr));
             let _ = ReleaseMutex(mutex);
             let _ = CloseHandle(mutex);
             return Err(error);
         }
-        (*ptr).tray_added = tray::add(hidden);
+        (*ptr).add_tray();
+        (*ptr).sync_hotkeys();
+        if (*ptr).settings.launch_with_windows {
+            autostart::repair();
+        }
 
         let (x, y) = widget::clamp_to_work_area(
             (*ptr).settings.window_x,
@@ -171,6 +181,7 @@ pub fn run() -> windows::core::Result<()> {
             WIDGET_H as i32,
         );
         (*ptr).widget = widget::create(ptr, x, y)?;
+        (*ptr).apply_topmost();
         (*ptr).repaint();
         (*ptr).tick();
 
@@ -179,14 +190,16 @@ pub fn run() -> windows::core::Result<()> {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        (*ptr).persist_today();
         sound::stop();
+        hotkeys::unregister(hidden);
         session::unregister(hidden);
         let _ = KillTimer(hidden, TICK_ID);
         let _ = KillTimer(hidden, SOUND_ID);
         flyout::shutdown();
         settings_dlg::shutdown();
         tray::remove(hidden);
-        let _ = Box::from_raw(ptr);
+        drop(Box::from_raw(ptr));
         let _ = ReleaseMutex(mutex);
         let _ = CloseHandle(mutex);
         Ok(())
@@ -210,13 +223,16 @@ impl App {
         }
     }
 
+    pub fn is_dark(&self) -> bool {
+        self.settings.theme.is_dark(self.system_dark)
+    }
+
     fn handle_beep(&mut self, beep: Beep) {
         if beep == Beep::None {
             return;
         }
         testhook::log(&format!("alert {beep:?}"));
-        let snapshot = self.engine.snapshot();
-        let actions = alert_actions(beep, &self.settings, snapshot.sitting_elapsed);
+        let actions = alert_actions(beep, &self.settings, self.engine.snapshot().sitting_elapsed);
         if actions.play_sound {
             self.play_alert_sound();
         }
@@ -225,7 +241,18 @@ impl App {
         }
     }
 
+    /// Archive yesterday's total before the engine rolls `today` over at midnight.
+    fn archive_if_new_day(&mut self) {
+        let today = local_date().to_ymd_string();
+        if self.settings.today_date != today {
+            let date = std::mem::replace(&mut self.settings.today_date, today);
+            let total = self.engine.snapshot().today_sitting.as_secs();
+            self.settings.archive_day(&date, total);
+        }
+    }
+
     pub fn sync_engine_clock(&mut self) {
+        self.archive_if_new_day();
         let now = self.clock_now();
         let input = self.current_input();
         let result = self.engine.tick(now, local_date(), input);
@@ -233,13 +260,19 @@ impl App {
     }
 
     pub fn apply_engine_command(&mut self, command: Command) {
+        self.archive_if_new_day();
         let now = self.clock_now();
         let input = self.current_input();
         let result = self.engine.apply_at(command, now, local_date(), input);
+        testhook::log(&format!("command {command:?}"));
         match command {
             Command::Reset | Command::Snooze(_) | Command::StartBreak => self.stop_alert_sound(),
             Command::TogglePause => self.handle_beep(result.beep),
         }
+        self.persist_today();
+        self.update_tray();
+        self.repaint();
+        self.schedule_tick(&self.engine.snapshot());
     }
 
     pub fn on_suspend(&mut self) {
@@ -247,33 +280,31 @@ impl App {
         self.suspended = true;
         self.sync_engine_clock();
         self.persist_today();
+        testhook::log("power suspend");
     }
 
     pub fn on_resume(&mut self) {
         self.sync_engine_clock();
         self.suspended = false;
-        self.sync_engine_clock();
+        testhook::log("power resume");
+        self.tick();
         self.force_repaint();
     }
 
     pub fn tick(&mut self) {
+        self.archive_if_new_day();
         let now = self.clock_now();
         let input = self.current_input();
         let result = self.engine.tick(now, local_date(), input);
         self.handle_beep(result.beep);
-        if now.saturating_sub(self.last_save_at) >= Duration::from_secs(60) {
+        if now.saturating_sub(self.last_save_at) >= SAVE_EVERY {
             self.persist_today();
             self.last_save_at = now;
         }
-        if !self.tray_added && !self.tray_retried {
-            self.tray_added = tray::add(self.hidden);
-            self.tray_retried = true;
+        if !self.tray_added {
+            self.add_tray();
         }
-        tray::update(
-            self.hidden,
-            result.snapshot.today_sitting,
-            result.snapshot.running,
-        );
+        self.update_tray();
         self.repaint();
         self.schedule_tick(&result.snapshot);
     }
@@ -283,6 +314,65 @@ impl App {
         let delay = next_tick_delay(snapshot).as_millis() as u32;
         unsafe {
             let _ = SetTimer(self.hidden, TICK_ID, delay, None);
+        }
+    }
+
+    pub fn add_tray(&mut self) {
+        self.tray_added = tray::add(self.hidden);
+        self.last_tip.clear();
+        testhook::log(&format!("tray added={}", self.tray_added));
+        self.update_tray();
+    }
+
+    /// Update the tooltip only when its text changes; it is a cross-process call to Explorer.
+    fn update_tray(&mut self) {
+        if !self.tray_added {
+            return;
+        }
+        let snap = self.engine.snapshot();
+        let tip = format!("Unseat · {}\n{}", status_line(snap), format_today(snap.today_sitting));
+        if tip != self.last_tip {
+            tray::set_tip(self.hidden, &tip);
+            self.last_tip = tip;
+        }
+    }
+
+    pub fn show_flyout(&self) {
+        let snap = self.engine.snapshot();
+        flyout::show(
+            self.hidden,
+            &status_line(snap),
+            &format_today(snap.today_sitting),
+            self.is_dark(),
+        );
+    }
+
+    pub fn sync_hotkeys(&mut self) {
+        if self.settings.hotkeys_enabled && !self.hotkeys_on {
+            hotkeys::register(self.hidden);
+            self.hotkeys_on = true;
+        } else if !self.settings.hotkeys_enabled && self.hotkeys_on {
+            hotkeys::unregister(self.hidden);
+            self.hotkeys_on = false;
+        }
+    }
+
+    fn on_hotkey(&mut self, action: hotkeys::Action) {
+        testhook::log(&format!("hotkey {action:?}"));
+        match action {
+            hotkeys::Action::TogglePause => self.apply_engine_command(Command::TogglePause),
+            hotkeys::Action::Reset => self.apply_engine_command(Command::Reset),
+            hotkeys::Action::Snooze => self.snooze_default(),
+            hotkeys::Action::Break => self.toggle_break(),
+            hotkeys::Action::ToggleOverlay => self.toggle_widget(),
+        }
+    }
+
+    pub fn toggle_break(&mut self) {
+        if self.engine.on_break() {
+            self.apply_engine_command(Command::Reset);
+        } else {
+            self.apply_engine_command(Command::StartBreak);
         }
     }
 
@@ -299,7 +389,7 @@ impl App {
         };
         let topmost = ex as u32 & windows::Win32::UI::WindowsAndMessaging::WS_EX_TOPMOST.0 != 0;
         testhook::log(&format!(
-            "state {:?} sitting={} remaining={} break={} today={} running={} visible={} topmost={} rect={},{},{},{} tray={}",
+            "state {:?} sitting={} remaining={} break={} today={} running={} visible={} topmost={} rect={},{},{},{} tray={} hotkeys={} dark={}",
             snap.state,
             snap.sitting_elapsed.as_secs(),
             snap.timer_remaining.as_secs(),
@@ -313,6 +403,8 @@ impl App {
             rc.right,
             rc.bottom,
             self.tray_added,
+            self.hotkeys_on,
+            self.is_dark(),
         ));
     }
 
@@ -328,38 +420,96 @@ impl App {
         let _ = self.settings.save_to(&self.settings_path);
     }
 
+    /// Show the size, theme and always-on-top choices on the overlay without saving them.
+    pub fn preview_appearance(&mut self, size: WidgetSize, theme: ThemePreference, on_top: bool) {
+        self.settings.widget_size = size;
+        self.settings.theme = theme;
+        self.settings.always_on_top = on_top;
+        self.apply_topmost();
+        self.force_repaint();
+    }
+
+    /// Adopt preferences saved from the settings window. Live state that changed while the
+    /// window was open (position, today's total, the running timer, history) is kept.
+    pub fn apply_settings(&mut self, next: Settings) {
+        self.sync_engine_clock();
+        if next.launch_with_windows != autostart::is_enabled() {
+            autostart::apply(next.launch_with_windows);
+        }
+        let mut merged = next;
+        merged.window_x = self.settings.window_x;
+        merged.window_y = self.settings.window_y;
+        merged.today_date = self.settings.today_date.clone();
+        merged.today_sitting_secs = self.settings.today_sitting_secs;
+        merged.timer_checkpoint = self.settings.timer_checkpoint;
+        merged.history = std::mem::take(&mut self.settings.history);
+        merged.clamp();
+        self.settings = merged;
+        self.engine
+            .set_config(EngineConfig::from_settings(&self.settings));
+        self.sync_engine_clock();
+        self.sync_hotkeys();
+        self.apply_topmost();
+        self.persist_today();
+        self.last_tip.clear();
+        self.update_tray();
+        self.force_repaint();
+        testhook::log("settings saved");
+    }
+
+    pub fn apply_topmost(&self) {
+        let after = if self.settings.always_on_top {
+            HWND_TOPMOST
+        } else {
+            HWND_NOTOPMOST
+        };
+        unsafe {
+            let _ = SetWindowPos(
+                self.widget,
+                after,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+    }
+
     pub fn hide_widget(&mut self) {
         self.widget_visible = false;
         self.hover = false;
         self.persist_today();
         unsafe {
-            let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
-                self.widget,
-                windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE,
-            );
+            let _ = ShowWindow(self.widget, SW_SHOWMINNOACTIVE);
         }
     }
 
     pub fn show_widget(&mut self) {
         self.widget_visible = true;
         unsafe {
-            let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
+            let _ = ShowWindow(self.widget, SW_SHOWNOACTIVATE);
+            // Raise above everything, then drop back to normal level if not always on top.
+            let _ = SetWindowPos(
                 self.widget,
-                windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
-            );
-            let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowPos(
-                self.widget,
-                windows::Win32::UI::WindowsAndMessaging::HWND_TOPMOST,
+                HWND_TOPMOST,
                 0,
                 0,
                 0,
                 0,
-                windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
-                    | windows::Win32::UI::WindowsAndMessaging::SWP_NOSIZE
-                    | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             );
         }
+        self.apply_topmost();
         self.force_repaint();
+    }
+
+    pub fn toggle_widget(&mut self) {
+        if self.widget_visible {
+            self.hide_widget();
+        } else {
+            self.show_widget();
+        }
     }
 
     pub fn force_repaint(&mut self) {
@@ -369,14 +519,17 @@ impl App {
 
     pub fn repaint(&mut self) {
         let snap = self.engine.snapshot();
+        let scale = widget::paint_scale(self.widget, self.settings.widget_size);
+        let dark = self.is_dark();
         let key = timer_render_key(
             snap,
             self.settings.timer_display_mode,
             self.settings.timer_shape,
             self.settings.widget_size,
             self.hover,
-            self.dark,
-        );
+            dark,
+        )
+        .at_scale(scale);
         if self.last_key == Some(key) {
             return;
         }
@@ -392,20 +545,12 @@ impl App {
             self.settings.timer_shape,
             self.settings.timer_display_mode,
             snap,
-            self.dark,
+            dark,
             self.hover,
             Duration::from_secs(self.settings.sitting_limit_secs),
             Duration::from_secs(self.settings.break_duration_secs),
-            widget::paint_scale(self.widget, self.settings.widget_size),
+            scale,
         );
-        if self.widget_visible {
-            unsafe {
-                let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
-                    self.widget,
-                    windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
-                );
-            }
-        }
     }
 
     pub fn snooze_default(&mut self) {
@@ -415,7 +560,6 @@ impl App {
     pub fn snooze(&mut self, secs: u64) {
         self.settings.snooze_secs = secs;
         self.settings.clamp();
-        self.stop_alert_sound();
         self.apply_engine_command(Command::Snooze(Duration::from_secs(
             self.settings.snooze_secs,
         )));
@@ -456,26 +600,30 @@ impl App {
         match id {
             tray::ID_PAUSE => self.apply_engine_command(Command::TogglePause),
             tray::ID_RESET => self.apply_engine_command(Command::Reset),
+            tray::ID_BREAK => self.toggle_break(),
             tray::ID_SNOOZE_5 => self.snooze(5 * 60),
             tray::ID_SNOOZE_10 => self.snooze(10 * 60),
             tray::ID_SNOOZE_15 => self.snooze(15 * 60),
             tray::ID_SNOOZE_30 => self.snooze(30 * 60),
             tray::ID_SNOOZE_CUSTOM => self.snooze_default(),
             tray::ID_SETTINGS => settings_dlg::open(self as *mut App),
-            tray::ID_HIDE => {
-                if self.widget_visible {
-                    self.hide_widget();
-                } else {
-                    self.show_widget();
-                }
-            }
+            tray::ID_HIDE => self.toggle_widget(),
             tray::ID_QUIT => unsafe {
+                self.persist_today();
                 PostQuitMessage(0);
             },
             _ => {}
         }
-        self.persist_today();
-        self.repaint();
+    }
+
+    /// The system theme changed (WM_SETTINGCHANGE "ImmersiveColorSet").
+    pub fn on_theme_change(&mut self) {
+        let dark = theme::apps_use_dark();
+        if dark != self.system_dark {
+            self.system_dark = dark;
+            self.force_repaint();
+            settings_dlg::refresh();
+        }
     }
 }
 
@@ -484,7 +632,7 @@ fn settings_file() -> PathBuf {
     PathBuf::from(appdata).join("Unseat").join("settings.json")
 }
 
-fn local_date() -> CivilDate {
+pub fn local_date() -> CivilDate {
     unsafe {
         let st = GetLocalTime();
         CivilDate {
@@ -524,6 +672,9 @@ fn register_hidden() -> windows::core::Result<()> {
     }
 }
 
+/// The message-only window owns the update timer, tray icon, hotkeys and session events.
+/// It never receives broadcasts; those (theme, Explorer restart, power, shutdown) go to the
+/// overlay window in `widget.rs`.
 unsafe extern "system" fn hidden_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if msg == WM_CREATE {
         let cs = lp.0 as *const CREATESTRUCTW;
@@ -550,10 +701,16 @@ unsafe extern "system" fn hidden_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             (*app).command(wp.0 as u32 & 0xFFFF);
             LRESULT(0)
         }
+        WM_HOTKEY => {
+            if let Some(action) = hotkeys::action(wp.0) {
+                (*app).on_hotkey(action);
+            }
+            LRESULT(0)
+        }
         tray::CALLBACK => {
             let tmsg = tray::lparam_msg(lp);
             if tray::is_popup_open(tmsg) {
-                tray::show_flyout(&*app, hwnd);
+                (*app).show_flyout();
             } else if tray::is_popup_close(tmsg) {
                 flyout::hide();
             } else if tray::is_balloon_click(tmsg) {
@@ -579,14 +736,9 @@ unsafe extern "system" fn hidden_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         WM_WTSSESSION_CHANGE => {
             (*app).sync_engine_clock();
             (*app).locked = session::lock_state_for_event((*app).locked, wp.0);
-            (*app).sync_engine_clock();
+            testhook::log(&format!("session locked={}", (*app).locked));
+            (*app).tick();
             (*app).force_repaint();
-            LRESULT(0)
-        }
-        WM_SETTINGCHANGE => {
-            (*app).dark = theme::apps_use_dark();
-            (*app).last_key = None;
-            (*app).repaint();
             LRESULT(0)
         }
         WM_DESTROY => {

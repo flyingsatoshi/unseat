@@ -17,6 +17,8 @@ pub const WIDGET_H: f32 = 56.0;
 pub struct TimerRenderKey {
     timer_display_mode: TimerDisplayMode,
     face_secs: u64,
+    overdue_mins: u64,
+    scale_milli: u32,
     break_remaining_secs: u64,
     state: VisibleState,
     shape: TimerShape,
@@ -36,12 +38,22 @@ pub fn timer_render_key(
     TimerRenderKey {
         timer_display_mode,
         face_secs: timer_face_seconds(timer_display_mode, snapshot),
+        overdue_mins: snapshot.overdue_by.as_secs() / 60,
+        scale_milli: 0,
         break_remaining_secs: countdown_secs(snapshot.break_remaining),
         state: snapshot.state,
         shape,
         size,
         hover,
         dark,
+    }
+}
+
+impl TimerRenderKey {
+    /// Include the paint scale so a DPI change (moving to another monitor) repaints at once.
+    pub fn at_scale(mut self, scale: f32) -> Self {
+        self.scale_milli = (scale * 1000.0).round() as u32;
+        self
     }
 }
 
@@ -271,6 +283,17 @@ pub fn tag_goal(_state: VisibleState, limit: Duration, _break_dur: Duration) -> 
     limit
 }
 
+/// The overlay's right-hand tag: the session goal normally, how far over when overdue, the
+/// break length during a break, and "away" while paused for inactivity.
+pub fn tag_text(snapshot: Snapshot, limit: Duration, break_dur: Duration) -> (String, &'static str) {
+    match snapshot.state {
+        VisibleState::Overdue => (format!("+{}", snapshot.overdue_by.as_secs() / 60), "over"),
+        VisibleState::Break => ((break_dur.as_secs() / 60).to_string(), "break"),
+        VisibleState::Away => (format_goal_parts(limit).0, "away"),
+        VisibleState::Sitting | VisibleState::Paused => format_goal_parts(limit),
+    }
+}
+
 pub fn format_limit(d: Duration) -> String {
     let (n, unit) = format_goal_parts(d);
     format!("{n} {unit}")
@@ -338,4 +361,51 @@ pub fn progress(
             (sitting.as_secs_f32() / denom).clamp(0.0, 1.0)
         }
     }
+}
+
+fn ceil_minutes(d: Duration) -> u64 {
+    d.as_secs().div_ceil(60) + u64::from(d.as_secs() % 60 == 0 && d.subsec_nanos() != 0)
+}
+
+/// One-line status for the tray tooltip and flyout. Minute resolution, so the tooltip only
+/// changes about once a minute.
+pub fn status_line(snapshot: Snapshot) -> String {
+    match snapshot.state {
+        VisibleState::Sitting => match ceil_minutes(snapshot.timer_remaining) {
+            0 | 1 => "Under a minute left".to_string(),
+            m => format!("{m} min left"),
+        },
+        VisibleState::Overdue => match snapshot.overdue_by.as_secs() / 60 {
+            0 => "Time to stand up".to_string(),
+            m => format!("Overdue by {m} min"),
+        },
+        VisibleState::Paused => "Paused".to_string(),
+        VisibleState::Away => "Away · timer paused".to_string(),
+        VisibleState::Break => match ceil_minutes(snapshot.break_remaining) {
+            0 | 1 => "On break · under a minute left".to_string(),
+            m => format!("On break · {m} min left"),
+        },
+    }
+}
+
+/// Snap a dragged window to the work-area edges when it comes within `threshold` pixels.
+pub fn snap_to_edges(
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    work: (i32, i32, i32, i32),
+    threshold: i32,
+) -> (i32, i32) {
+    let (left, top, right, bottom) = work;
+    let snap = |pos: i32, size: i32, lo: i32, hi: i32| {
+        if (pos - lo).abs() <= threshold {
+            lo
+        } else if (pos + size - hi).abs() <= threshold {
+            hi - size
+        } else {
+            pos
+        }
+    };
+    (snap(x, w, left, right), snap(y, h, top, bottom))
 }

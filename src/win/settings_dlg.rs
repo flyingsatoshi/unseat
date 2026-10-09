@@ -1,54 +1,94 @@
+//! Settings window: four tabs of grouped rows, drawn with Direct2D.
+//!
+//! The UI is data-driven: `sections()` lists each tab's rows, `layout()` turns them into
+//! rectangles, and painting, hit testing and keyboard focus all walk the same layout, so a
+//! control is defined once. The dialog edits a draft copy of the settings; size, theme and
+//! always-on-top preview live on the overlay and revert on Cancel.
+
 use crate::win::app::App;
+use crate::win::gfx::{self, glyph, Family, Fonts};
 use unseat::{
-    format_today, AlertSound, InactivityBehavior, TimerDisplayMode, WidgetSize,
+    average_secs, format_today_hm, palette, recent_days, weekday_initial, AlertSound, CivilDate,
+    InactivityBehavior, Palette, Rgba, Settings, ThemePreference, TimerDisplayMode, WidgetSize,
     ALERT_DURATION_PRESETS_SECS, SNOOZE_PRESETS_SECS,
 };
 use windows::core::{w, Interface};
 use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
+    D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1RenderTarget,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
+    D2D1_ANTIALIAS_MODE_ALIASED, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
     D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
+    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
 };
-use windows::Win32::Graphics::DirectWrite::{
-    DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED,
-    DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_MEDIUM,
-    DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
-    DWRITE_TEXT_ALIGNMENT, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
-    DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_WORD_WRAPPING_NO_WRAP,
-};
+use windows::Win32::Graphics::DirectWrite::{DWriteCreateFactory, DWRITE_FACTORY_TYPE_SHARED};
 use windows::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
+    DWMWCP_ROUND,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, EndPaint, GetMonitorInfoW, InvalidateRect, MonitorFromWindow, ScreenToClient,
+    BeginPaint, EndPaint, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, ScreenToClient,
     MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_RETURN};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+    VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT, VK_NEXT, VK_PRIOR,
+    VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW, GetClientRect, GetWindowLongPtrW,
-    RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    GWLP_USERDATA, HTCAPTION, HTCLIENT, HWND_TOPMOST, SWP_NOACTIVATE, SW_SHOW, WM_CLOSE, WM_CREATE,
-    WM_DESTROY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW, GetClientRect, GetCursorPos,
+    GetWindowLongPtrW, LoadCursorW, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, CREATESTRUCTW, GWLP_USERDATA, HTCAPTION, HTCLIENT, HWND_TOPMOST,
+    IDC_ARROW, SWP_NOACTIVATE, SW_SHOW, WM_CHAR, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_DPICHANGED,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT,
+    WM_SYSKEYDOWN, WNDCLASSW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 pub const CLASS: windows::core::PCWSTR = w!("UnseatSettings");
 
-const WIN_W: i32 = 300;
-const WIN_H: i32 = 876;
-const BTN_RADIUS: f32 = 4.0;
+const WIN_W: f32 = 380.0;
+const PAD: f32 = 16.0;
+const HEADER_H: f32 = 50.0;
+const TABS_H: f32 = 32.0;
+const BODY_TOP: f32 = HEADER_H + TABS_H + 10.0;
+const FOOTER_H: f32 = 60.0;
+const SECTION_HEAD: f32 = 26.0;
+const SECTION_GAP: f32 = 10.0;
 const WORK_AREA_MARGIN: i32 = 12;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tab {
+    Timer,
+    Breaks,
+    Alerts,
+    General,
+}
+
+impl Tab {
+    const ALL: [Self; 4] = [Self::Timer, Self::Breaks, Self::Alerts, Self::General];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Timer => "Timer",
+            Self::Breaks => "Breaks",
+            Self::Alerts => "Alerts",
+            Self::General => "General",
+        }
+    }
+
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|&t| t == self).unwrap_or(0)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Field {
     Limit,
     Step,
@@ -62,78 +102,835 @@ impl Field {
     fn unit(self) -> &'static str {
         match self {
             Self::Idle => "sec",
-            Self::Step => "",
             _ => "min",
         }
     }
 
-    fn min(self) -> u64 {
+    fn range(self) -> (u64, u64) {
         match self {
-            Self::Limit => 5,
-            Self::Step => 1,
-            Self::Break => 1,
-            Self::Idle => 15,
-            Self::Every => 2,
-            Self::Snooze => 1,
+            Self::Limit => (5, 240),
+            Self::Step => (1, 30),
+            Self::Break => (1, 30),
+            Self::Idle => (15, 600),
+            Self::Every => (2, 60),
+            Self::Snooze => (1, 60),
         }
     }
 
-    fn max(self) -> u64 {
+    fn get(self, s: &Settings) -> u64 {
         match self {
-            Self::Limit => 240,
-            Self::Step => 30,
-            Self::Break => 30,
-            Self::Idle => 600,
-            Self::Every => 60,
-            Self::Snooze => 60,
+            Self::Limit => s.sitting_limit_secs / 60,
+            Self::Step => s.step,
+            Self::Break => s.break_duration_secs / 60,
+            Self::Idle => s.idle_after_secs,
+            Self::Every => s.repeat_every_secs / 60,
+            Self::Snooze => s.snooze_secs / 60,
+        }
+    }
+
+    fn set(self, s: &mut Settings, v: u64) {
+        let (lo, hi) = self.range();
+        let v = v.clamp(lo, hi);
+        match self {
+            Self::Limit => s.sitting_limit_secs = v * 60,
+            Self::Step => s.step = v,
+            Self::Break => s.break_duration_secs = v * 60,
+            Self::Idle => s.idle_after_secs = v,
+            Self::Every => s.repeat_every_secs = v * 60,
+            Self::Snooze => s.snooze_secs = v * 60,
+        }
+    }
+
+    /// The limit moves by the user's adjust step; seconds move by 5; others by 1.
+    fn delta(self, s: &Settings) -> u64 {
+        match self {
+            Self::Limit => s.step.max(1),
+            Self::Idle => 5,
+            _ => 1,
         }
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Hit {
-    None,
-    Close,
-    Size(usize),
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Flag {
+    PauseInactive,
     Sound,
-    Preview,
-    SoundKind(usize),
-    Duration(usize),
-    SnoozePreset(usize),
-    TimerDisplay(usize),
-    Inactivity(usize),
     Repeat,
+    Notify,
     Auto,
+    OnTop,
+    Hotkeys,
+    Stats,
+}
+
+impl Flag {
+    fn get(self, s: &Settings) -> bool {
+        match self {
+            Self::PauseInactive => s.inactivity_behavior == InactivityBehavior::Pause,
+            Self::Sound => s.sound_enabled,
+            Self::Repeat => s.repeat_reminders,
+            Self::Notify => s.notify_enabled,
+            Self::Auto => s.launch_with_windows,
+            Self::OnTop => s.always_on_top,
+            Self::Hotkeys => s.hotkeys_enabled,
+            Self::Stats => s.stats_enabled,
+        }
+    }
+
+    fn set(self, s: &mut Settings, on: bool) {
+        match self {
+            Self::PauseInactive => {
+                s.inactivity_behavior = if on {
+                    InactivityBehavior::Pause
+                } else {
+                    InactivityBehavior::Continue
+                }
+            }
+            Self::Sound => s.sound_enabled = on,
+            Self::Repeat => s.repeat_reminders = on,
+            Self::Notify => s.notify_enabled = on,
+            Self::Auto => s.launch_with_windows = on,
+            Self::OnTop => s.always_on_top = on,
+            Self::Hotkeys => s.hotkeys_enabled = on,
+            Self::Stats => s.stats_enabled = on,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Group {
+    Display,
+    Size,
+    SoundKind,
+    Length,
+    Snooze,
+    Theme,
+}
+
+impl Group {
+    fn options(self) -> Vec<String> {
+        match self {
+            Self::Display => TimerDisplayMode::ALL
+                .iter()
+                .map(|m| m.chip_label().to_string())
+                .collect(),
+            Self::Size => WidgetSize::ALL
+                .iter()
+                .map(|s| s.chip_label().to_string())
+                .collect(),
+            Self::SoundKind => AlertSound::ALL
+                .iter()
+                .map(|s| s.chip_label().to_string())
+                .collect(),
+            Self::Length => ALERT_DURATION_PRESETS_SECS
+                .iter()
+                .map(|&s| if s == 0 { "Once".into() } else { format!("{s}s") })
+                .collect(),
+            Self::Snooze => SNOOZE_PRESETS_SECS
+                .iter()
+                .map(|s| format!("{}m", s / 60))
+                .collect(),
+            Self::Theme => ThemePreference::ALL
+                .iter()
+                .map(|t| t.chip_label().to_string())
+                .collect(),
+        }
+    }
+
+    fn segment_w(self) -> f32 {
+        match self {
+            Self::Display => 84.0,
+            Self::Size => 36.0,
+            Self::Length | Self::Snooze => 46.0,
+            Self::Theme => 64.0,
+            Self::SoundKind => 0.0,
+        }
+    }
+
+    /// Selected option, or `None` when the value matches no preset (custom snooze).
+    fn get(self, s: &Settings) -> Option<usize> {
+        match self {
+            Self::Display => TimerDisplayMode::ALL
+                .iter()
+                .position(|&m| m == s.timer_display_mode),
+            Self::Size => Some(s.widget_size.index()),
+            Self::SoundKind => Some(s.alert_sound.index()),
+            Self::Length => ALERT_DURATION_PRESETS_SECS
+                .iter()
+                .position(|&d| d == s.alert_duration_secs),
+            Self::Snooze => SNOOZE_PRESETS_SECS.iter().position(|&d| d == s.snooze_secs),
+            Self::Theme => ThemePreference::ALL.iter().position(|&t| t == s.theme),
+        }
+    }
+
+    fn set(self, s: &mut Settings, i: usize) {
+        match self {
+            Self::Display => s.timer_display_mode = TimerDisplayMode::from_index(i),
+            Self::Size => s.widget_size = WidgetSize::from_index(i),
+            Self::SoundKind => s.alert_sound = AlertSound::from_index(i),
+            Self::Length => {
+                if let Some(&d) = ALERT_DURATION_PRESETS_SECS.get(i) {
+                    s.alert_duration_secs = d;
+                }
+            }
+            Self::Snooze => {
+                if let Some(&d) = SNOOZE_PRESETS_SECS.get(i) {
+                    s.snooze_secs = d;
+                }
+            }
+            Self::Theme => s.theme = ThemePreference::from_index(i),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Row {
+    Step(&'static str, Field, Option<&'static str>),
+    Flag(&'static str, Flag, Option<&'static str>),
+    Group(&'static str, Group),
+    /// Options on their own line under the label.
+    WideGroup(&'static str, Group),
+    Volume,
+    Note(&'static str),
+    Stats,
+    Defaults,
+}
+
+impl Row {
+    fn height(self) -> f32 {
+        match self {
+            Row::Step(_, _, Some(_)) | Row::Flag(_, _, Some(_)) => 56.0,
+            Row::Step(..) | Row::Flag(..) | Row::Group(..) => 42.0,
+            Row::WideGroup(..) => 76.0,
+            Row::Volume => 44.0,
+            Row::Note(_) => 46.0,
+            Row::Stats => 112.0,
+            Row::Defaults => 46.0,
+        }
+    }
+}
+
+type Section = (&'static str, &'static [Row]);
+
+fn sections(tab: Tab) -> &'static [Section] {
+    match tab {
+        Tab::Timer => &[
+            (
+                "Session",
+                &[
+                    Row::Step("Sitting limit", Field::Limit, None),
+                    Row::Step(
+                        "Adjust step",
+                        Field::Step,
+                        Some("How far − and + move the limit"),
+                    ),
+                    Row::Group("Display", Group::Display),
+                ],
+            ),
+            (
+                "Overlay",
+                &[
+                    Row::Group("Size", Group::Size),
+                    Row::Flag(
+                        "Always on top",
+                        Flag::OnTop,
+                        Some("Keep the timer above other windows"),
+                    ),
+                ],
+            ),
+        ],
+        Tab::Breaks => &[
+            (
+                "Breaks",
+                &[
+                    Row::Step("Break length", Field::Break, None),
+                    Row::Note(
+                        "Start a break from the tray menu or Ctrl+Alt+Shift+B. A fresh session starts when it ends.",
+                    ),
+                ],
+            ),
+            (
+                "Inactivity",
+                &[
+                    Row::Flag(
+                        "Pause when inactive",
+                        Flag::PauseInactive,
+                        Some("Off: the timer keeps running while you're away"),
+                    ),
+                    Row::Step(
+                        "Inactive after",
+                        Field::Idle,
+                        Some("No input, or a locked screen"),
+                    ),
+                    Row::Note(
+                        "While paused this way, being away for the break length starts a fresh session.",
+                    ),
+                ],
+            ),
+        ],
+        Tab::Alerts => &[
+            (
+                "Sound",
+                &[
+                    Row::Flag("Play a sound", Flag::Sound, None),
+                    Row::WideGroup("Sound", Group::SoundKind),
+                    Row::Volume,
+                    Row::Group("Alert length", Group::Length),
+                ],
+            ),
+            (
+                "Reminders",
+                &[
+                    Row::Flag(
+                        "Show notification",
+                        Flag::Notify,
+                        Some("When time is up and when a break ends"),
+                    ),
+                    Row::Flag("Repeat while overdue", Flag::Repeat, None),
+                    Row::Step("Remind every", Field::Every, None),
+                ],
+            ),
+            (
+                "Snooze",
+                &[
+                    Row::Group("Snooze for", Group::Snooze),
+                    Row::Step("Custom", Field::Snooze, None),
+                ],
+            ),
+        ],
+        Tab::General => &[
+            ("Appearance", &[Row::Group("Theme", Group::Theme)]),
+            (
+                "System",
+                &[
+                    Row::Flag("Launch with Windows", Flag::Auto, None),
+                    Row::Flag(
+                        "Keyboard shortcuts",
+                        Flag::Hotkeys,
+                        Some("Ctrl+Alt+Shift + P, R, S, B or U"),
+                    ),
+                ],
+            ),
+            (
+                "Statistics",
+                &[
+                    Row::Flag(
+                        "Daily statistics",
+                        Flag::Stats,
+                        Some("Kept on this PC for 14 days"),
+                    ),
+                    Row::Stats,
+                ],
+            ),
+            ("", &[Row::Defaults]),
+        ],
+    }
+}
+
+/// A focusable or clickable control.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Ctl {
+    Close,
+    Tabs,
+    Step(Field),
+    Flag(Flag),
+    Group(Group),
+    Volume,
+    Preview,
+    Defaults,
     Cancel,
     Save,
-    Minus(Field),
-    Plus(Field),
+}
+
+/// Which piece of a control the pointer is over.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Part {
+    Whole,
+    Minus,
+    Plus,
+    Option(usize),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Target {
+    ctl: Ctl,
+    part: Part,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TextKind {
+    Title,
+    Head,
+    Label,
+    Hint,
+    Note,
+}
+
+struct Label {
+    text: &'static str,
+    rect: D2D_RECT_F,
+    kind: TextKind,
+    /// Dim the label when this control is disabled.
+    owner: Option<Ctl>,
+}
+
+struct Placed {
+    ctl: Ctl,
+    rect: D2D_RECT_F,
+    parts: Vec<(Part, D2D_RECT_F)>,
+    in_body: bool,
+}
+
+struct Lay {
+    scale: f32,
+    w: f32,
+    h: f32,
+    body_top: f32,
+    body_bottom: f32,
+    content_h: f32,
+    cards: Vec<D2D_RECT_F>,
+    seps: Vec<D2D_RECT_F>,
+    labels: Vec<Label>,
+    controls: Vec<Placed>,
+    stats: Option<D2D_RECT_F>,
+    today: D2D_RECT_F,
+}
+
+impl Lay {
+    fn find(&self, ctl: Ctl) -> Option<&Placed> {
+        self.controls.iter().find(|p| p.ctl == ctl)
+    }
+}
+
+fn px(v: f32, scale: f32) -> f32 {
+    v * scale
+}
+
+fn row_visible(row: Row, draft: &Settings) -> bool {
+    !matches!(row, Row::Stats) || draft.stats_enabled
+}
+
+fn content_height(tab: Tab, draft: &Settings) -> f32 {
+    let mut y = 0.0;
+    for (title, rows) in sections(tab) {
+        if !title.is_empty() {
+            y += SECTION_HEAD;
+        }
+        y += rows
+            .iter()
+            .filter(|r| row_visible(**r, draft))
+            .map(|r| r.height())
+            .sum::<f32>();
+        y += SECTION_GAP;
+    }
+    y + 6.0
+}
+
+/// Window height that fits the tallest tab, so switching tabs never resizes the window.
+fn window_logical_h() -> f32 {
+    let mut tallest = Settings::default();
+    tallest.stats_enabled = true;
+    let body = Tab::ALL
+        .iter()
+        .map(|&t| content_height(t, &tallest))
+        .fold(0.0, f32::max);
+    BODY_TOP + body + FOOTER_H
+}
+
+/// Lay out the chrome and the active tab at `scale` for a `win_h` pixel-tall window,
+/// with the body scrolled by `scroll` pixels.
+fn layout(tab: Tab, draft: &Settings, scale: f32, win_h: f32, scroll: f32) -> Lay {
+    let s = scale;
+    let w = px(WIN_W, s);
+    let h = win_h;
+    let x0 = px(PAD, s);
+    let x1 = w - px(PAD, s);
+    let body_top = px(BODY_TOP, s);
+    let body_bottom = h - px(FOOTER_H, s);
+    let mut labels = Vec::new();
+    let mut controls = Vec::new();
+    let mut cards = Vec::new();
+    let mut seps = Vec::new();
+    let mut stats = None;
+
+    labels.push(Label {
+        text: "Unseat settings",
+        rect: gfx::rect(x0 + px(2.0, s), px(12.0, s), w - px(60.0, s), px(42.0, s)),
+        kind: TextKind::Title,
+        owner: None,
+    });
+    controls.push(Placed {
+        ctl: Ctl::Close,
+        rect: gfx::rect(w - px(46.0, s), px(12.0, s), w - px(16.0, s), px(42.0, s)),
+        parts: vec![],
+        in_body: false,
+    });
+
+    let tabs = gfx::rect(x0, px(HEADER_H, s), x1, px(HEADER_H + TABS_H, s));
+    let seg = (tabs.right - tabs.left) / Tab::ALL.len() as f32;
+    controls.push(Placed {
+        ctl: Ctl::Tabs,
+        rect: tabs,
+        parts: (0..Tab::ALL.len())
+            .map(|i| {
+                let l = tabs.left + seg * i as f32;
+                (Part::Option(i), gfx::rect(l, tabs.top, l + seg, tabs.bottom))
+            })
+            .collect(),
+        in_body: false,
+    });
+
+    let mut y = body_top - scroll;
+    for (title, rows) in sections(tab) {
+        if !title.is_empty() {
+            labels.push(Label {
+                text: title,
+                rect: gfx::rect(x0 + px(4.0, s), y, x1, y + px(SECTION_HEAD, s)),
+                kind: TextKind::Head,
+                owner: None,
+            });
+            y += px(SECTION_HEAD, s);
+        }
+        let card_top = y;
+        let mut first = true;
+        for &row in rows.iter().filter(|r| row_visible(**r, draft)) {
+            let rh = px(row.height(), s);
+            let rc = gfx::rect(x0, y, x1, y + rh);
+            if !first && !matches!(row, Row::Note(_)) {
+                seps.push(gfx::rect(
+                    x0 + px(14.0, s),
+                    y,
+                    x1 - px(14.0, s),
+                    y + px(1.0, s),
+                ));
+            }
+            first = false;
+            place_row(row, rc, s, &mut labels, &mut controls, &mut stats);
+            y += rh;
+        }
+        cards.push(gfx::rect(x0, card_top, x1, y));
+        y += px(SECTION_GAP, s);
+    }
+
+    let btn_h = px(32.0, s);
+    let btn_w = px(84.0, s);
+    let by = h - px(FOOTER_H, s) + (px(FOOTER_H, s) - btn_h) * 0.5;
+    let save = gfx::rect(x1 - btn_w, by, x1, by + btn_h);
+    let cancel = gfx::rect(
+        save.left - px(8.0, s) - btn_w,
+        by,
+        save.left - px(8.0, s),
+        by + btn_h,
+    );
+    controls.push(Placed {
+        ctl: Ctl::Cancel,
+        rect: cancel,
+        parts: vec![],
+        in_body: false,
+    });
+    controls.push(Placed {
+        ctl: Ctl::Save,
+        rect: save,
+        parts: vec![],
+        in_body: false,
+    });
+
+    Lay {
+        scale,
+        w,
+        h,
+        body_top,
+        body_bottom,
+        content_h: px(content_height(tab, draft), s),
+        cards,
+        seps,
+        labels,
+        controls,
+        stats,
+        today: gfx::rect(x0 + px(2.0, s), by, cancel.left - px(8.0, s), by + btn_h),
+    }
+}
+
+fn place_row(
+    row: Row,
+    rc: D2D_RECT_F,
+    s: f32,
+    labels: &mut Vec<Label>,
+    controls: &mut Vec<Placed>,
+    stats: &mut Option<D2D_RECT_F>,
+) {
+    let inner_l = rc.left + px(14.0, s);
+    let inner_r = rc.right - px(12.0, s);
+    let mid = (rc.top + rc.bottom) * 0.5;
+    let mut label = |text: &'static str, hint: Option<&'static str>, right: f32, owner: Ctl| {
+        match hint {
+            Some(hint) => {
+                labels.push(Label {
+                    text,
+                    rect: gfx::rect(inner_l, rc.top + px(9.0, s), right, rc.top + px(29.0, s)),
+                    kind: TextKind::Label,
+                    owner: Some(owner),
+                });
+                labels.push(Label {
+                    text: hint,
+                    rect: gfx::rect(inner_l, rc.top + px(28.0, s), right, rc.top + px(46.0, s)),
+                    kind: TextKind::Hint,
+                    owner: Some(owner),
+                });
+            }
+            None => labels.push(Label {
+                text,
+                rect: gfx::rect(inner_l, rc.top, right, rc.bottom),
+                kind: TextKind::Label,
+                owner: Some(owner),
+            }),
+        }
+    };
+    match row {
+        Row::Step(text, field, hint) => {
+            let bh = px(28.0, s);
+            let bw = px(28.0, s);
+            let well = px(66.0, s);
+            let gap = px(4.0, s);
+            let top = mid - bh * 0.5;
+            let plus = gfx::rect(inner_r - bw, top, inner_r, top + bh);
+            let well_rc = gfx::rect(plus.left - gap - well, top, plus.left - gap, top + bh);
+            let minus = gfx::rect(well_rc.left - gap - bw, top, well_rc.left - gap, top + bh);
+            label(text, hint, minus.left - px(8.0, s), Ctl::Step(field));
+            controls.push(Placed {
+                ctl: Ctl::Step(field),
+                rect: gfx::rect(minus.left, top, plus.right, top + bh),
+                parts: vec![
+                    (Part::Minus, minus),
+                    (Part::Whole, well_rc),
+                    (Part::Plus, plus),
+                ],
+                in_body: true,
+            });
+        }
+        Row::Flag(text, flag, hint) => {
+            let tw = px(40.0, s);
+            let th = px(22.0, s);
+            let track = gfx::rect(inner_r - tw, mid - th * 0.5, inner_r, mid + th * 0.5);
+            label(text, hint, track.left - px(8.0, s), Ctl::Flag(flag));
+            // The whole row toggles, like Windows settings.
+            controls.push(Placed {
+                ctl: Ctl::Flag(flag),
+                rect: rc,
+                parts: vec![(Part::Whole, track)],
+                in_body: true,
+            });
+        }
+        Row::Group(text, group) => {
+            let n = group.options().len();
+            let sw = px(group.segment_w(), s);
+            let sh = px(28.0, s);
+            let left = inner_r - sw * n as f32;
+            let top = mid - sh * 0.5;
+            label(text, None, left - px(8.0, s), Ctl::Group(group));
+            controls.push(Placed {
+                ctl: Ctl::Group(group),
+                rect: gfx::rect(left, top, inner_r, top + sh),
+                parts: (0..n)
+                    .map(|i| {
+                        let l = left + sw * i as f32;
+                        (Part::Option(i), gfx::rect(l, top, l + sw, top + sh))
+                    })
+                    .collect(),
+                in_body: true,
+            });
+        }
+        Row::WideGroup(text, group) => {
+            labels.push(Label {
+                text,
+                rect: gfx::rect(inner_l, rc.top + px(4.0, s), inner_r, rc.top + px(36.0, s)),
+                kind: TextKind::Label,
+                owner: Some(Ctl::Group(group)),
+            });
+            let n = group.options().len();
+            let left = rc.left + px(10.0, s);
+            let right = rc.right - px(10.0, s);
+            let top = rc.top + px(36.0, s);
+            let sh = px(30.0, s);
+            let sw = (right - left) / n as f32;
+            controls.push(Placed {
+                ctl: Ctl::Group(group),
+                rect: gfx::rect(left, top, right, top + sh),
+                parts: (0..n)
+                    .map(|i| {
+                        let l = left + sw * i as f32;
+                        (Part::Option(i), gfx::rect(l, top, l + sw, top + sh))
+                    })
+                    .collect(),
+                in_body: true,
+            });
+        }
+        Row::Volume => {
+            let bh = px(28.0, s);
+            let top = mid - bh * 0.5;
+            let preview = gfx::rect(inner_r - px(76.0, s), top, inner_r, top + bh);
+            let track_l = inner_l + px(70.0, s);
+            let track_r = preview.left - px(52.0, s);
+            label("Volume", None, track_l - px(12.0, s), Ctl::Volume);
+            controls.push(Placed {
+                ctl: Ctl::Volume,
+                rect: gfx::rect(track_l, top, track_r, top + bh),
+                parts: vec![],
+                in_body: true,
+            });
+            controls.push(Placed {
+                ctl: Ctl::Preview,
+                rect: preview,
+                parts: vec![],
+                in_body: true,
+            });
+        }
+        Row::Note(text) => labels.push(Label {
+            text,
+            rect: gfx::rect(inner_l, rc.top + px(6.0, s), inner_r, rc.bottom - px(4.0, s)),
+            kind: TextKind::Note,
+            owner: None,
+        }),
+        Row::Stats => {
+            *stats = Some(gfx::rect(
+                inner_l,
+                rc.top + px(8.0, s),
+                inner_r,
+                rc.bottom - px(8.0, s),
+            ))
+        }
+        Row::Defaults => {
+            let bh = px(30.0, s);
+            let top = mid - bh * 0.5;
+            let button = gfx::rect(inner_r - px(96.0, s), top, inner_r, top + bh);
+            labels.push(Label {
+                text: "Restore default settings",
+                rect: gfx::rect(inner_l, rc.top, button.left - px(8.0, s), rc.bottom),
+                kind: TextKind::Label,
+                owner: None,
+            });
+            controls.push(Placed {
+                ctl: Ctl::Defaults,
+                rect: button,
+                parts: vec![],
+                in_body: true,
+            });
+        }
+    }
+}
+
+fn enabled(ctl: Ctl, d: &Settings) -> bool {
+    match ctl {
+        Ctl::Step(Field::Idle) => d.inactivity_behavior == InactivityBehavior::Pause,
+        Ctl::Step(Field::Every) => d.repeat_reminders,
+        Ctl::Group(Group::SoundKind) | Ctl::Group(Group::Length) | Ctl::Volume | Ctl::Preview => {
+            d.sound_enabled
+        }
+        _ => true,
+    }
+}
+
+/// Keyboard focus order: tab strip, the active tab's controls top to bottom, then the footer.
+fn focus_order(l: &Lay, d: &Settings) -> Vec<Ctl> {
+    let mut order = vec![Ctl::Tabs];
+    order.extend(
+        l.controls
+            .iter()
+            .filter(|p| p.in_body && enabled(p.ctl, d))
+            .map(|p| p.ctl),
+    );
+    order.extend([Ctl::Cancel, Ctl::Save]);
+    order
+}
+
+fn hit(l: &Lay, x: f32, y: f32) -> Option<Target> {
+    for p in &l.controls {
+        if p.in_body && (y < l.body_top || y >= l.body_bottom) {
+            continue;
+        }
+        for (part, rc) in &p.parts {
+            if gfx::contains(*rc, x, y) {
+                return Some(Target {
+                    ctl: p.ctl,
+                    part: *part,
+                });
+            }
+        }
+        if gfx::contains(p.rect, x, y) {
+            return Some(Target {
+                ctl: p.ctl,
+                part: Part::Whole,
+            });
+        }
+    }
+    None
+}
+
+fn fit_window_to_work_area(work: RECT, scale: f32) -> (i32, i32, i32, i32) {
+    let available_w = (work.right - work.left - WORK_AREA_MARGIN * 2).max(1);
+    let available_h = (work.bottom - work.top - WORK_AREA_MARGIN * 2).max(1);
+    let width = ((WIN_W * scale).round() as i32).min(available_w);
+    let height = ((window_logical_h() * scale).round() as i32).min(available_h);
+    let min_x = work.left + WORK_AREA_MARGIN;
+    let min_y = work.top + WORK_AREA_MARGIN;
+    let max_x = (work.right - WORK_AREA_MARGIN - width).max(min_x);
+    let max_y = (work.bottom - WORK_AREA_MARGIN - height).max(min_y);
+    let x = work.left + (work.right - work.left - width) / 2;
+    let y = work.top + (work.bottom - work.top - height) / 2;
+    (x.clamp(min_x, max_x), y.clamp(min_y, max_y), width, height)
+}
+
+fn max_scroll(l: &Lay) -> f32 {
+    (l.content_h - (l.body_bottom - l.body_top)).max(0.0)
+}
+
+fn scroll_after_wheel(current: f32, wheel_delta: i16, scale: f32, max_scroll: f32) -> f32 {
+    let step = px(60.0, scale) * wheel_delta as f32 / 120.0;
+    (current - step).clamp(0.0, max_scroll)
 }
 
 struct Dialog {
     app: *mut App,
-    size: WidgetSize,
-    revert_size: WidgetSize,
-    timer_display_mode: TimerDisplayMode,
-    sound: bool,
-    repeat: bool,
-    auto: bool,
-    sitting_min: u64,
-    break_min: u64,
-    idle_sec: u64,
-    inactivity_behavior: InactivityBehavior,
-    every_min: u64,
-    step: u64,
-    sound_kind: AlertSound,
-    alert_duration: u64,
-    snooze_min: u64,
+    draft: Settings,
+    /// Overlay appearance to restore if the dialog is cancelled.
+    revert: (WidgetSize, ThemePreference, bool),
     saved: bool,
-    hover: Hit,
+    tab: Tab,
+    hover: Option<Target>,
+    pressed: Option<Target>,
+    focus: Ctl,
+    focus_visible: bool,
+    dragging_volume: bool,
+    tracking: bool,
     scale: f32,
-    scroll_y: f32,
+    scroll: f32,
     factory: Option<ID2D1Factory>,
-    dwrite: Option<IDWriteFactory>,
+    fonts: Option<Fonts>,
     rt: Option<ID2D1HwndRenderTarget>,
+}
+
+impl Dialog {
+    fn lay(&self, hwnd: HWND) -> Lay {
+        let mut rc = RECT::default();
+        unsafe {
+            let _ = GetClientRect(hwnd, &mut rc);
+        }
+        let h = (rc.bottom - rc.top).max(1) as f32;
+        layout(self.tab, &self.draft, self.scale, h, self.scroll)
+    }
+
+    fn dark(&self) -> bool {
+        let system_dark = if self.app.is_null() {
+            true
+        } else {
+            unsafe { (*self.app).system_dark }
+        };
+        self.draft.theme.is_dark(system_dark)
+    }
+}
+
+fn title() -> windows::core::HSTRING {
+    crate::win::testhook::title("Unseat Settings")
 }
 
 pub fn register() {
@@ -142,6 +939,7 @@ pub fn register() {
             lpfnWndProc: Some(wndproc),
             lpszClassName: CLASS,
             hInstance: GetModuleHandleW(None).unwrap_or_default().into(),
+            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             ..Default::default()
         };
         RegisterClassW(&wc);
@@ -150,25 +948,25 @@ pub fn register() {
 
 pub fn open(app: *mut App) {
     unsafe {
-        if let Ok(existing) = FindWindowW(CLASS, None) {
+        if let Ok(existing) = FindWindowW(CLASS, &title()) {
+            let _ = ShowWindow(existing, SW_SHOW);
             let _ = SetForegroundWindow(existing);
             return;
         }
-        let hwnd = CreateWindowExW(
+        if let Ok(hwnd) = CreateWindowExW(
             WS_EX_TOPMOST,
             CLASS,
-            w!("Unseat Settings"),
-            WS_POPUP | WS_VISIBLE,
-            120,
-            80,
-            WIN_W,
-            WIN_H,
+            &title(),
+            WS_POPUP,
+            0,
+            0,
+            1,
+            1,
             None,
             None,
             GetModuleHandleW(None).unwrap_or_default(),
             Some(app as *const std::ffi::c_void),
-        );
-        if let Ok(hwnd) = hwnd {
+        ) {
             let pref = DWMWCP_ROUND;
             let _ = DwmSetWindowAttribute(
                 hwnd,
@@ -176,542 +974,208 @@ pub fn open(app: *mut App) {
                 &pref as *const _ as *const core::ffi::c_void,
                 std::mem::size_of_val(&pref) as u32,
             );
-            let _ = ShowWindow(hwnd, SW_SHOW);
             crate::win::icon::apply(hwnd);
+            let _ = ShowWindow(hwnd, SW_SHOW);
             let _ = SetForegroundWindow(hwnd);
         }
     }
 }
 
-fn fit_window_to_work_area(work: RECT, scale: f32) -> (i32, i32, i32, i32) {
-    let available_w = (work.right - work.left - WORK_AREA_MARGIN * 2).max(1);
-    let available_h = (work.bottom - work.top - WORK_AREA_MARGIN * 2).max(1);
-    let width = ((WIN_W as f32 * scale).round() as i32).min(available_w);
-    let height = ((WIN_H as f32 * scale).round() as i32).min(available_h);
-    let min_x = work.left + WORK_AREA_MARGIN;
-    let min_y = work.top + WORK_AREA_MARGIN;
-    let max_x = (work.right - WORK_AREA_MARGIN - width).max(min_x);
-    let max_y = (work.bottom - WORK_AREA_MARGIN - height).max(min_y);
-    (
-        120.clamp(min_x, max_x),
-        80.clamp(min_y, max_y),
-        width,
-        height,
-    )
-}
-
-fn scroll_after_wheel(
-    current: f32,
-    wheel_delta: i16,
-    scale: f32,
-    content_height: f32,
-    viewport_height: f32,
-) -> f32 {
-    let max_scroll = (content_height - viewport_height).max(0.0);
-    let step = px(80.0, scale) * wheel_delta as f32 / 120.0;
-    (current - step).clamp(0.0, max_scroll)
-}
-
-fn rgb(r: u8, g: u8, b: u8, a: f32) -> D2D1_COLOR_F {
-    D2D1_COLOR_F {
-        r: r as f32 / 255.0,
-        g: g as f32 / 255.0,
-        b: b as f32 / 255.0,
-        a,
+pub fn shutdown() {
+    unsafe {
+        if let Ok(hwnd) = FindWindowW(CLASS, &title()) {
+            let _ = DestroyWindow(hwnd);
+        }
     }
 }
 
-fn rct(left: f32, top: f32, right: f32, bottom: f32) -> D2D_RECT_F {
-    D2D_RECT_F {
-        left,
-        top,
-        right,
-        bottom,
+/// Re-theme an open dialog after the system theme changes.
+pub fn refresh() {
+    unsafe {
+        if let Ok(hwnd) = FindWindowW(CLASS, &title()) {
+            let dlg = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Dialog;
+            if !dlg.is_null() {
+                apply_frame_theme(hwnd, (*dlg).dark());
+            }
+            let _ = InvalidateRect(hwnd, None, false);
+        }
     }
 }
 
-fn contains(rc: D2D_RECT_F, x: f32, y: f32) -> bool {
-    x >= rc.left && x < rc.right && y >= rc.top && y < rc.bottom
-}
-
-fn px(v: f32, scale: f32) -> f32 {
-    v * scale
+unsafe fn apply_frame_theme(hwnd: HWND, dark: bool) {
+    let value: i32 = dark.into();
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_USE_IMMERSIVE_DARK_MODE,
+        &value as *const _ as *const core::ffi::c_void,
+        4,
+    );
 }
 
 unsafe fn dpi_scale(hwnd: HWND) -> f32 {
-    let d = GetDpiForWindow(hwnd);
-    if d == 0 {
-        1.0
+    match GetDpiForWindow(hwnd) {
+        0 => 1.0,
+        d => d as f32 / 96.0,
+    }
+}
+
+/// Size the window for `scale` and center it on the work area of the monitor nearest `near`.
+unsafe fn place_window(hwnd: HWND, scale: f32, near: POINT) {
+    let monitor = MonitorFromPoint(near, MONITOR_DEFAULTTONEAREST);
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    let work = if GetMonitorInfoW(monitor, &mut info).as_bool() {
+        info.rcWork
     } else {
-        d as f32 / 96.0
-    }
+        RECT {
+            left: 0,
+            top: 0,
+            right: 1280,
+            bottom: 800,
+        }
+    };
+    let (x, y, w, h) = fit_window_to_work_area(work, scale);
+    let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
 }
 
-struct Step {
-    minus: D2D_RECT_F,
-    well: D2D_RECT_F,
-    plus: D2D_RECT_F,
+fn lparam_point(lp: LPARAM) -> (i32, i32) {
+    ((lp.0 as i16) as i32, ((lp.0 >> 16) as i16) as i32)
 }
 
-struct Lay {
-    h: f32,
-    scale: f32,
-    close: D2D_RECT_F,
-    title: D2D_RECT_F,
-    timer_head: D2D_RECT_F,
-    timer_card: D2D_RECT_F,
-    sitting_row: D2D_RECT_F,
-    step_row: D2D_RECT_F,
-    timer_display_row: D2D_RECT_F,
-    timer_display_choices: [D2D_RECT_F; 2],
-    overlay_label: D2D_RECT_F,
-    sizes: [D2D_RECT_F; 5],
-    breaks_head: D2D_RECT_F,
-    breaks_card: D2D_RECT_F,
-    break_row: D2D_RECT_F,
-    idle_row: D2D_RECT_F,
-    inactivity_row: D2D_RECT_F,
-    inactivity_choices: [D2D_RECT_F; 2],
-    alerts_head: D2D_RECT_F,
-    alerts_card: D2D_RECT_F,
-    sound: D2D_RECT_F,
-    preview: D2D_RECT_F,
-    sounds: [D2D_RECT_F; 5],
-    duration_label: D2D_RECT_F,
-    durations: [D2D_RECT_F; 4],
-    repeat: D2D_RECT_F,
-    every_row: D2D_RECT_F,
-    snooze_head: D2D_RECT_F,
-    snooze_card: D2D_RECT_F,
-    snoozes: [D2D_RECT_F; 4],
-    snooze_row: D2D_RECT_F,
-    system_head: D2D_RECT_F,
-    auto: D2D_RECT_F,
-    today: D2D_RECT_F,
-    cancel: D2D_RECT_F,
-    save: D2D_RECT_F,
-    step_limit: Step,
-    step_incr: Step,
-    step_break: Step,
-    step_idle: Step,
-    step_every: Step,
-    step_snooze: Step,
-}
-
-impl Lay {
-    fn step(&self, field: Field) -> &Step {
-        match field {
-            Field::Limit => &self.step_limit,
-            Field::Step => &self.step_incr,
-            Field::Break => &self.step_break,
-            Field::Idle => &self.step_idle,
-            Field::Every => &self.step_every,
-            Field::Snooze => &self.step_snooze,
-        }
-    }
-
-    fn row_label(&self, row: D2D_RECT_F, right: f32) -> D2D_RECT_F {
-        rct(row.left + px(12.0, self.scale), row.top, right, row.bottom)
-    }
-}
-
-fn stepper(row: D2D_RECT_F, scale: f32) -> Step {
-    let h = px(26.0, scale);
-    let btn = px(22.0, scale);
-    let well_w = px(62.0, scale);
-    let gap = px(3.0, scale);
-    let y = (row.top + row.bottom - h) * 0.5;
-    let right = row.right - px(10.0, scale);
-    let plus_l = right - btn;
-    let well_r = plus_l - gap;
-    let well_l = well_r - well_w;
-    let minus_r = well_l - gap;
-    let minus_l = minus_r - btn;
-    Step {
-        minus: rct(minus_l, y, minus_r, y + h),
-        well: rct(well_l, y, well_r, y + h),
-        plus: rct(plus_l, y, right, y + h),
-    }
-}
-
-fn layout(scale: f32) -> Lay {
-    let w = px(WIN_W as f32, scale);
-    let h = px(WIN_H as f32, scale);
-    let x = px(12.0, scale);
-    let card_r = w - x;
-    let row_h = px(38.0, scale);
-    let head_h = px(19.0, scale);
-    let gap = px(10.0, scale);
-
-    let title = rct(
-        x + px(4.0, scale),
-        px(10.0, scale),
-        px(200.0, scale),
-        px(34.0, scale),
-    );
-    let timer_head = rct(
-        x + px(4.0, scale),
-        px(38.0, scale),
-        px(160.0, scale),
-        px(57.0, scale),
-    );
-    let t0 = px(57.0, scale);
-    let step_top = t0 + row_h;
-    let timer_display_top = step_top + row_h;
-    let overlay_label_top = timer_display_top + row_h + px(8.0, scale);
-    let overlay_label_bot = overlay_label_top + px(18.0, scale);
-    let chip_y = overlay_label_bot + px(10.0, scale);
-    let chip_h = px(26.0, scale);
-    let timer_bot = chip_y + chip_h + px(20.0, scale);
-    let timer_card = rct(x, t0, card_r, timer_bot);
-    let sitting_row = rct(x, t0, card_r, t0 + row_h);
-    let step_row = rct(x, step_top, card_r, step_top + row_h);
-    let timer_display_row = rct(x, timer_display_top, card_r, timer_display_top + row_h);
-    let display_choice_gap = px(4.0, scale);
-    let display_choice_w = px(74.0, scale);
-    let display_choice_h = px(26.0, scale);
-    let display_choices_right = card_r - px(10.0, scale);
-    let display_choices_y = timer_display_top + (row_h - display_choice_h) * 0.5;
-    let timer_display_choices = [
-        rct(
-            display_choices_right - display_choice_w * 2.0 - display_choice_gap,
-            display_choices_y,
-            display_choices_right - display_choice_w - display_choice_gap,
-            display_choices_y + display_choice_h,
-        ),
-        rct(
-            display_choices_right - display_choice_w,
-            display_choices_y,
-            display_choices_right,
-            display_choices_y + display_choice_h,
-        ),
-    ];
-
-    let inner = (card_r - x) - px(16.0, scale);
-    let chip_gap = px(4.0, scale);
-    let cw = (inner - chip_gap * 4.0) / 5.0;
-    let mut sizes = [rct(0.0, 0.0, 0.0, 0.0); 5];
-    for i in 0..5 {
-        let left = x + px(8.0, scale) + i as f32 * (cw + chip_gap);
-        sizes[i] = rct(left, chip_y, left + cw, chip_y + chip_h);
-    }
-
-    let breaks_head_top = timer_bot + gap;
-    let b0 = breaks_head_top + head_h;
-    let idle_top = b0 + row_h;
-    let inactivity_top = idle_top + row_h;
-    let breaks_bot = inactivity_top + row_h;
-    let breaks_card = rct(x, b0, card_r, breaks_bot);
-    let break_row = rct(x, b0, card_r, idle_top);
-    let idle_row = rct(x, idle_top, card_r, inactivity_top);
-    let inactivity_row = rct(x, inactivity_top, card_r, breaks_bot);
-    let choice_gap = px(4.0, scale);
-    let choice_w = px(64.0, scale);
-    let choice_h = px(26.0, scale);
-    let choices_right = card_r - px(10.0, scale);
-    let choices_y = inactivity_top + (row_h - choice_h) * 0.5;
-    let inactivity_choices = [
-        rct(
-            choices_right - choice_w * 2.0 - choice_gap,
-            choices_y,
-            choices_right - choice_w - choice_gap,
-            choices_y + choice_h,
-        ),
-        rct(
-            choices_right - choice_w,
-            choices_y,
-            choices_right,
-            choices_y + choice_h,
-        ),
-    ];
-
-    let alerts_head_top = breaks_bot + gap;
-    let a0 = alerts_head_top + head_h;
-    let sound = rct(x, a0, card_r, a0 + row_h);
-    let sounds_y = a0 + row_h + px(4.0, scale);
-    let mut sounds = [rct(0.0, 0.0, 0.0, 0.0); 5];
-    for i in 0..5 {
-        let left = x + px(8.0, scale) + i as f32 * (cw + chip_gap);
-        sounds[i] = rct(left, sounds_y, left + cw, sounds_y + chip_h);
-    }
-    let duration_label_top = sounds_y + chip_h + px(8.0, scale);
-    let duration_label_bot = duration_label_top + px(16.0, scale);
-    let duration_y = duration_label_bot + px(4.0, scale);
-    let d_inner = inner;
-    let d_gap = px(4.0, scale);
-    let dw = (d_inner - d_gap * 3.0) / 4.0;
-    let mut durations = [rct(0.0, 0.0, 0.0, 0.0); 4];
-    for i in 0..4 {
-        let left = x + px(8.0, scale) + i as f32 * (dw + d_gap);
-        durations[i] = rct(left, duration_y, left + dw, duration_y + chip_h);
-    }
-    let repeat_top = duration_y + chip_h + px(8.0, scale);
-    let every_top = repeat_top + row_h;
-    let alerts_bot = every_top + row_h;
-    let alerts_card = rct(x, a0, card_r, alerts_bot);
-    let every_row = rct(x, every_top, card_r, alerts_bot);
-
-    let tog_w = px(38.0, scale);
-    let preview = rct(
-        card_r - px(12.0, scale) - tog_w - px(8.0, scale) - px(58.0, scale),
-        a0 + px(8.0, scale),
-        card_r - px(12.0, scale) - tog_w - px(8.0, scale),
-        a0 + row_h - px(8.0, scale),
-    );
-
-    let snooze_head_top = alerts_bot + gap;
-    let z0 = snooze_head_top + head_h;
-    let snooze_chip_y = z0 + px(8.0, scale);
-    let mut snoozes = [rct(0.0, 0.0, 0.0, 0.0); 4];
-    let sw = (inner - d_gap * 3.0) / 4.0;
-    for i in 0..4 {
-        let left = x + px(8.0, scale) + i as f32 * (sw + d_gap);
-        snoozes[i] = rct(left, snooze_chip_y, left + sw, snooze_chip_y + chip_h);
-    }
-    let snooze_row_top = snooze_chip_y + chip_h + px(8.0, scale);
-    let snooze_bot = snooze_row_top + row_h;
-    let snooze_card = rct(x, z0, card_r, snooze_bot);
-    let snooze_row = rct(x, snooze_row_top, card_r, snooze_bot);
-
-    let system_head_top = snooze_bot + gap;
-    let s0 = system_head_top + head_h;
-    let auto = rct(x, s0, card_r, s0 + row_h);
-
-    let btn_h = px(28.0, scale);
-    let btn_y = h - px(12.0, scale) - btn_h;
-    let btn_w = px(72.0, scale);
-    let save = rct(card_r - btn_w, btn_y, card_r, btn_y + btn_h);
-    let cancel = rct(
-        save.left - px(8.0, scale) - btn_w,
-        btn_y,
-        save.left - px(8.0, scale),
-        btn_y + btn_h,
-    );
-
-    Lay {
-        h,
-        scale,
-        close: rct(
-            w - px(36.0, scale),
-            px(8.0, scale),
-            w - px(12.0, scale),
-            px(32.0, scale),
-        ),
-        title,
-        timer_head,
-        timer_card,
-        sitting_row,
-        step_row,
-        timer_display_row,
-        timer_display_choices,
-        overlay_label: rct(
-            x + px(12.0, scale),
-            overlay_label_top,
-            px(200.0, scale),
-            overlay_label_bot,
-        ),
-        sizes,
-        breaks_head: rct(x + px(4.0, scale), breaks_head_top, px(160.0, scale), b0),
-        breaks_card,
-        break_row,
-        idle_row,
-        inactivity_row,
-        inactivity_choices,
-        alerts_head: rct(x + px(4.0, scale), alerts_head_top, px(160.0, scale), a0),
-        alerts_card,
-        sound,
-        preview,
-        sounds,
-        duration_label: rct(
-            x + px(12.0, scale),
-            duration_label_top,
-            px(200.0, scale),
-            duration_label_bot,
-        ),
-        durations,
-        repeat: rct(x, repeat_top, card_r, every_top),
-        every_row,
-        snooze_head: rct(x + px(4.0, scale), snooze_head_top, px(160.0, scale), z0),
-        snooze_card,
-        snoozes,
-        snooze_row,
-        system_head: rct(x + px(4.0, scale), system_head_top, px(160.0, scale), s0),
-        auto,
-        today: rct(x, btn_y, cancel.left - px(8.0, scale), btn_y + btn_h),
-        cancel,
-        save,
-        step_limit: stepper(sitting_row, scale),
-        step_incr: stepper(step_row, scale),
-        step_break: stepper(break_row, scale),
-        step_idle: stepper(idle_row, scale),
-        step_every: stepper(every_row, scale),
-        step_snooze: stepper(snooze_row, scale),
-    }
-}
-
-fn hit_step(l: &Lay, field: Field, x: f32, y: f32) -> Option<Hit> {
-    let step = l.step(field);
-    if contains(step.minus, x, y) {
-        return Some(Hit::Minus(field));
-    }
-    if contains(step.plus, x, y) {
-        return Some(Hit::Plus(field));
-    }
-    None
-}
-
-fn hit_at(x: f32, y: f32, scale: f32) -> Hit {
-    let l = layout(scale);
-    if contains(l.close, x, y) {
-        return Hit::Close;
-    }
-    if contains(l.save, x, y) {
-        return Hit::Save;
-    }
-    if contains(l.cancel, x, y) {
-        return Hit::Cancel;
-    }
-    for field in [
-        Field::Limit,
-        Field::Step,
-        Field::Break,
-        Field::Idle,
-        Field::Every,
-        Field::Snooze,
-    ] {
-        if let Some(hit) = hit_step(&l, field, x, y) {
-            return hit;
-        }
-    }
-    for (i, rc) in l.sizes.iter().enumerate() {
-        if contains(*rc, x, y) {
-            return Hit::Size(i);
-        }
-    }
-    for (i, rc) in l.timer_display_choices.iter().enumerate() {
-        if contains(*rc, x, y) {
-            return Hit::TimerDisplay(i);
-        }
-    }
-    if contains(l.preview, x, y) {
-        return Hit::Preview;
-    }
-    for (i, rc) in l.sounds.iter().enumerate() {
-        if contains(*rc, x, y) {
-            return Hit::SoundKind(i);
-        }
-    }
-    for (i, rc) in l.durations.iter().enumerate() {
-        if contains(*rc, x, y) {
-            return Hit::Duration(i);
-        }
-    }
-    for (i, rc) in l.snoozes.iter().enumerate() {
-        if contains(*rc, x, y) {
-            return Hit::SnoozePreset(i);
-        }
-    }
-    for (i, rc) in l.inactivity_choices.iter().enumerate() {
-        if contains(*rc, x, y) {
-            return Hit::Inactivity(i);
-        }
-    }
-    if contains(l.sound, x, y) {
-        return Hit::Sound;
-    }
-    if contains(l.repeat, x, y) {
-        return Hit::Repeat;
-    }
-    if contains(l.auto, x, y) {
-        return Hit::Auto;
-    }
-    Hit::None
-}
-
-fn client_hit(hwnd: HWND, dlg: *mut Dialog, lp: LPARAM, screen: bool) -> Hit {
-    unsafe {
-        let mut x = (lp.0 as i16) as i32;
-        let mut y = ((lp.0 >> 16) as i16) as i32;
-        if screen {
-            let mut pt = POINT { x, y };
-            let _ = ScreenToClient(hwnd, &mut pt);
-            x = pt.x;
-            y = pt.y;
-        }
-        let (scale, scroll_y) = if dlg.is_null() {
-            (1.0, 0.0)
-        } else {
-            ((*dlg).scale, (*dlg).scroll_y)
-        };
-        hit_at(x as f32, y as f32 + scroll_y, scale)
-    }
+unsafe fn key_down(vk: VIRTUAL_KEY) -> bool {
+    GetKeyState(vk.0 as i32) < 0
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if msg == WM_CREATE {
-        let cs = lp.0 as *const windows::Win32::UI::WindowsAndMessaging::CREATESTRUCTW;
+        let cs = lp.0 as *const CREATESTRUCTW;
         let app = if cs.is_null() {
             std::ptr::null_mut()
         } else {
             (*cs).lpCreateParams as *mut App
         };
         let dlg = build(hwnd, app);
+        apply_frame_theme(hwnd, dlg.dark());
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(dlg) as isize);
         return LRESULT(0);
     }
     let dlg = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Dialog;
+    if dlg.is_null() {
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+    let d = &mut *dlg;
     match msg {
         WM_NCHITTEST => {
-            let hit = client_hit(hwnd, dlg, lp, true);
-            if hit == Hit::None {
+            let (sx, sy) = lparam_point(lp);
+            let mut pt = POINT { x: sx, y: sy };
+            let _ = ScreenToClient(hwnd, &mut pt);
+            let l = d.lay(hwnd);
+            let in_chrome = (pt.y as f32) < l.body_top || (pt.y as f32) >= l.body_bottom;
+            if in_chrome && hit(&l, pt.x as f32, pt.y as f32).is_none() {
                 LRESULT(HTCAPTION as isize)
             } else {
                 LRESULT(HTCLIENT as isize)
             }
         }
         WM_MOUSEMOVE => {
-            if !dlg.is_null() {
-                let h = client_hit(hwnd, dlg, lp, false);
-                if h != (*dlg).hover {
-                    (*dlg).hover = h;
-                    let _ = InvalidateRect(hwnd, None, false);
-                }
+            if !d.tracking {
+                let mut tme = TRACKMOUSEEVENT {
+                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
+                d.tracking = TrackMouseEvent(&mut tme).is_ok();
+            }
+            let (x, y) = lparam_point(lp);
+            if d.dragging_volume {
+                set_volume_from_x(d, hwnd, x as f32);
+                return LRESULT(0);
+            }
+            let h = hit(&d.lay(hwnd), x as f32, y as f32);
+            if h != d.hover {
+                d.hover = h;
+                let _ = InvalidateRect(hwnd, None, false);
+            }
+            LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            d.tracking = false;
+            if d.hover.is_some() {
+                d.hover = None;
+                let _ = InvalidateRect(hwnd, None, false);
             }
             LRESULT(0)
         }
         WM_MOUSEWHEEL => {
-            if !dlg.is_null() {
-                let mut rc = RECT::default();
-                let _ = GetClientRect(hwnd, &mut rc);
-                let viewport_height = (rc.bottom - rc.top).max(1) as f32;
-                let wheel_delta = ((wp.0 >> 16) as u16) as i16;
-                let next = scroll_after_wheel(
-                    (*dlg).scroll_y,
-                    wheel_delta,
-                    (*dlg).scale,
-                    layout((*dlg).scale).h,
-                    viewport_height,
-                );
-                if next != (*dlg).scroll_y {
-                    (*dlg).scroll_y = next;
-                    (*dlg).hover = Hit::None;
-                    let _ = InvalidateRect(hwnd, None, false);
-                }
+            let l = d.lay(hwnd);
+            let delta = ((wp.0 >> 16) as u16) as i16;
+            let next = scroll_after_wheel(d.scroll, delta, d.scale, max_scroll(&l));
+            if next != d.scroll {
+                d.scroll = next;
+                d.hover = None;
+                let _ = InvalidateRect(hwnd, None, false);
             }
             LRESULT(0)
         }
-        WM_LBUTTONDOWN | WM_LBUTTONUP => {
-            if msg == WM_LBUTTONDOWN && !dlg.is_null() {
-                on_click(hwnd, dlg, client_hit(hwnd, dlg, lp, false));
+        WM_LBUTTONDOWN => {
+            let (x, y) = lparam_point(lp);
+            let target = hit(&d.lay(hwnd), x as f32, y as f32);
+            d.focus_visible = false;
+            d.pressed = target;
+            if let Some(t) = target {
+                if t.ctl != Ctl::Close {
+                    d.focus = t.ctl;
+                }
+                if t.ctl == Ctl::Volume && enabled(Ctl::Volume, &d.draft) {
+                    d.dragging_volume = true;
+                    let _ = SetCapture(hwnd);
+                    set_volume_from_x(d, hwnd, x as f32);
+                } else {
+                    activate(hwnd, dlg, t);
+                    return LRESULT(0);
+                }
             }
+            let _ = InvalidateRect(hwnd, None, false);
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            if d.dragging_volume {
+                d.dragging_volume = false;
+                let _ = ReleaseCapture();
+            }
+            d.pressed = None;
+            let _ = InvalidateRect(hwnd, None, false);
+            LRESULT(0)
+        }
+        WM_KEYDOWN | WM_SYSKEYDOWN => {
+            on_key(hwnd, dlg, VIRTUAL_KEY(wp.0 as u16));
+            LRESULT(0)
+        }
+        // Keys are fully handled in WM_KEYDOWN; swallow the characters (no beeps).
+        WM_CHAR => LRESULT(0),
+        WM_DPICHANGED => {
+            d.scale = (wp.0 & 0xFFFF) as f32 / 96.0;
+            d.rt = None;
+            d.scroll = 0.0;
+            let suggested = *(lp.0 as *const RECT);
+            place_window(
+                hwnd,
+                d.scale,
+                POINT {
+                    x: (suggested.left + suggested.right) / 2,
+                    y: (suggested.top + suggested.bottom) / 2,
+                },
+            );
+            let _ = InvalidateRect(hwnd, None, false);
             LRESULT(0)
         }
         WM_PAINT => {
             let mut ps = PAINTSTRUCT::default();
             BeginPaint(hwnd, &mut ps);
-            if !dlg.is_null() {
-                paint_ui(hwnd, dlg);
-            }
+            paint_ui(hwnd, d);
             let _ = EndPaint(hwnd, &ps);
             LRESULT(0)
         }
@@ -719,19 +1183,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             close(hwnd);
             LRESULT(0)
         }
-        WM_KEYDOWN => {
-            let vk = wp.0 as u16;
-            if vk == VK_ESCAPE.0 {
-                close(hwnd);
-            } else if vk == VK_RETURN.0 {
-                save(hwnd);
-            }
-            LRESULT(0)
-        }
         WM_DESTROY => {
-            if !dlg.is_null() {
-                let _ = Box::from_raw(dlg);
-            }
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            drop(Box::from_raw(dlg));
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wp, lp),
@@ -739,118 +1193,281 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 }
 
 unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
-    let (
-        size,
-        timer_display_mode,
-        sound,
-        repeat,
-        auto,
-        sitting_min,
-        break_min,
-        idle_sec,
-        inactivity_behavior,
-        every_min,
-        step,
-        sound_kind,
-        alert_duration,
-        snooze_min,
-    ) = if app.is_null() {
-        (
-            WidgetSize::Small,
-            TimerDisplayMode::Countdown,
-            true,
-            true,
-            false,
-            60,
-            3,
-            60,
-            InactivityBehavior::Pause,
-            10,
-            1,
-            AlertSound::Chime,
-            0,
-            10,
-        )
+    let draft = if app.is_null() {
+        Settings::default()
     } else {
-        let s = &(*app).settings;
-        (
-            s.widget_size,
-            s.timer_display_mode,
-            s.sound_enabled,
-            s.repeat_reminders,
-            s.launch_with_windows,
-            (s.sitting_limit_secs / 60).clamp(Field::Limit.min(), Field::Limit.max()),
-            (s.break_duration_secs / 60).clamp(Field::Break.min(), Field::Break.max()),
-            s.idle_after_secs
-                .clamp(Field::Idle.min(), Field::Idle.max()),
-            s.inactivity_behavior,
-            (s.repeat_every_secs / 60).clamp(Field::Every.min(), Field::Every.max()),
-            s.step.clamp(Field::Step.min(), Field::Step.max()),
-            s.alert_sound,
-            s.alert_duration_secs.min(10),
-            (s.snooze_secs / 60).clamp(Field::Snooze.min(), Field::Snooze.max()),
-        )
+        let mut draft = (*app).settings.clone();
+        // Show the real startup state: the entry may have been removed or disabled elsewhere.
+        draft.launch_with_windows = crate::win::autostart::is_enabled();
+        draft
     };
+    let mut cursor = POINT::default();
+    let _ = GetCursorPos(&mut cursor);
+    place_window(hwnd, dpi_scale(hwnd), cursor);
+    // The target monitor may use a different DPI than where the window was created.
     let scale = dpi_scale(hwnd);
-    let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-    let mut monitor_info = MONITORINFO {
-        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-        ..Default::default()
-    };
-    let work = if GetMonitorInfoW(monitor, &mut monitor_info).as_bool() {
-        monitor_info.rcWork
-    } else {
-        RECT {
-            left: 0,
-            top: 0,
-            right: (WIN_W as f32 * scale).round() as i32 + WORK_AREA_MARGIN * 2,
-            bottom: (WIN_H as f32 * scale).round() as i32 + WORK_AREA_MARGIN * 2,
-        }
-    };
-    let (window_x, window_y, window_w, window_h) = fit_window_to_work_area(work, scale);
-    let _ = SetWindowPos(
-        hwnd,
-        HWND_TOPMOST,
-        window_x,
-        window_y,
-        window_w,
-        window_h,
-        SWP_NOACTIVATE,
-    );
+    place_window(hwnd, scale, cursor);
     Box::new(Dialog {
         app,
-        size,
-        revert_size: size,
-        timer_display_mode,
-        sound,
-        repeat,
-        auto,
-        sitting_min,
-        break_min,
-        idle_sec,
-        inactivity_behavior,
-        every_min,
-        step,
-        sound_kind,
-        alert_duration,
-        snooze_min,
+        revert: (draft.widget_size, draft.theme, draft.always_on_top),
+        draft,
         saved: false,
-        hover: Hit::None,
+        tab: Tab::Timer,
+        hover: None,
+        pressed: None,
+        focus: Ctl::Tabs,
+        focus_visible: false,
+        dragging_volume: false,
+        tracking: false,
         scale,
-        scroll_y: 0.0,
+        scroll: 0.0,
         factory: D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok(),
-        dwrite: DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).ok(),
+        fonts: DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)
+            .ok()
+            .map(Fonts::new),
         rt: None,
     })
 }
 
-unsafe fn ensure_rt(hwnd: HWND, dlg: *mut Dialog) -> Option<ID2D1RenderTarget> {
+unsafe fn set_volume_from_x(d: &mut Dialog, hwnd: HWND, x: f32) {
+    let l = d.lay(hwnd);
+    if let Some(p) = l.find(Ctl::Volume) {
+        let t = ((x - p.rect.left) / (p.rect.right - p.rect.left)).clamp(0.0, 1.0);
+        let v = ((t * 100.0 / 5.0).round() * 5.0) as u8;
+        if v != d.draft.alert_volume {
+            d.draft.alert_volume = v;
+            let _ = InvalidateRect(hwnd, None, false);
+        }
+    }
+}
+
+/// Push appearance choices to the overlay right away so the user sees them.
+unsafe fn preview_appearance(d: &Dialog) {
+    if !d.app.is_null() {
+        (*d.app).preview_appearance(d.draft.widget_size, d.draft.theme, d.draft.always_on_top);
+    }
+}
+
+unsafe fn activate(hwnd: HWND, dlg: *mut Dialog, t: Target) {
+    let d = &mut *dlg;
+    if !enabled(t.ctl, &d.draft) {
+        return;
+    }
+    match (t.ctl, t.part) {
+        (Ctl::Close, _) | (Ctl::Cancel, _) => {
+            close(hwnd);
+            return;
+        }
+        (Ctl::Save, _) => {
+            save(hwnd);
+            return;
+        }
+        (Ctl::Tabs, Part::Option(i)) => select_tab(d, Tab::ALL[i]),
+        (Ctl::Step(field), Part::Minus) => step(d, field, -1),
+        (Ctl::Step(field), Part::Plus) => step(d, field, 1),
+        (Ctl::Flag(flag), _) => {
+            let next = !flag.get(&d.draft);
+            flag.set(&mut d.draft, next);
+            if flag == Flag::OnTop {
+                preview_appearance(d);
+            }
+        }
+        (Ctl::Group(group), Part::Option(i)) => choose(hwnd, d, group, i),
+        (Ctl::Preview, _) => {
+            if !d.app.is_null() {
+                (*d.app).preview_sound(
+                    d.draft.alert_sound,
+                    d.draft.alert_duration_secs,
+                    d.draft.alert_volume,
+                );
+            }
+        }
+        (Ctl::Defaults, _) => {
+            d.draft = d.draft.with_default_preferences();
+            preview_appearance(d);
+            apply_frame_theme(hwnd, d.dark());
+        }
+        _ => {}
+    }
+    let _ = InvalidateRect(hwnd, None, false);
+}
+
+fn select_tab(d: &mut Dialog, tab: Tab) {
+    if d.tab != tab {
+        d.tab = tab;
+        d.scroll = 0.0;
+        d.hover = None;
+    }
+}
+
+fn step(d: &mut Dialog, field: Field, dir: i64) {
+    let current = field.get(&d.draft);
+    let delta = field.delta(&d.draft);
+    let next = if dir < 0 {
+        current.saturating_sub(delta)
+    } else {
+        current.saturating_add(delta)
+    };
+    field.set(&mut d.draft, next);
+}
+
+unsafe fn choose(hwnd: HWND, d: &mut Dialog, group: Group, i: usize) {
+    group.set(&mut d.draft, i);
+    match group {
+        Group::Size => preview_appearance(d),
+        Group::Theme => {
+            preview_appearance(d);
+            apply_frame_theme(hwnd, d.dark());
+        }
+        _ => {}
+    }
+}
+
+unsafe fn on_key(hwnd: HWND, dlg: *mut Dialog, vk: VIRTUAL_KEY) {
+    let d = &mut *dlg;
+    let ctrl = key_down(VK_CONTROL);
+    let shift = key_down(VK_SHIFT);
+    let order = focus_order(&d.lay(hwnd), &d.draft);
+    let pos = order.iter().position(|c| *c == d.focus);
+    let n_tabs = Tab::ALL.len();
+    let tab_i = d.tab.index();
+    match vk {
+        VK_ESCAPE => {
+            close(hwnd);
+            return;
+        }
+        VK_TAB if ctrl => {
+            select_tab(
+                d,
+                Tab::ALL[if shift {
+                    (tab_i + n_tabs - 1) % n_tabs
+                } else {
+                    (tab_i + 1) % n_tabs
+                }],
+            );
+            d.focus = Ctl::Tabs;
+            d.focus_visible = true;
+        }
+        VK_NEXT | VK_PRIOR if ctrl => {
+            let next = if vk == VK_PRIOR {
+                (tab_i + n_tabs - 1) % n_tabs
+            } else {
+                (tab_i + 1) % n_tabs
+            };
+            select_tab(d, Tab::ALL[next]);
+        }
+        VK_TAB | VK_DOWN | VK_UP
+            if vk == VK_TAB || !matches!(d.focus, Ctl::Volume | Ctl::Step(_)) =>
+        {
+            let forward = if vk == VK_TAB { !shift } else { vk == VK_DOWN };
+            let n = order.len();
+            let i = pos.map_or(0, |p| if forward { (p + 1) % n } else { (p + n - 1) % n });
+            d.focus = order[i];
+            d.focus_visible = true;
+        }
+        VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN | VK_HOME | VK_END => {
+            let dir: i64 = if matches!(vk, VK_LEFT | VK_DOWN | VK_HOME) {
+                -1
+            } else {
+                1
+            };
+            d.focus_visible = true;
+            match d.focus {
+                Ctl::Tabs => {
+                    let i = (tab_i as i64 + dir).rem_euclid(n_tabs as i64) as usize;
+                    select_tab(d, Tab::ALL[i]);
+                }
+                Ctl::Step(field) => step(d, field, dir),
+                Ctl::Group(group) => {
+                    let n = group.options().len() as i64;
+                    let i = group.get(&d.draft).map_or(0, |i| i as i64);
+                    choose(hwnd, d, group, (i + dir).clamp(0, n - 1) as usize);
+                }
+                Ctl::Volume => {
+                    let v = i64::from(d.draft.alert_volume);
+                    d.draft.alert_volume = match vk {
+                        VK_HOME => 0,
+                        VK_END => 100,
+                        _ => (v + dir * 5).clamp(0, 100) as u8,
+                    };
+                }
+                Ctl::Flag(flag) if matches!(vk, VK_LEFT | VK_RIGHT) => {
+                    flag.set(&mut d.draft, vk == VK_RIGHT);
+                    if flag == Flag::OnTop {
+                        preview_appearance(d);
+                    }
+                }
+                _ => {}
+            }
+        }
+        VK_SPACE => {
+            d.focus_visible = true;
+            if !matches!(
+                d.focus,
+                Ctl::Tabs | Ctl::Step(_) | Ctl::Group(_) | Ctl::Volume
+            ) {
+                activate(
+                    hwnd,
+                    dlg,
+                    Target {
+                        ctl: d.focus,
+                        part: Part::Whole,
+                    },
+                );
+                return;
+            }
+        }
+        VK_RETURN => {
+            if matches!(
+                d.focus,
+                Ctl::Cancel | Ctl::Close | Ctl::Defaults | Ctl::Preview
+            ) {
+                activate(
+                    hwnd,
+                    dlg,
+                    Target {
+                        ctl: d.focus,
+                        part: Part::Whole,
+                    },
+                );
+            } else {
+                save(hwnd);
+            }
+            return;
+        }
+        // Ctrl+1..4 jumps to a tab.
+        _ if ctrl && (0x31..=0x34).contains(&vk.0) => {
+            select_tab(d, Tab::ALL[usize::from(vk.0 - 0x31)]);
+        }
+        _ => return,
+    }
+    ensure_focus_visible(hwnd, d);
+    let _ = InvalidateRect(hwnd, None, false);
+}
+
+/// Scroll so the focused body control is inside the viewport.
+unsafe fn ensure_focus_visible(hwnd: HWND, d: &mut Dialog) {
+    let l = d.lay(hwnd);
+    let Some(p) = l.find(d.focus).filter(|p| p.in_body) else {
+        return;
+    };
+    let margin = px(8.0, d.scale);
+    if p.rect.top < l.body_top + margin {
+        d.scroll = (d.scroll - (l.body_top + margin - p.rect.top)).max(0.0);
+    } else if p.rect.bottom > l.body_bottom - margin {
+        d.scroll = (d.scroll + p.rect.bottom - (l.body_bottom - margin)).min(max_scroll(&l));
+    }
+}
+
+unsafe fn ensure_rt(hwnd: HWND, d: &mut Dialog) -> Option<ID2D1RenderTarget> {
     let mut rc = RECT::default();
     let _ = GetClientRect(hwnd, &mut rc);
-    let w = (rc.right - rc.left).max(1) as u32;
-    let h = (rc.bottom - rc.top).max(1) as u32;
-    if (*dlg).rt.is_none() {
-        let factory = (*dlg).factory.as_ref()?;
+    let size = D2D_SIZE_U {
+        width: (rc.right - rc.left).max(1) as u32,
+        height: (rc.bottom - rc.top).max(1) as u32,
+    };
+    if d.rt.is_none() {
+        let factory = d.factory.as_ref()?;
         let props = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
@@ -864,984 +1481,493 @@ unsafe fn ensure_rt(hwnd: HWND, dlg: *mut Dialog) -> Option<ID2D1RenderTarget> {
         };
         let hwnd_props = D2D1_HWND_RENDER_TARGET_PROPERTIES {
             hwnd,
-            pixelSize: D2D_SIZE_U {
-                width: w,
-                height: h,
-            },
+            pixelSize: size,
             presentOptions: D2D1_PRESENT_OPTIONS_NONE,
         };
-        (*dlg).rt = factory.CreateHwndRenderTarget(&props, &hwnd_props).ok();
-    } else if let Some(rt) = (*dlg).rt.as_ref() {
-        let _ = rt.Resize(&D2D_SIZE_U {
-            width: w,
-            height: h,
-        });
+        d.rt = factory.CreateHwndRenderTarget(&props, &hwnd_props).ok();
+    } else if let Some(rt) = d.rt.as_ref() {
+        let _ = rt.Resize(&size);
     }
-    (*dlg).rt.as_ref().and_then(|rt| rt.cast().ok())
+    d.rt.as_ref().and_then(|rt| rt.cast().ok())
 }
 
-unsafe fn fmt(
-    dwrite: &IDWriteFactory,
-    size: f32,
-    weight: windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT,
-    align: DWRITE_TEXT_ALIGNMENT,
-) -> Option<IDWriteTextFormat> {
-    let f = dwrite
-        .CreateTextFormat(
-            w!("Segoe UI Variable Display"),
-            None,
-            weight,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            size,
-            w!("en-us"),
-        )
-        .ok()
-        .or_else(|| {
-            dwrite
-                .CreateTextFormat(
-                    w!("Segoe UI"),
-                    None,
-                    weight,
-                    DWRITE_FONT_STYLE_NORMAL,
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    size,
-                    w!("en-us"),
-                )
-                .ok()
-        })?;
-    let _ = f.SetTextAlignment(align);
-    let _ = f.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    let _ = f.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    Some(f)
-}
-
-unsafe fn fill_round(rt: &ID2D1RenderTarget, rc: D2D_RECT_F, radius: f32, color: D2D1_COLOR_F) {
-    if let Ok(brush) = rt.CreateSolidColorBrush(&color as *const _, None) {
-        rt.FillRoundedRectangle(
-            &D2D1_ROUNDED_RECT {
-                rect: rc,
-                radiusX: radius,
-                radiusY: radius,
-            },
-            &brush,
-        );
+fn label_style(
+    kind: TextKind,
+    s: f32,
+) -> (f32, windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT) {
+    match kind {
+        TextKind::Title => (px(17.0, s), gfx::SEMIBOLD),
+        TextKind::Head => (px(12.0, s), gfx::SEMIBOLD),
+        TextKind::Label => (px(13.0, s), gfx::REGULAR),
+        TextKind::Hint | TextKind::Note => (px(11.5, s), gfx::REGULAR),
     }
 }
 
-unsafe fn stroke_round(
-    rt: &ID2D1RenderTarget,
-    rc: D2D_RECT_F,
-    radius: f32,
-    color: D2D1_COLOR_F,
-    width: f32,
-) {
-    if let Ok(brush) = rt.CreateSolidColorBrush(&color as *const _, None) {
-        rt.DrawRoundedRectangle(
-            &D2D1_ROUNDED_RECT {
-                rect: rc,
-                radiusX: radius,
-                radiusY: radius,
-            },
-            &brush,
-            width,
-            None,
-        );
-    }
-}
-
-unsafe fn text(
-    rt: &ID2D1RenderTarget,
-    dwrite: &IDWriteFactory,
-    s: &str,
-    rc: D2D_RECT_F,
-    size: f32,
-    weight: windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT,
-    align: DWRITE_TEXT_ALIGNMENT,
-    color: D2D1_COLOR_F,
-) {
-    let Some(format) = fmt(dwrite, size, weight, align) else {
+unsafe fn paint_ui(hwnd: HWND, d: &mut Dialog) {
+    let Some(rt) = ensure_rt(hwnd, d) else {
         return;
     };
-    if let Ok(brush) = rt.CreateSolidColorBrush(&color as *const _, None) {
-        let wide: Vec<u16> = s.encode_utf16().collect();
-        rt.DrawText(
-            &wide,
-            &format,
-            &rc,
-            &brush,
-            Default::default(),
-            DWRITE_MEASURING_MODE_NATURAL,
-        );
-    }
-}
-
-unsafe fn toggle(rt: &ID2D1RenderTarget, row: D2D_RECT_F, on: bool, scale: f32) {
-    let h = px(22.0, scale);
-    let w = px(38.0, scale);
-    let y = (row.top + row.bottom - h) * 0.5;
-    let x = row.right - px(12.0, scale) - w;
-    let track = rct(x, y, x + w, y + h);
-    fill_round(
-        rt,
-        track,
-        h * 0.5,
-        if on {
-            rgb(0x30, 0xD1, 0x58, 1.0)
-        } else {
-            rgb(0x39, 0x39, 0x3D, 1.0)
-        },
-    );
-    let knob = px(16.0, scale);
-    let pad = px(3.0, scale);
-    let kx = if on { x + w - knob - pad } else { x + pad };
-    fill_round(
-        rt,
-        rct(kx, y + pad, kx + knob, y + pad + knob),
-        knob * 0.5,
-        rgb(255, 255, 255, 1.0),
-    );
-}
-
-fn field_value(dlg: &Dialog, field: Field) -> u64 {
-    match field {
-        Field::Limit => dlg.sitting_min,
-        Field::Step => dlg.step,
-        Field::Break => dlg.break_min,
-        Field::Idle => dlg.idle_sec,
-        Field::Every => dlg.every_min,
-        Field::Snooze => dlg.snooze_min,
-    }
-}
-
-unsafe fn paint_step(
-    rt: &ID2D1RenderTarget,
-    dwrite: &IDWriteFactory,
-    dlg: &Dialog,
-    l: &Lay,
-    field: Field,
-    hover: Hit,
-) {
-    let step = l.step(field);
+    let scroll_max = max_scroll(&d.lay(hwnd));
+    d.scroll = d.scroll.min(scroll_max);
+    let l = d.lay(hwnd);
+    let pal = palette(d.dark());
+    let d = &*d;
+    let Some(fonts) = d.fonts.as_ref() else {
+        return;
+    };
     let s = l.scale;
-    let r = px(6.0, s);
-    let minus_on = hover == Hit::Minus(field);
-    let plus_on = hover == Hit::Plus(field);
-    fill_round(
-        rt,
-        step.minus,
-        r,
-        if minus_on {
-            rgb(0x48, 0x48, 0x4A, 1.0)
-        } else {
-            rgb(0x3A, 0x3A, 0x3C, 1.0)
-        },
-    );
-    text(
-        rt,
-        dwrite,
-        "\u{2212}",
-        step.minus,
-        px(14.0, s),
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_CENTER,
-        rgb(0xF2, 0xF2, 0xF7, 1.0),
-    );
-    fill_round(rt, step.well, r, rgb(0x1C, 0x1C, 0x1E, 1.0));
-    let n = field_value(dlg, field);
-    let num = format!("{n}");
-    if field.unit().is_empty() {
-        text(
-            rt,
-            dwrite,
-            &num,
-            step.well,
-            px(13.0, s),
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_TEXT_ALIGNMENT_CENTER,
-            rgb(0xF2, 0xF2, 0xF7, 1.0),
-        );
-    } else {
-        let mid = step.well.left + (step.well.right - step.well.left) * 0.55;
-        text(
-            rt,
-            dwrite,
-            &num,
-            rct(
-                step.well.left + px(4.0, s),
-                step.well.top,
-                mid,
-                step.well.bottom,
-            ),
-            px(13.0, s),
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_TEXT_ALIGNMENT_TRAILING,
-            rgb(0xF2, 0xF2, 0xF7, 1.0),
-        );
-        text(
-            rt,
-            dwrite,
-            field.unit(),
-            rct(
-                mid + px(3.0, s),
-                step.well.top,
-                step.well.right - px(4.0, s),
-                step.well.bottom,
-            ),
-            px(11.0, s),
-            DWRITE_FONT_WEIGHT_MEDIUM,
-            DWRITE_TEXT_ALIGNMENT_LEADING,
-            rgb(0x8E, 0x8E, 0x93, 1.0),
-        );
-    }
-    fill_round(
-        rt,
-        step.plus,
-        r,
-        if plus_on {
-            rgb(0x48, 0x48, 0x4A, 1.0)
-        } else {
-            rgb(0x3A, 0x3A, 0x3C, 1.0)
-        },
-    );
-    text(
-        rt,
-        dwrite,
-        "+",
-        step.plus,
-        px(15.0, s),
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_CENTER,
-        rgb(0xF2, 0xF2, 0xF7, 1.0),
-    );
-}
-
-unsafe fn paint_ui(hwnd: HWND, dlg: *mut Dialog) {
-    let Some(rt) = ensure_rt(hwnd, dlg) else {
-        return;
-    };
-    let Some(dwrite) = (*dlg).dwrite.as_ref() else {
-        return;
-    };
-    let l = layout((*dlg).scale);
-    let s = l.scale;
-    let hover = (*dlg).hover;
-    let mut client = RECT::default();
-    let _ = GetClientRect(hwnd, &mut client);
-    let viewport_w = (client.right - client.left).max(1) as f32;
-    let viewport_h = (client.bottom - client.top).max(1) as f32;
-    let scroll_y = (*dlg).scroll_y.clamp(0.0, (l.h - viewport_h).max(0.0));
-    (*dlg).scroll_y = scroll_y;
     rt.BeginDraw();
-    rt.Clear(Some(&rgb(0x1C, 0x1C, 0x1E, 1.0)));
-    rt.SetTransform(&Matrix3x2 {
-        M11: 1.0,
-        M12: 0.0,
-        M21: 0.0,
-        M22: 1.0,
-        M31: 0.0,
-        M32: -scroll_y,
-    });
+    rt.SetTransform(&Matrix3x2::identity());
+    rt.Clear(Some(&gfx::color(pal.window)));
 
-    let head = rgb(0x8E, 0x8E, 0x93, 1.0);
-    let label = rgb(0xF2, 0xF2, 0xF7, 1.0);
-    let card = rgb(0x2C, 0x2C, 0x2E, 1.0);
-    let sep = rgb(0x3A, 0x3A, 0x3C, 1.0);
-    let head_sz = px(11.0, s);
-    let label_sz = px(11.05, s);
-    let chip_sz = px(10.0, s);
-    let card_r = px(10.0, s);
+    // Body, clipped between the tab strip and the footer.
+    rt.PushAxisAlignedClip(
+        &gfx::rect(0.0, l.body_top, l.w, l.body_bottom),
+        D2D1_ANTIALIAS_MODE_ALIASED,
+    );
+    for card in &l.cards {
+        gfx::fill_round(&rt, *card, px(8.0, s), pal.card);
+        gfx::stroke_round(&rt, gfx::inflate(*card, -0.5), px(8.0, s), pal.card_stroke, 1.0);
+    }
+    for sep in &l.seps {
+        gfx::fill_round(&rt, *sep, 0.0, pal.separator);
+    }
+    if let Some(rc) = l.stats {
+        paint_stats(&rt, fonts, pal, d, rc, s);
+    }
+    for p in l.controls.iter().filter(|p| p.in_body) {
+        paint_control(&rt, fonts, pal, d, p, s);
+    }
+    for label in l.labels.iter().filter(|lb| lb.kind != TextKind::Title) {
+        paint_label(&rt, fonts, pal, d, label, s);
+    }
+    rt.PopAxisAlignedClip();
 
-    text(
+    // Chrome: title, close, tabs and footer.
+    for label in l.labels.iter().filter(|lb| lb.kind == TextKind::Title) {
+        paint_label(&rt, fonts, pal, d, label, s);
+    }
+    gfx::fill_round(
         &rt,
-        dwrite,
-        "Unseat",
-        l.title,
-        px(16.0, s),
-        DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
+        gfx::rect(0.0, l.body_bottom, l.w, l.body_bottom + px(1.0, s)),
+        0.0,
+        pal.separator,
     );
-    text(
-        &rt,
-        dwrite,
-        "Timer",
-        l.timer_head,
-        head_sz,
-        DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        head,
-    );
-    fill_round(&rt, l.timer_card, card_r, card);
-    text(
-        &rt,
-        dwrite,
-        "Limit",
-        l.row_label(l.sitting_row, l.step_limit.minus.left - px(8.0, s)),
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    paint_step(&rt, dwrite, &*dlg, &l, Field::Limit, hover);
-    fill_round(
-        &rt,
-        rct(
-            l.timer_card.left + px(12.0, s),
-            l.sitting_row.bottom,
-            l.timer_card.right - px(12.0, s),
-            l.sitting_row.bottom + px(1.0, s),
-        ),
-        0.5,
-        sep,
-    );
-    text(
-        &rt,
-        dwrite,
-        "Step",
-        l.row_label(l.step_row, l.step_incr.minus.left - px(8.0, s)),
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    paint_step(&rt, dwrite, &*dlg, &l, Field::Step, hover);
-    fill_round(
-        &rt,
-        rct(
-            l.timer_card.left + px(12.0, s),
-            l.step_row.bottom,
-            l.timer_card.right - px(12.0, s),
-            l.step_row.bottom + px(1.0, s),
-        ),
-        0.5,
-        sep,
-    );
-    text(
-        &rt,
-        dwrite,
-        "Timer display",
-        l.row_label(
-            l.timer_display_row,
-            l.timer_display_choices[0].left - px(8.0, s),
-        ),
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    for (i, mode) in TimerDisplayMode::ALL.iter().enumerate() {
-        let on = *mode == (*dlg).timer_display_mode;
-        fill_round(
-            &rt,
-            l.timer_display_choices[i],
-            px(8.0, s),
-            if on {
-                rgb(0x0A, 0x84, 0xFF, 1.0)
-            } else {
-                rgb(0x3A, 0x3A, 0x3C, 1.0)
-            },
+    for p in l.controls.iter().filter(|p| !p.in_body) {
+        paint_control(&rt, fonts, pal, d, p, s);
+    }
+    if !d.app.is_null() {
+        let today = format!(
+            "Today {}",
+            format_today_hm((*d.app).engine.snapshot().today_sitting)
         );
-        text(
+        gfx::text(
             &rt,
-            dwrite,
-            mode.chip_label(),
-            l.timer_display_choices[i],
-            chip_sz,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_TEXT_ALIGNMENT_CENTER,
-            if on {
-                rgb(255, 255, 255, 1.0)
-            } else {
-                rgb(0xEB, 0xEB, 0xF5, 0.92)
-            },
+            fonts,
+            Family::Ui,
+            &today,
+            l.today,
+            px(12.0, s),
+            gfx::REGULAR,
+            gfx::LEADING,
+            pal.text_secondary,
         );
     }
-    fill_round(
-        &rt,
-        rct(
-            l.timer_card.left + px(12.0, s),
-            l.timer_display_row.bottom,
-            l.timer_card.right - px(12.0, s),
-            l.timer_display_row.bottom + px(1.0, s),
-        ),
-        0.5,
-        sep,
-    );
-    text(
-        &rt,
-        dwrite,
-        "Overlay size",
-        l.overlay_label,
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    for (i, sz) in WidgetSize::ALL.iter().enumerate() {
-        let on = *sz == (*dlg).size;
-        fill_round(
+    if scroll_max > 0.0 {
+        let view = l.body_bottom - l.body_top;
+        let thumb_h = (view * view / l.content_h).max(px(28.0, s));
+        let thumb_y = l.body_top + d.scroll / scroll_max * (view - thumb_h);
+        gfx::fill_round(
             &rt,
-            l.sizes[i],
-            px(8.0, s),
-            if on {
-                rgb(0x0A, 0x84, 0xFF, 1.0)
-            } else {
-                rgb(0x3A, 0x3A, 0x3C, 1.0)
-            },
-        );
-        text(
-            &rt,
-            dwrite,
-            sz.chip_label(),
-            l.sizes[i],
-            chip_sz,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_TEXT_ALIGNMENT_CENTER,
-            if on {
-                rgb(255, 255, 255, 1.0)
-            } else {
-                rgb(0xEB, 0xEB, 0xF5, 0.92)
-            },
-        );
-    }
-
-    text(
-        &rt,
-        dwrite,
-        "Breaks",
-        l.breaks_head,
-        head_sz,
-        DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        head,
-    );
-    fill_round(&rt, l.breaks_card, card_r, card);
-    text(
-        &rt,
-        dwrite,
-        "Break length",
-        l.row_label(l.break_row, l.step_break.minus.left - px(8.0, s)),
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    paint_step(&rt, dwrite, &*dlg, &l, Field::Break, hover);
-    fill_round(
-        &rt,
-        rct(
-            l.breaks_card.left + px(12.0, s),
-            l.idle_row.top,
-            l.breaks_card.right - px(12.0, s),
-            l.idle_row.top + px(1.0, s),
-        ),
-        0.5,
-        sep,
-    );
-    text(
-        &rt,
-        dwrite,
-        "Idle starts break",
-        l.row_label(l.idle_row, l.step_idle.minus.left - px(8.0, s)),
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    paint_step(&rt, dwrite, &*dlg, &l, Field::Idle, hover);
-    fill_round(
-        &rt,
-        rct(
-            l.breaks_card.left + px(12.0, s),
-            l.inactivity_row.top,
-            l.breaks_card.right - px(12.0, s),
-            l.inactivity_row.top + px(1.0, s),
-        ),
-        0.5,
-        sep,
-    );
-    text(
-        &rt,
-        dwrite,
-        "When inactive",
-        l.row_label(l.inactivity_row, l.inactivity_choices[0].left - px(8.0, s)),
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    for (i, behavior) in InactivityBehavior::ALL.iter().enumerate() {
-        let on = *behavior == (*dlg).inactivity_behavior;
-        fill_round(
-            &rt,
-            l.inactivity_choices[i],
-            px(8.0, s),
-            if on {
-                rgb(0x0A, 0x84, 0xFF, 1.0)
-            } else {
-                rgb(0x3A, 0x3A, 0x3C, 1.0)
-            },
-        );
-        text(
-            &rt,
-            dwrite,
-            behavior.chip_label(),
-            l.inactivity_choices[i],
-            chip_sz,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_TEXT_ALIGNMENT_CENTER,
-            if on {
-                rgb(255, 255, 255, 1.0)
-            } else {
-                rgb(0xEB, 0xEB, 0xF5, 0.92)
-            },
-        );
-    }
-
-    text(
-        &rt,
-        dwrite,
-        "Alerts",
-        l.alerts_head,
-        head_sz,
-        DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        head,
-    );
-    fill_round(&rt, l.alerts_card, card_r, card);
-    text(
-        &rt,
-        dwrite,
-        "Sound",
-        l.row_label(l.sound, l.preview.left - px(8.0, s)),
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    fill_round(
-        &rt,
-        l.preview,
-        px(8.0, s),
-        if hover == Hit::Preview {
-            rgb(0x48, 0x48, 0x4A, 1.0)
-        } else {
-            rgb(0x3A, 0x3A, 0x3C, 1.0)
-        },
-    );
-    text(
-        &rt,
-        dwrite,
-        "Preview",
-        l.preview,
-        px(10.0, s),
-        DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_TEXT_ALIGNMENT_CENTER,
-        rgb(0xEB, 0xEB, 0xF5, 0.95),
-    );
-    toggle(&rt, l.sound, (*dlg).sound, s);
-    for (i, kind) in AlertSound::ALL.iter().enumerate() {
-        let on = *kind == (*dlg).sound_kind;
-        fill_round(
-            &rt,
-            l.sounds[i],
-            px(8.0, s),
-            if on {
-                rgb(0x0A, 0x84, 0xFF, 1.0)
-            } else {
-                rgb(0x3A, 0x3A, 0x3C, 1.0)
-            },
-        );
-        text(
-            &rt,
-            dwrite,
-            kind.chip_label(),
-            l.sounds[i],
-            px(10.0, s),
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_TEXT_ALIGNMENT_CENTER,
-            if on {
-                rgb(255, 255, 255, 1.0)
-            } else {
-                rgb(0xEB, 0xEB, 0xF5, 0.92)
-            },
-        );
-    }
-    text(
-        &rt,
-        dwrite,
-        "Alert length",
-        l.duration_label,
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    for (i, secs) in ALERT_DURATION_PRESETS_SECS.iter().enumerate() {
-        let on = (*dlg).alert_duration == *secs;
-        let caption = if *secs == 0 {
-            "Once".to_string()
-        } else {
-            format!("{secs}s")
-        };
-        fill_round(
-            &rt,
-            l.durations[i],
-            px(8.0, s),
-            if on {
-                rgb(0x0A, 0x84, 0xFF, 1.0)
-            } else {
-                rgb(0x3A, 0x3A, 0x3C, 1.0)
-            },
-        );
-        text(
-            &rt,
-            dwrite,
-            &caption,
-            l.durations[i],
-            chip_sz,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_TEXT_ALIGNMENT_CENTER,
-            if on {
-                rgb(255, 255, 255, 1.0)
-            } else {
-                rgb(0xEB, 0xEB, 0xF5, 0.92)
-            },
-        );
-    }
-    fill_round(
-        &rt,
-        rct(
-            l.alerts_card.left + px(12.0, s),
-            l.repeat.top,
-            l.alerts_card.right - px(12.0, s),
-            l.repeat.top + px(1.0, s),
-        ),
-        0.5,
-        sep,
-    );
-    text(
-        &rt,
-        dwrite,
-        "Repeat while overdue",
-        l.row_label(l.repeat, l.repeat.right - px(50.0, s)),
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    toggle(&rt, l.repeat, (*dlg).repeat, s);
-    fill_round(
-        &rt,
-        rct(
-            l.alerts_card.left + px(12.0, s),
-            l.every_row.top,
-            l.alerts_card.right - px(12.0, s),
-            l.every_row.top + px(1.0, s),
-        ),
-        0.5,
-        sep,
-    );
-    text(
-        &rt,
-        dwrite,
-        "Remind every",
-        l.row_label(l.every_row, l.step_every.minus.left - px(8.0, s)),
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    paint_step(&rt, dwrite, &*dlg, &l, Field::Every, hover);
-
-    text(
-        &rt,
-        dwrite,
-        "Snooze",
-        l.snooze_head,
-        head_sz,
-        DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        head,
-    );
-    fill_round(&rt, l.snooze_card, card_r, card);
-    for (i, mins) in SNOOZE_PRESETS_SECS.iter().map(|secs| secs / 60).enumerate() {
-        let on = (*dlg).snooze_min == mins;
-        fill_round(
-            &rt,
-            l.snoozes[i],
-            px(8.0, s),
-            if on {
-                rgb(0x0A, 0x84, 0xFF, 1.0)
-            } else {
-                rgb(0x3A, 0x3A, 0x3C, 1.0)
-            },
-        );
-        text(
-            &rt,
-            dwrite,
-            &format!("{mins}m"),
-            l.snoozes[i],
-            chip_sz,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_TEXT_ALIGNMENT_CENTER,
-            if on {
-                rgb(255, 255, 255, 1.0)
-            } else {
-                rgb(0xEB, 0xEB, 0xF5, 0.92)
-            },
-        );
-    }
-    fill_round(
-        &rt,
-        rct(
-            l.snooze_card.left + px(12.0, s),
-            l.snooze_row.top,
-            l.snooze_card.right - px(12.0, s),
-            l.snooze_row.top + px(1.0, s),
-        ),
-        0.5,
-        sep,
-    );
-    text(
-        &rt,
-        dwrite,
-        "Custom",
-        l.row_label(l.snooze_row, l.step_snooze.minus.left - px(8.0, s)),
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    paint_step(&rt, dwrite, &*dlg, &l, Field::Snooze, hover);
-
-    text(
-        &rt,
-        dwrite,
-        "System",
-        l.system_head,
-        head_sz,
-        DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        head,
-    );
-    fill_round(&rt, l.auto, card_r, card);
-    text(
-        &rt,
-        dwrite,
-        "Launch with Windows",
-        l.row_label(l.auto, l.auto.right - px(50.0, s)),
-        label_sz,
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        label,
-    );
-    toggle(&rt, l.auto, (*dlg).auto, s);
-
-    let today = if (*dlg).app.is_null() {
-        String::new()
-    } else {
-        format_today((*(*dlg).app).engine.snapshot().today_sitting)
-    };
-    text(
-        &rt,
-        dwrite,
-        &today,
-        l.today,
-        px(10.0, s),
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        head,
-    );
-
-    let btn_r = px(BTN_RADIUS, s);
-    fill_round(
-        &rt,
-        l.cancel,
-        btn_r,
-        if hover == Hit::Cancel {
-            rgb(0x48, 0x48, 0x4A, 1.0)
-        } else {
-            rgb(0x3A, 0x3A, 0x3C, 1.0)
-        },
-    );
-    text(
-        &rt,
-        dwrite,
-        "Cancel",
-        l.cancel,
-        px(12.0, s),
-        DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_TEXT_ALIGNMENT_CENTER,
-        label,
-    );
-    fill_round(
-        &rt,
-        l.save,
-        btn_r,
-        if hover == Hit::Save {
-            rgb(0x40, 0x9C, 0xFF, 1.0)
-        } else {
-            rgb(0x0A, 0x84, 0xFF, 1.0)
-        },
-    );
-    text(
-        &rt,
-        dwrite,
-        "Save",
-        l.save,
-        px(12.0, s),
-        DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_TEXT_ALIGNMENT_CENTER,
-        rgb(255, 255, 255, 1.0),
-    );
-
-    fill_round(&rt, l.close, px(12.0, s), rgb(0x3A, 0x3A, 0x3C, 1.0));
-    text(
-        &rt,
-        dwrite,
-        "\u{00D7}",
-        l.close,
-        px(14.0, s),
-        DWRITE_FONT_WEIGHT_MEDIUM,
-        DWRITE_TEXT_ALIGNMENT_CENTER,
-        rgb(0xEB, 0xEB, 0xF5, 1.0),
-    );
-
-    rt.SetTransform(&Matrix3x2 {
-        M11: 1.0,
-        M12: 0.0,
-        M21: 0.0,
-        M22: 1.0,
-        M31: 0.0,
-        M32: 0.0,
-    });
-    stroke_round(
-        &rt,
-        rct(0.5, 0.5, viewport_w - 0.5, viewport_h - 0.5),
-        px(12.0, s),
-        rgb(0x63, 0x63, 0x66, 0.90),
-        px(1.0, s),
-    );
-    let max_scroll = (l.h - viewport_h).max(0.0);
-    if max_scroll > 0.0 {
-        let track_h = (viewport_h - px(24.0, s)).max(px(24.0, s));
-        let thumb_h = (track_h * viewport_h / l.h).max(px(24.0, s));
-        let thumb_y = px(12.0, s) + scroll_y / max_scroll * (track_h - thumb_h);
-        fill_round(
-            &rt,
-            rct(
-                viewport_w - px(5.0, s),
-                thumb_y,
-                viewport_w - px(2.0, s),
-                thumb_y + thumb_h,
-            ),
+            gfx::rect(l.w - px(6.0, s), thumb_y, l.w - px(3.0, s), thumb_y + thumb_h),
             px(1.5, s),
-            rgb(0x8E, 0x8E, 0x93, 0.70),
+            gfx::fade(pal.text_secondary, 0.6),
         );
     }
-
-    let _ = rt.EndDraw(None, None);
-}
-
-unsafe fn preview(dlg: *mut Dialog) {
-    if dlg.is_null() || (*dlg).app.is_null() {
-        return;
-    }
-    (*(*dlg).app).settings.widget_size = (*dlg).size;
-    (*(*dlg).app).force_repaint();
-}
-
-unsafe fn set_field(dlg: *mut Dialog, field: Field, value: u64) {
-    match field {
-        Field::Limit => (*dlg).sitting_min = value,
-        Field::Step => (*dlg).step = value,
-        Field::Break => (*dlg).break_min = value,
-        Field::Idle => (*dlg).idle_sec = value,
-        Field::Every => (*dlg).every_min = value,
-        Field::Snooze => (*dlg).snooze_min = value,
+    gfx::stroke_round(
+        &rt,
+        gfx::rect(0.5, 0.5, l.w - 0.5, l.h - 0.5),
+        px(8.0, s),
+        pal.window_stroke,
+        1.0,
+    );
+    if rt.EndDraw(None, None).is_err() {
+        // Device lost: rebuild the render target on the next paint.
+        (*(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Dialog)).rt = None;
     }
 }
 
-unsafe fn step_field(dlg: *mut Dialog, field: Field, dir: i32) {
-    let current = field_value(&*dlg, field);
-    let delta = if field == Field::Step || field == Field::Snooze {
-        1
-    } else {
-        (*dlg).step.max(1)
+unsafe fn paint_label(
+    rt: &ID2D1RenderTarget,
+    fonts: &Fonts,
+    pal: &Palette,
+    d: &Dialog,
+    label: &Label,
+    s: f32,
+) {
+    let (size, weight) = label_style(label.kind, s);
+    let on = label.owner.map_or(true, |c| enabled(c, &d.draft));
+    let color = match label.kind {
+        _ if !on => pal.text_disabled,
+        TextKind::Head | TextKind::Hint | TextKind::Note => pal.text_secondary,
+        _ => pal.text,
     };
-    let next = if dir < 0 {
-        current.saturating_sub(delta).max(field.min())
+    if label.kind == TextKind::Note {
+        gfx::text_wrapped(rt, fonts, label.text, label.rect, size, color);
     } else {
-        current.saturating_add(delta).min(field.max())
-    };
-    set_field(dlg, field, next);
+        gfx::text(
+            rt,
+            fonts,
+            Family::Ui,
+            label.text,
+            label.rect,
+            size,
+            weight,
+            gfx::LEADING,
+            color,
+        );
+    }
 }
 
-unsafe fn on_click(hwnd: HWND, dlg: *mut Dialog, hit: Hit) {
-    match hit {
-        Hit::Close | Hit::Cancel => close(hwnd),
-        Hit::Save => save(hwnd),
-        Hit::Size(i) => {
-            (*dlg).size = WidgetSize::from_index(i);
-            preview(dlg);
-            let _ = InvalidateRect(hwnd, None, false);
+unsafe fn paint_focus(rt: &ID2D1RenderTarget, pal: &Palette, rc: D2D_RECT_F, radius: f32, s: f32) {
+    gfx::stroke_round(
+        rt,
+        gfx::inflate(rc, px(2.5, s)),
+        radius + px(2.5, s),
+        pal.focus,
+        px(2.0, s),
+    );
+}
+
+fn hovered(d: &Dialog, ctl: Ctl, part: Part) -> bool {
+    d.hover == Some(Target { ctl, part })
+}
+
+fn hovered_any(d: &Dialog, ctl: Ctl) -> bool {
+    d.hover.is_some_and(|t| t.ctl == ctl)
+}
+
+fn button_fill(pal: &Palette, d: &Dialog, ctl: Ctl, part: Part) -> Rgba {
+    if d.pressed == Some(Target { ctl, part }) {
+        pal.control_pressed
+    } else if hovered(d, ctl, part) {
+        pal.control_hover
+    } else {
+        pal.control
+    }
+}
+
+fn center(rc: D2D_RECT_F) -> (f32, f32) {
+    ((rc.left + rc.right) / 2.0, (rc.top + rc.bottom) / 2.0)
+}
+
+unsafe fn paint_control(
+    rt: &ID2D1RenderTarget,
+    fonts: &Fonts,
+    pal: &Palette,
+    d: &Dialog,
+    p: &Placed,
+    s: f32,
+) {
+    let draft = &d.draft;
+    let on = enabled(p.ctl, draft);
+    let ink = if on { pal.text } else { pal.text_disabled };
+    let focused = d.focus_visible && d.focus == p.ctl;
+    let r = px(6.0, s);
+    match p.ctl {
+        Ctl::Close => {
+            if hovered_any(d, Ctl::Close) {
+                gfx::fill_round(rt, p.rect, r, pal.control_hover);
+            }
+            let (cx, cy) = center(p.rect);
+            let arm = px(5.0, s);
+            let w = px(1.4, s);
+            gfx::line(rt, (cx - arm, cy - arm), (cx + arm, cy + arm), pal.text_secondary, w);
+            gfx::line(rt, (cx + arm, cy - arm), (cx - arm, cy + arm), pal.text_secondary, w);
         }
-        Hit::Sound => {
-            (*dlg).sound = !(*dlg).sound;
-            let _ = InvalidateRect(hwnd, None, false);
-        }
-        Hit::Preview => {
-            if !(*dlg).app.is_null() {
-                (*(*dlg).app).preview_sound(
-                    (*dlg).sound_kind,
-                    (*dlg).alert_duration,
-                    (*(*dlg).app).settings.alert_volume,
+        Ctl::Tabs => {
+            gfx::fill_round(rt, p.rect, px(8.0, s), pal.control);
+            for (part, rc) in &p.parts {
+                let Part::Option(i) = *part else { continue };
+                let selected = Tab::ALL[i] == d.tab;
+                let seg = gfx::inflate(*rc, -px(3.0, s));
+                if selected {
+                    gfx::fill_round(rt, seg, px(6.0, s), pal.card);
+                    gfx::stroke_round(rt, seg, px(6.0, s), pal.card_stroke, 1.0);
+                } else if hovered(d, Ctl::Tabs, *part) {
+                    gfx::fill_round(rt, seg, px(6.0, s), pal.control_hover);
+                }
+                gfx::text(
+                    rt,
+                    fonts,
+                    Family::Ui,
+                    Tab::ALL[i].label(),
+                    *rc,
+                    px(12.5, s),
+                    if selected { gfx::SEMIBOLD } else { gfx::REGULAR },
+                    gfx::CENTER,
+                    if selected { pal.text } else { pal.text_secondary },
                 );
             }
-        }
-        Hit::SoundKind(i) => {
-            (*dlg).sound_kind = AlertSound::from_index(i);
-            let _ = InvalidateRect(hwnd, None, false);
-        }
-        Hit::Duration(i) => {
-            if let Some(secs) = ALERT_DURATION_PRESETS_SECS.get(i).copied() {
-                (*dlg).alert_duration = secs;
-                let _ = InvalidateRect(hwnd, None, false);
+            if focused {
+                paint_focus(rt, pal, p.rect, px(8.0, s), s);
             }
         }
-        Hit::SnoozePreset(i) => {
-            if let Some(secs) = SNOOZE_PRESETS_SECS.get(i).copied() {
-                (*dlg).snooze_min = secs / 60;
-                let _ = InvalidateRect(hwnd, None, false);
+        Ctl::Step(field) => {
+            for (part, rc) in &p.parts {
+                if matches!(part, Part::Minus | Part::Plus) {
+                    let fill = if on {
+                        button_fill(pal, d, p.ctl, *part)
+                    } else {
+                        pal.control
+                    };
+                    gfx::fill_round(rt, *rc, r, fill);
+                    let glyph = if *part == Part::Minus { "\u{2212}" } else { "+" };
+                    gfx::text(
+                        rt,
+                        fonts,
+                        Family::Ui,
+                        glyph,
+                        *rc,
+                        px(15.0, s),
+                        gfx::MEDIUM,
+                        gfx::CENTER,
+                        ink,
+                    );
+                } else {
+                    let mid = rc.left + (rc.right - rc.left) * 0.56;
+                    gfx::text(
+                        rt,
+                        fonts,
+                        Family::Ui,
+                        &field.get(draft).to_string(),
+                        gfx::rect(rc.left, rc.top, mid, rc.bottom),
+                        px(13.5, s),
+                        gfx::SEMIBOLD,
+                        gfx::TRAILING,
+                        ink,
+                    );
+                    gfx::text(
+                        rt,
+                        fonts,
+                        Family::Ui,
+                        field.unit(),
+                        gfx::rect(mid + px(4.0, s), rc.top, rc.right, rc.bottom),
+                        px(11.5, s),
+                        gfx::REGULAR,
+                        gfx::LEADING,
+                        if on { pal.text_secondary } else { pal.text_disabled },
+                    );
+                }
+            }
+            if focused {
+                paint_focus(rt, pal, p.rect, r, s);
             }
         }
-        Hit::TimerDisplay(i) => {
-            (*dlg).timer_display_mode = TimerDisplayMode::from_index(i);
-            let _ = InvalidateRect(hwnd, None, false);
+        Ctl::Flag(flag) => {
+            let value = flag.get(draft);
+            let track = p.parts[0].1;
+            let h = track.bottom - track.top;
+            let hot = hovered_any(d, p.ctl);
+            let fill = match (value, hot) {
+                (true, true) => pal.accent_hover,
+                (true, false) => pal.accent,
+                (false, true) => pal.text_secondary,
+                (false, false) => pal.toggle_off,
+            };
+            gfx::fill_round(rt, track, h / 2.0, fill);
+            let knob = h - px(6.0, s);
+            let kx = if value {
+                track.right - px(3.0, s) - knob
+            } else {
+                track.left + px(3.0, s)
+            };
+            let ky = track.top + px(3.0, s);
+            gfx::fill_round(
+                rt,
+                gfx::rect(kx, ky, kx + knob, ky + knob),
+                knob / 2.0,
+                pal.knob,
+            );
+            if focused {
+                paint_focus(rt, pal, track, h / 2.0, s);
+            }
         }
-        Hit::Inactivity(i) => {
-            (*dlg).inactivity_behavior = InactivityBehavior::from_index(i);
-            let _ = InvalidateRect(hwnd, None, false);
+        Ctl::Group(group) => {
+            gfx::fill_round(rt, p.rect, px(7.0, s), pal.control);
+            let selected = group.get(draft);
+            let options = group.options();
+            for (part, rc) in &p.parts {
+                let Part::Option(i) = *part else { continue };
+                let seg = gfx::inflate(*rc, -px(2.0, s));
+                let is_sel = selected == Some(i);
+                if is_sel {
+                    let fill = if on { pal.accent } else { pal.toggle_off };
+                    gfx::fill_round(rt, seg, px(5.0, s), fill);
+                } else if on && hovered(d, p.ctl, *part) {
+                    gfx::fill_round(rt, seg, px(5.0, s), pal.control_hover);
+                }
+                gfx::text(
+                    rt,
+                    fonts,
+                    Family::Ui,
+                    &options[i],
+                    *rc,
+                    px(12.0, s),
+                    if is_sel { gfx::SEMIBOLD } else { gfx::REGULAR },
+                    gfx::CENTER,
+                    if is_sel { pal.on_accent } else { ink },
+                );
+            }
+            if focused {
+                paint_focus(rt, pal, p.rect, px(7.0, s), s);
+            }
         }
-        Hit::Repeat => {
-            (*dlg).repeat = !(*dlg).repeat;
-            let _ = InvalidateRect(hwnd, None, false);
+        Ctl::Volume => {
+            let (_, mid) = center(p.rect);
+            let th = px(4.0, s);
+            let track = gfx::rect(p.rect.left, mid - th / 2.0, p.rect.right, mid + th / 2.0);
+            let kx = track.left + (track.right - track.left) * f32::from(draft.alert_volume) / 100.0;
+            gfx::fill_round(rt, track, th / 2.0, pal.toggle_off);
+            gfx::fill_round(
+                rt,
+                gfx::rect(track.left, track.top, kx, track.bottom),
+                th / 2.0,
+                if on { pal.accent } else { pal.text_disabled },
+            );
+            let kr = px(if hovered_any(d, Ctl::Volume) || d.dragging_volume { 8.0 } else { 7.0 }, s);
+            let knob = gfx::rect(kx - kr, mid - kr, kx + kr, mid + kr);
+            gfx::fill_round(rt, knob, kr, pal.knob);
+            gfx::stroke_round(rt, knob, kr, pal.window_stroke, 1.0);
+            gfx::text(
+                rt,
+                fonts,
+                Family::Ui,
+                &format!("{}%", draft.alert_volume),
+                gfx::rect(p.rect.right + px(10.0, s), p.rect.top, p.rect.right + px(48.0, s), p.rect.bottom),
+                px(12.0, s),
+                gfx::REGULAR,
+                gfx::LEADING,
+                if on { pal.text_secondary } else { pal.text_disabled },
+            );
+            if focused {
+                paint_focus(rt, pal, knob, kr, s);
+            }
         }
-        Hit::Auto => {
-            (*dlg).auto = !(*dlg).auto;
-            let _ = InvalidateRect(hwnd, None, false);
+        Ctl::Preview | Ctl::Defaults | Ctl::Cancel | Ctl::Save => {
+            let primary = p.ctl == Ctl::Save;
+            let fill = if primary {
+                if hovered_any(d, p.ctl) {
+                    pal.accent_hover
+                } else {
+                    pal.accent
+                }
+            } else if on {
+                button_fill(pal, d, p.ctl, Part::Whole)
+            } else {
+                pal.control
+            };
+            gfx::fill_round(rt, p.rect, r, fill);
+            let caption = match p.ctl {
+                Ctl::Preview => "Test",
+                Ctl::Defaults => "Restore",
+                Ctl::Cancel => "Cancel",
+                _ => "Save",
+            };
+            let color = if primary { pal.on_accent } else { ink };
+            if p.ctl == Ctl::Preview {
+                let icon = gfx::rect(p.rect.left + px(8.0, s), p.rect.top, p.rect.left + px(28.0, s), p.rect.bottom);
+                gfx::text(rt, fonts, Family::Icons, glyph::VOLUME, icon, px(13.0, s), gfx::REGULAR, gfx::CENTER, color);
+                let label = gfx::rect(icon.right, p.rect.top, p.rect.right - px(6.0, s), p.rect.bottom);
+                gfx::text(rt, fonts, Family::Ui, caption, label, px(12.5, s), gfx::SEMIBOLD, gfx::CENTER, color);
+            } else {
+                gfx::text(rt, fonts, Family::Ui, caption, p.rect, px(13.0, s), gfx::SEMIBOLD, gfx::CENTER, color);
+            }
+            if focused {
+                paint_focus(rt, pal, p.rect, r, s);
+            }
         }
-        Hit::Minus(field) => {
-            step_field(dlg, field, -1);
-            let _ = InvalidateRect(hwnd, None, false);
-        }
-        Hit::Plus(field) => {
-            step_field(dlg, field, 1);
-            let _ = InvalidateRect(hwnd, None, false);
-        }
-        Hit::None => {}
+    }
+}
+
+unsafe fn paint_stats(
+    rt: &ID2D1RenderTarget,
+    fonts: &Fonts,
+    pal: &Palette,
+    d: &Dialog,
+    rc: D2D_RECT_F,
+    s: f32,
+) {
+    let (today, today_secs, history) = if d.app.is_null() {
+        (
+            CivilDate {
+                year: 2026,
+                month: 1,
+                day: 1,
+            },
+            0,
+            Vec::new(),
+        )
+    } else {
+        let app = &*d.app;
+        (
+            crate::win::app::local_date(),
+            app.engine.snapshot().today_sitting.as_secs(),
+            app.settings.history.clone(),
+        )
+    };
+    let bars = recent_days(&history, today, today_secs, 7);
+    let caption = format!(
+        "Today {}   ·   7-day average {}",
+        format_today_hm(std::time::Duration::from_secs(today_secs)),
+        format_today_hm(std::time::Duration::from_secs(average_secs(&bars)))
+    );
+    gfx::text(
+        rt,
+        fonts,
+        Family::Ui,
+        &caption,
+        gfx::rect(rc.left, rc.top, rc.right, rc.top + px(20.0, s)),
+        px(12.0, s),
+        gfx::REGULAR,
+        gfx::LEADING,
+        pal.text_secondary,
+    );
+    let chart = gfx::rect(rc.left, rc.top + px(28.0, s), rc.right, rc.bottom - px(16.0, s));
+    let tallest = bars.iter().map(|b| b.sitting_secs).max().unwrap_or(0).max(3600) as f32;
+    let slot = (chart.right - chart.left) / bars.len() as f32;
+    let bw = (slot * 0.46).min(px(22.0, s));
+    let full = chart.bottom - chart.top;
+    for (i, bar) in bars.iter().enumerate() {
+        let cx = chart.left + slot * (i as f32 + 0.5);
+        let h = (bar.sitting_secs as f32 / tallest * full).max(px(3.0, s));
+        gfx::fill_round(
+            rt,
+            gfx::rect(cx - bw / 2.0, chart.top, cx + bw / 2.0, chart.bottom),
+            px(3.0, s),
+            pal.control,
+        );
+        gfx::fill_round(
+            rt,
+            gfx::rect(cx - bw / 2.0, chart.bottom - h, cx + bw / 2.0, chart.bottom),
+            px(3.0, s),
+            if bar.is_today {
+                pal.accent
+            } else {
+                gfx::fade(pal.accent, 0.5)
+            },
+        );
+        gfx::text(
+            rt,
+            fonts,
+            Family::Ui,
+            weekday_initial(bar.date),
+            gfx::rect(cx - slot / 2.0, chart.bottom + px(2.0, s), cx + slot / 2.0, chart.bottom + px(16.0, s)),
+            px(10.5, s),
+            if bar.is_today { gfx::SEMIBOLD } else { gfx::REGULAR },
+            gfx::CENTER,
+            if bar.is_today { pal.text } else { pal.text_secondary },
+        );
     }
 }
 
@@ -1850,40 +1976,38 @@ unsafe fn save(hwnd: HWND) {
     if dlg.is_null() || (*dlg).app.is_null() {
         return;
     }
-    let app = (*dlg).app;
-    let autostart_changed = (*app).settings.launch_with_windows != (*dlg).auto;
-    (*app).sync_engine_clock();
-    (*app).settings.sitting_limit_secs = (*dlg).sitting_min.saturating_mul(60);
-    (*app).settings.break_duration_secs = (*dlg).break_min.saturating_mul(60);
-    (*app).settings.idle_after_secs = (*dlg).idle_sec;
-    (*app).settings.timer_display_mode = (*dlg).timer_display_mode;
-    (*app).settings.inactivity_behavior = (*dlg).inactivity_behavior;
-    (*app).settings.repeat_every_secs = (*dlg).every_min.saturating_mul(60);
-    (*app).settings.step = (*dlg).step;
-    (*app).settings.sound_enabled = (*dlg).sound;
-    (*app).settings.repeat_reminders = (*dlg).repeat;
-    (*app).settings.alert_sound = (*dlg).sound_kind;
-    (*app).settings.alert_duration_secs = (*dlg).alert_duration;
-    (*app).settings.snooze_secs = (*dlg).snooze_min.saturating_mul(60);
-    (*app).settings.launch_with_windows = (*dlg).auto;
-    (*app).settings.widget_size = (*dlg).size;
-    (*app).settings.clamp();
-    (*app)
-        .engine
-        .set_config(unseat::EngineConfig::from_settings(&(*app).settings));
-    (*app).sync_engine_clock();
-    if autostart_changed {
-        crate::win::autostart::apply((*app).settings.launch_with_windows);
-    }
-    (*app).persist_today();
-    (*app).force_repaint();
+    let mut next = (*dlg).draft.clone();
+    next.clamp();
+    (*(*dlg).app).apply_settings(next);
     (*dlg).saved = true;
     close(hwnd);
+}
+
+unsafe fn close(hwnd: HWND) {
+    let dlg = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Dialog;
+    if !dlg.is_null() && !(*dlg).saved && !(*dlg).app.is_null() {
+        let (size, theme, on_top) = (*dlg).revert;
+        (*(*dlg).app).preview_appearance(size, theme, on_top);
+    }
+    let _ = DestroyWindow(hwnd);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn all_layouts(scale: f32) -> Vec<(Tab, Lay)> {
+        let d = Settings::default();
+        let h = window_logical_h() * scale;
+        Tab::ALL
+            .iter()
+            .map(|&t| (t, layout(t, &d, scale, h, 0.0)))
+            .collect()
+    }
+
+    fn overlaps(a: D2D_RECT_F, b: D2D_RECT_F) -> bool {
+        a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+    }
 
     #[test]
     fn settings_window_is_capped_and_clamped_to_the_monitor_work_area() {
@@ -1891,45 +2015,184 @@ mod tests {
             left: 0,
             top: 0,
             right: 1920,
-            bottom: 1040,
+            bottom: 900,
         };
-
-        assert_eq!(fit_window_to_work_area(work, 1.25), (120, 12, 375, 1016));
+        let (x, y, w, h) = fit_window_to_work_area(work, 1.5);
+        assert_eq!(w, 570);
+        assert_eq!(h, 900 - WORK_AREA_MARGIN * 2);
+        assert!(x >= WORK_AREA_MARGIN && x + w <= 1920 - WORK_AREA_MARGIN);
+        assert_eq!(y, WORK_AREA_MARGIN);
     }
 
     #[test]
-    fn scrolling_reaches_the_footer_and_clamps_at_both_ends() {
-        let content_height = 1095.0;
-        let viewport_height = 1016.0;
-
-        assert_eq!(
-            scroll_after_wheel(0.0, -120, 1.25, content_height, viewport_height),
-            79.0
-        );
-        assert_eq!(
-            scroll_after_wheel(79.0, -120, 1.25, content_height, viewport_height),
-            79.0
-        );
-        assert_eq!(
-            scroll_after_wheel(79.0, 120, 1.25, content_height, viewport_height),
-            0.0
-        );
+    fn tallest_tab_fits_a_768_pixel_high_laptop_screen_at_100_percent() {
+        assert!(window_logical_h() <= 700.0, "{}", window_logical_h());
     }
-}
 
-unsafe fn close(hwnd: HWND) {
-    let dlg = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Dialog;
-    if !dlg.is_null() && !(*dlg).saved && !(*dlg).app.is_null() {
-        (*(*dlg).app).settings.widget_size = (*dlg).revert_size;
-        (*(*dlg).app).force_repaint();
+    #[test]
+    fn scrolling_clamps_at_both_ends() {
+        assert_eq!(scroll_after_wheel(0.0, -120, 1.0, 100.0), 60.0);
+        assert_eq!(scroll_after_wheel(90.0, -120, 1.0, 100.0), 100.0);
+        assert_eq!(scroll_after_wheel(30.0, 120, 1.0, 100.0), 0.0);
     }
-    let _ = DestroyWindow(hwnd);
-}
 
-pub fn shutdown() {
-    unsafe {
-        if let Ok(hwnd) = FindWindowW(CLASS, None) {
-            let _ = DestroyWindow(hwnd);
+    #[test]
+    fn every_tab_fits_without_scrolling_at_common_scales() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for (tab, l) in all_layouts(scale) {
+                assert!(max_scroll(&l) < 0.5, "{tab:?} scrolls at {scale}");
+            }
         }
+    }
+
+    #[test]
+    fn controls_stay_inside_the_window_and_never_overlap() {
+        for scale in [1.0, 1.5] {
+            for (tab, l) in all_layouts(scale) {
+                for p in &l.controls {
+                    assert!(p.rect.left >= 0.0 && p.rect.right <= l.w, "{tab:?} {:?}", p.ctl);
+                    assert!(p.rect.top >= 0.0 && p.rect.bottom <= l.h, "{tab:?} {:?}", p.ctl);
+                }
+                // A toggle row's hit area is the whole row; its track is what is drawn.
+                let visual = |p: &Placed| {
+                    if matches!(p.ctl, Ctl::Flag(_)) {
+                        p.parts[0].1
+                    } else {
+                        p.rect
+                    }
+                };
+                for (i, a) in l.controls.iter().enumerate() {
+                    for b in &l.controls[i + 1..] {
+                        assert!(
+                            !overlaps(visual(a), visual(b)),
+                            "{tab:?}: {:?} overlaps {:?}",
+                            a.ctl,
+                            b.ctl
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn labels_never_run_into_their_controls() {
+        for (tab, l) in all_layouts(1.0) {
+            for label in l.labels.iter().filter(|lb| lb.kind == TextKind::Label) {
+                for p in l.controls.iter() {
+                    let rc = if matches!(p.ctl, Ctl::Flag(_)) {
+                        p.parts[0].1
+                    } else {
+                        p.rect
+                    };
+                    assert!(
+                        !overlaps(label.rect, rc),
+                        "{tab:?}: '{}' hits {:?}",
+                        label.text,
+                        p.ctl
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_setting_is_reachable_by_keyboard() {
+        let d = Settings {
+            inactivity_behavior: InactivityBehavior::Pause,
+            ..Settings::default()
+        };
+        let mut seen = Vec::new();
+        for tab in Tab::ALL {
+            let l = layout(tab, &d, 1.0, window_logical_h(), 0.0);
+            seen.extend(focus_order(&l, &d));
+        }
+        for ctl in [
+            Ctl::Tabs,
+            Ctl::Step(Field::Limit),
+            Ctl::Step(Field::Step),
+            Ctl::Step(Field::Break),
+            Ctl::Step(Field::Idle),
+            Ctl::Step(Field::Every),
+            Ctl::Step(Field::Snooze),
+            Ctl::Flag(Flag::PauseInactive),
+            Ctl::Flag(Flag::Sound),
+            Ctl::Flag(Flag::Repeat),
+            Ctl::Flag(Flag::Notify),
+            Ctl::Flag(Flag::Auto),
+            Ctl::Flag(Flag::OnTop),
+            Ctl::Flag(Flag::Hotkeys),
+            Ctl::Flag(Flag::Stats),
+            Ctl::Group(Group::Display),
+            Ctl::Group(Group::Size),
+            Ctl::Group(Group::SoundKind),
+            Ctl::Group(Group::Length),
+            Ctl::Group(Group::Snooze),
+            Ctl::Group(Group::Theme),
+            Ctl::Volume,
+            Ctl::Preview,
+            Ctl::Defaults,
+            Ctl::Cancel,
+            Ctl::Save,
+        ] {
+            assert!(seen.contains(&ctl), "{ctl:?} has no keyboard focus");
+        }
+    }
+
+    #[test]
+    fn dependent_controls_are_disabled_and_skipped_by_focus() {
+        let d = Settings::default();
+        assert!(!enabled(Ctl::Step(Field::Idle), &d), "idle threshold is moot while running");
+        let l = layout(Tab::Breaks, &d, 1.0, window_logical_h(), 0.0);
+        assert!(!focus_order(&l, &d).contains(&Ctl::Step(Field::Idle)));
+
+        let mut quiet = Settings::default();
+        quiet.sound_enabled = false;
+        assert!(!enabled(Ctl::Volume, &quiet));
+        assert!(!enabled(Ctl::Group(Group::SoundKind), &quiet));
+    }
+
+    #[test]
+    fn steppers_clamp_and_the_limit_moves_by_the_adjust_step() {
+        let mut s = Settings::default();
+        s.step = 5;
+        let next = Field::Limit.get(&s) + Field::Limit.delta(&s);
+        Field::Limit.set(&mut s, next);
+        assert_eq!(s.sitting_limit_secs, 65 * 60);
+        Field::Limit.set(&mut s, 1);
+        assert_eq!(s.sitting_limit_secs, 5 * 60);
+        Field::Idle.set(&mut s, 10_000);
+        assert_eq!(s.idle_after_secs, 600);
+        assert_eq!(Field::Idle.delta(&s), 5);
+    }
+
+    #[test]
+    fn hit_testing_finds_stepper_parts_and_ignores_the_footer_gap() {
+        let d = Settings::default();
+        let l = layout(Tab::Timer, &d, 1.0, window_logical_h(), 0.0);
+        let p = l.find(Ctl::Step(Field::Limit)).unwrap();
+        let plus = p.parts.iter().find(|(part, _)| *part == Part::Plus).unwrap().1;
+        let (x, y) = center(plus);
+        assert_eq!(
+            hit(&l, x, y),
+            Some(Target {
+                ctl: Ctl::Step(Field::Limit),
+                part: Part::Plus
+            })
+        );
+        assert_eq!(hit(&l, 2.0, l.body_bottom + 2.0), None);
+    }
+
+    #[test]
+    fn groups_and_flags_round_trip_through_settings() {
+        let mut s = Settings::default();
+        Group::Theme.set(&mut s, 2);
+        assert_eq!(s.theme, ThemePreference::Dark);
+        assert_eq!(Group::Theme.get(&s), Some(2));
+        s.snooze_secs = 7 * 60;
+        assert_eq!(Group::Snooze.get(&s), None, "custom snooze selects no preset");
+        Flag::PauseInactive.set(&mut s, true);
+        assert_eq!(s.inactivity_behavior, InactivityBehavior::Pause);
+        assert!(!Flag::PauseInactive.get(&Settings::default()));
     }
 }

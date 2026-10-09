@@ -1,6 +1,8 @@
 mod app;
 mod autostart;
 mod flyout;
+mod gfx;
+mod hotkeys;
 mod icon;
 mod idle;
 mod install;

@@ -1,73 +1,123 @@
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public static class UnseatNative5 {
-  [DllImport("user32.dll")]
-  public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)]
-  public static extern IntPtr FindWindowW(string lpClassName, IntPtr lpWindowName);
-  [DllImport("user32.dll")]
-  public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-  [DllImport("user32.dll")]
-  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int X, int Y, int cx, int cy, uint flags);
-  [DllImport("user32.dll")]
-  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")]
-  public static extern IntPtr SendMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-  [DllImport("user32.dll")]
-  public static extern bool PostMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-  public struct RECT { public int Left, Top, Right, Bottom; }
-}
-"@
-[void][UnseatNative5]::SetProcessDpiAwarenessContext([IntPtr](-4))
+# Captures README screenshots from a real Unseat test instance (UNSEAT_TEST_HOOKS=1).
+# The test instance uses its own settings folder and window titles, so it runs beside a
+# normal Unseat without touching it.
+#
+#   powershell -ExecutionPolicy Bypass -File scripts/capture_screens.ps1 [-Exe path] [-Out dir]
+param(
+  [string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) "target\release\unseat.exe"),
+  [string]$Out = (Join-Path (Split-Path -Parent $PSScriptRoot) "assets\screenshots")
+)
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "unseat_test_lib.ps1")
 Add-Type -AssemblyName System.Drawing
+New-Item -ItemType Directory -Force $Out | Out-Null
 
-function Save-Shot([IntPtr]$hwnd, [string]$path, [int]$pad) {
-  $r = New-Object UnseatNative5+RECT
-  [void][UnseatNative5]::GetWindowRect($hwnd, [ref]$r)
-  $w = $r.Right - $r.Left
-  $h = $r.Bottom - $r.Top
-  if ($w -lt 8 -or $h -lt 8) { throw "empty window $path" }
+function Backdrop([int]$w, [int]$h, [bool]$dark) {
   $bmp = New-Object System.Drawing.Bitmap $w, $h
   $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.CopyFromScreen($r.Left, $r.Top, 0, 0, (New-Object System.Drawing.Size $w, $h))
-  $g.Dispose()
-  $out = New-Object System.Drawing.Bitmap ($w + 2 * $pad), ($h + 2 * $pad)
-  $og = [System.Drawing.Graphics]::FromImage($out)
-  $og.Clear([System.Drawing.Color]::FromArgb(255, 18, 18, 20))
-  $og.DrawImage($bmp, $pad, $pad, $w, $h)
-  $og.Dispose()
-  $bmp.Dispose()
-  $out.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-  $out.Dispose()
-  "wrote $path ${w}x${h} pad=$pad"
+  $top = if ($dark) { [System.Drawing.Color]::FromArgb(255, 44, 52, 74) } else { [System.Drawing.Color]::FromArgb(255, 222, 228, 238) }
+  $bottom = if ($dark) { [System.Drawing.Color]::FromArgb(255, 74, 88, 122) } else { [System.Drawing.Color]::FromArgb(255, 186, 198, 218) }
+  $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush((New-Object System.Drawing.Rectangle 0, 0, $w, $h), $top, $bottom, 60.0)
+  $g.FillRectangle($brush, 0, 0, $w, $h)
+  $brush.Dispose()
+  return @($bmp, $g)
 }
 
-$shot = "D:\Projects\unseat\assets\screenshots"
-$zero = [IntPtr]::Zero
-$HWND_TOPMOST = [IntPtr](-1)
-
-$settings = [UnseatNative5]::FindWindowW("UnseatSettings", $zero)
-if ($settings -ne $zero) {
-  [void][UnseatNative5]::PostMessageW($settings, 0x0010, $zero, $zero) # WM_CLOSE
-  Start-Sleep -Milliseconds 400
+function Save-Overlay($inst, [string]$path, [bool]$dark, [switch]$Hover) {
+  $bmp = Get-OverlayBitmap $inst -Hover:$Hover
+  $pad = 28
+  $canvas, $g = Backdrop ($bmp.Width + 2 * $pad) ($bmp.Height + 2 * $pad) $dark
+  $g.DrawImage($bmp, $pad, $pad, $bmp.Width, $bmp.Height)
+  $g.Dispose(); $bmp.Dispose()
+  $canvas.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+  $canvas.Dispose()
+  "wrote $path"
 }
 
-$widget = [UnseatNative5]::FindWindowW("UnseatWidget", $zero)
-if ($widget -eq $zero) { throw "UnseatWidget missing" }
-[void][UnseatNative5]::ShowWindow($widget, 4)
-[void][UnseatNative5]::SetWindowPos($widget, $HWND_TOPMOST, 200, 200, 0, 0, 0x0041)
-Start-Sleep -Milliseconds 500
-Save-Shot $widget (Join-Path $shot "widget.png") 56
-
-$hidden = [UnseatNative5]::FindWindowW("UnseatHidden", $zero)
-if ($hidden -ne $zero) {
-  [void][UnseatNative5]::SendMessageW($hidden, 0x0111, [IntPtr]12, $zero)
-  Start-Sleep -Milliseconds 700
+function Save-Window([IntPtr]$hwnd, [string]$path, [bool]$dark) {
+  $r = Get-Rect $hwnd
+  $w = $r.Right - $r.Left; $h = $r.Bottom - $r.Top
+  $shot = New-Object System.Drawing.Bitmap $w, $h
+  $sg = [System.Drawing.Graphics]::FromImage($shot)
+  $sg.CopyFromScreen($r.Left, $r.Top, 0, 0, (New-Object System.Drawing.Size $w, $h))
+  $sg.Dispose()
+  $pad = 20
+  $canvas, $g = Backdrop ($w + 2 * $pad) ($h + 2 * $pad) $dark
+  # Clip to the window's rounded corners so no desktop pixels are captured.
+  $radius = [int](8 * $w / 380.0) * 2
+  $clip = New-Object System.Drawing.Drawing2D.GraphicsPath
+  $l = $pad + 1; $t = $pad + 1; $r2 = $pad + $w - 1; $b2 = $pad + $h - 1
+  $clip.AddArc($l, $t, $radius, $radius, 180, 90)
+  $clip.AddArc($r2 - $radius, $t, $radius, $radius, 270, 90)
+  $clip.AddArc($r2 - $radius, $b2 - $radius, $radius, $radius, 0, 90)
+  $clip.AddArc($l, $b2 - $radius, $radius, $radius, 90, 90)
+  $clip.CloseFigure()
+  $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+  $g.SetClip($clip)
+  $g.DrawImage($shot, $pad, $pad, $w, $h)
+  $g.ResetClip()
+  $g.Dispose(); $shot.Dispose()
+  $canvas.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+  $canvas.Dispose()
+  "wrote $path"
 }
-$settings = [UnseatNative5]::FindWindowW("UnseatSettings", $zero)
-if ($settings -eq $zero) { throw "UnseatSettings missing" }
-[void][UnseatNative5]::SetWindowPos($settings, $HWND_TOPMOST, 80, 40, 0, 0, 0x0041)
-Start-Sleep -Milliseconds 500
-Save-Shot $settings (Join-Path $shot "settings.png") 18
-Get-Item (Join-Path $shot "*.png") | Select-Object Name, Length, LastWriteTime
+
+foreach ($theme in @("dark", "light")) {
+  $dark = $theme -eq "dark"
+  $inst = Start-TestInstance $Exe @{
+    settings_version = 2; theme = $theme; widget_size = "medium"; sitting_limit_secs = 1200
+    window_x = 240; window_y = 240; stats_enabled = $true
+    history = @(
+      @{ date = (Get-Date).AddDays(-6).ToString("yyyy-MM-dd"); sitting_secs = 14400 },
+      @{ date = (Get-Date).AddDays(-5).ToString("yyyy-MM-dd"); sitting_secs = 19800 },
+      @{ date = (Get-Date).AddDays(-4).ToString("yyyy-MM-dd"); sitting_secs = 11200 },
+      @{ date = (Get-Date).AddDays(-3).ToString("yyyy-MM-dd"); sitting_secs = 22300 },
+      @{ date = (Get-Date).AddDays(-2).ToString("yyyy-MM-dd"); sitting_secs = 16100 },
+      @{ date = (Get-Date).AddDays(-1).ToString("yyyy-MM-dd"); sitting_secs = 9800 }
+    )
+  }
+  try {
+    Advance $inst 428
+    Save-Overlay $inst (Join-Path $Out "overlay-sitting-$theme.png") $dark
+    # Hover reveals pause, reset and hide controls.
+    Save-Overlay $inst (Join-Path $Out "overlay-hover-$theme.png") $dark -Hover
+    Advance $inst (1200 - 428 + 7 * 60 + 20)
+    Save-Overlay $inst (Join-Path $Out "overlay-overdue-$theme.png") $dark
+    Send-Command $inst $ID_BREAK
+    Advance $inst 41
+    Save-Overlay $inst (Join-Path $Out "overlay-break-$theme.png") $dark
+    Send-Command $inst $ID_RESET
+    Advance $inst 300
+    Send-Command $inst $ID_PAUSE
+    Save-Overlay $inst (Join-Path $Out "overlay-paused-$theme.png") $dark
+    Send-Command $inst $ID_PAUSE
+
+    $dlg = Open-Settings $inst
+    $tabs = "timer", "breaks", "alerts", "general"
+    for ($i = 0; $i -lt $tabs.Count; $i++) {
+      Click-SettingsTab $dlg $i
+      Save-Window $dlg (Join-Path $Out "settings-$($tabs[$i])-$theme.png") $dark
+    }
+    Close-Window $dlg
+  } finally {
+    Stop-TestInstance $inst
+  }
+}
+# One sheet with every overlay state, dark above light.
+$states = "sitting", "hover", "overdue", "break", "paused"
+$first = [System.Drawing.Image]::FromFile((Join-Path $Out "overlay-sitting-dark.png"))
+$cw = $first.Width; $ch = $first.Height; $first.Dispose()
+$sheet = New-Object System.Drawing.Bitmap ($cw * $states.Count), ($ch * 2)
+$g = [System.Drawing.Graphics]::FromImage($sheet)
+for ($row = 0; $row -lt 2; $row++) {
+  $theme = @("dark", "light")[$row]
+  for ($i = 0; $i -lt $states.Count; $i++) {
+    $img = [System.Drawing.Image]::FromFile((Join-Path $Out "overlay-$($states[$i])-$theme.png"))
+    $g.DrawImage($img, $i * $cw, $row * $ch, $cw, $ch)
+    $img.Dispose()
+  }
+}
+$g.Dispose()
+$sheet.Save((Join-Path $Out "overlay-states.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+$sheet.Dispose()
+Get-Item (Join-Path $Out "*.png") | Select-Object Name, Length

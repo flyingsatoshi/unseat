@@ -4,6 +4,8 @@ mod date;
 mod engine;
 mod place;
 mod settings;
+mod stats;
+mod theme;
 mod view;
 
 pub use alerts::{alert_actions, AlertActions, Notice};
@@ -19,10 +21,12 @@ pub use settings::{
     TimerDisplayMode, TimerShape, WidgetSize, ALERT_DURATION_PRESETS_SECS, DEFAULT_ALERT_VOLUME,
     HISTORY_DAYS, SETTINGS_VERSION, SNOOZE_PRESETS_SECS,
 };
+pub use stats::{average_secs, recent_days, weekday_initial, DayBar};
+pub use theme::{contrast, palette, Palette, Rgba, DARK, LIGHT};
 pub use view::{
     card_kicker, control_centers, face_digits, format_break_remaining, format_elapsed,
     format_goal_parts, format_limit, format_today, format_today_hm, hit_control, layout_scale,
-    pill_background_rgb, play_center, progress, state_label, status_word, tag_goal, timer_digit_px,
+    pill_background_rgb, play_center, progress, snap_to_edges, state_label, status_line, status_word, tag_goal, tag_text, timer_digit_px,
     timer_face_digits, timer_render_key, widget_layout, widget_pixel_size, Hit, TimerRenderKey,
     WidgetLayout, WIDGET_H, WIDGET_W,
 };

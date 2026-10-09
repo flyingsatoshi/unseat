@@ -1,7 +1,10 @@
 use crate::win::app::App;
 use crate::win::paint::widget_size;
 use crate::win::testhook;
-use unseat::{hit_control, layout_scale, Command, Hit, TimerShape, WidgetSize, WIDGET_H, WIDGET_W};
+use unseat::{
+    hit_control, layout_scale, snap_to_edges, Command, Hit, TimerShape, WidgetSize, WIDGET_H,
+    WIDGET_W,
+};
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -14,11 +17,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetCursorPos, GetWindowLongPtrW, GetWindowRect, LoadCursorW,
+    CreateWindowExW, DefWindowProcW, GetCursorPos, RegisterWindowMessageW, GetWindowLongPtrW, GetWindowRect, LoadCursorW,
     MoveWindow, PostQuitMessage, RegisterClassW, SetCursor, SetWindowLongPtrW, SetWindowPos,
     ShowWindow, WindowFromPoint, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HTCLIENT,
-    HWND_TOPMOST, IDC_ARROW, PBT_APMRESUMEAUTOMATIC, PBT_APMSUSPEND, SC_MINIMIZE, SC_RESTORE,
-    SWP_NOACTIVATE, SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_ENDSESSION, WM_QUERYENDSESSION,
+    IDC_ARROW, PBT_APMRESUMEAUTOMATIC, PBT_APMSUSPEND, SC_MINIMIZE, SC_RESTORE,
+    SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNOACTIVATE, WM_DISPLAYCHANGE, WM_DPICHANGED,
+    WM_SETTINGCHANGE, WM_ACTIVATE, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_ENDSESSION, WM_QUERYENDSESSION,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCHITTEST, WM_POWERBROADCAST, WM_RBUTTONUP,
     WM_SHOWWINDOW, WM_SYSCOMMAND, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     WS_EX_TOPMOST, WS_POPUP,
@@ -48,7 +52,7 @@ pub fn create(app: *mut App, x: i32, y: i32) -> windows::core::Result<HWND> {
         let hwnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_APPWINDOW | WS_EX_NOACTIVATE,
             CLASS,
-            w!("Unseat"),
+            &testhook::title("Unseat"),
             WS_POPUP,
             x,
             y,
@@ -109,8 +113,37 @@ pub fn resize_to_shape(hwnd: HWND, shape: TimerShape, size: WidgetSize) {
             return;
         }
         let (x, y) = clamp_to_work_area(rc.left, rc.top, w, h);
-        let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
+        let _ = SetWindowPos(hwnd, HWND::default(), x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER);
     }
+}
+
+/// Work area of the monitor nearest the point, as (left, top, right, bottom).
+fn work_area_at(x: i32, y: i32) -> Option<(i32, i32, i32, i32)> {
+    unsafe {
+        let mon = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        GetMonitorInfoW(mon, &mut info).as_bool().then(|| {
+            let r = info.rcWork;
+            (r.left, r.top, r.right, r.bottom)
+        })
+    }
+}
+
+/// Registered "TaskbarCreated" broadcast: Explorer restarted and the tray icon must be re-added.
+fn taskbar_created() -> u32 {
+    static MSG: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MSG.get_or_init(|| unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) })
+}
+
+unsafe fn lparam_is(lp: LPARAM, expected: &str) -> bool {
+    if lp.0 == 0 {
+        return false;
+    }
+    let p = windows::core::PCWSTR(lp.0 as *const u16);
+    p.to_string().is_ok_and(|s| s == expected)
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -125,8 +158,27 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     if app.is_null() {
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
+    if msg == taskbar_created() && msg != 0 {
+        (*app).add_tray();
+        return LRESULT(0);
+    }
     match msg {
         WM_NCHITTEST => LRESULT(HTCLIENT as isize),
+        WM_SETTINGCHANGE => {
+            if lparam_is(lp, "ImmersiveColorSet") {
+                (*app).on_theme_change();
+            }
+            LRESULT(0)
+        }
+        WM_DISPLAYCHANGE | WM_DPICHANGED => {
+            // A monitor was removed, rearranged or rescaled: keep the overlay on screen.
+            let mut rc = RECT::default();
+            let _ = GetWindowRect(hwnd, &mut rc);
+            let (x, y) = clamp_to_work_area(rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+            let _ = SetWindowPos(hwnd, HWND::default(), x, y, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
+            (*app).force_repaint();
+            LRESULT(0)
+        }
         WM_MOUSEMOVE => {
             (*app).on_widget_mouse(hwnd, lp, true);
             LRESULT(0)
@@ -190,6 +242,24 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             (*app).tick();
             LRESULT(0)
         }
+        testhook::MSG_SNAPSHOT if testhook::enabled() => {
+            // wParam 1 renders the hover state (a real cursor would leave immediately).
+            let was_hover = (*app).hover;
+            (*app).hover = wp.0 == 1;
+            (*app).force_repaint();
+            (*app).hover = was_hover;
+            if let (Some((w, h, px)), Some(path)) = (
+                (*app).d2d.as_ref().and_then(|d| d.snapshot()),
+                testhook::data_path("overlay.bgra"),
+            ) {
+                let mut out = Vec::with_capacity(px.len() + 8);
+                out.extend_from_slice(&(w as u32).to_le_bytes());
+                out.extend_from_slice(&(h as u32).to_le_bytes());
+                out.extend_from_slice(&px);
+                let _ = std::fs::write(path, out);
+            }
+            LRESULT(0)
+        }
         testhook::MSG_DUMP if testhook::enabled() => {
             (*app).log_state();
             LRESULT(0)
@@ -241,6 +311,10 @@ impl App {
                 let s = paint_scale(hwnd, self.settings.widget_size);
                 let (w, h) = widget_size(self.settings.timer_shape, s);
                 let (nx, ny) = clamp_to_work_area(nx, ny, w, h);
+                let (nx, ny) = match work_area_at(pt.x, pt.y) {
+                    Some(work) => snap_to_edges(nx, ny, w, h, work, (10.0 * scale(hwnd)) as i32),
+                    None => (nx, ny),
+                };
                 let _ = MoveWindow(hwnd, nx, ny, w, h, false);
             }
             return;
@@ -286,13 +360,8 @@ impl App {
                 Hit::Pause => self.apply_engine_command(Command::TogglePause),
                 Hit::Reset => self.apply_engine_command(Command::Reset),
                 Hit::Snooze => self.snooze_default(),
-                Hit::Close => {
-                    self.hide_widget();
-                    return;
-                }
+                Hit::Close => self.hide_widget(),
             }
-            self.persist_today();
-            self.repaint();
             return;
         }
         unsafe {
