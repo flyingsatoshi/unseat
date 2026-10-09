@@ -4,9 +4,9 @@
 
 <h1 align="center">Unseat</h1>
 
-<p align="center">An always-on-top <strong>sitting timer</strong> for Windows. A tiny overlay watch that counts desk time and nags you to stand up.</p>
+<p align="center">A tiny always-on-top <strong>sitting timer</strong> for Windows. The pill fills as you sit, turns red when it is time to move, and can tuck itself into a screen edge.</p>
 
-<p align="center">No accounts. No cloud. No telemetry.</p>
+<p align="center">No accounts. No cloud. No telemetry. One portable exe.</p>
 
 <p>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
@@ -27,23 +27,50 @@
   <img src="assets/screenshots/alert-card.png" alt="Alert card beside the overlay: Time to stand up, with Take a break and Snooze" width="300">
 </p>
 
+## What's new in 0.2
+
+- **Signal design**: the overlay pill is the progress bar, its colour is the state, and the digits use the Sora typeface with fixed-width figures. Light, dark or system theme.
+- **Keeps running** through idle time, a locked screen, sleep and a minimized overlay. Pausing when you step away is now an opt-in setting.
+- **Edge docking**: attach the timer to any screen edge; it slides out to a slim progress tab and comes back when you point at it or when time is up.
+- **Breaks** with their own countdown, an **alert card** with *Take a break* / *Snooze*, a **tray panel** instead of a plain menu, a volume slider, global shortcuts and optional weekly statistics.
+- A new **Rise** icon.
+
+<p align="center">
+  <img src="assets/screenshots/dock-states.png" alt="Docked overlay expanded, slid out to a tab, and peeking with 13 min, in dark and light" width="640">
+</p>
+
+<details>
+<summary>Before and after</summary>
+
+<p align="center">
+  <img src="assets/screenshots/before-after.png" alt="The v0.2.0 interface before and after the Signal redesign" width="820">
+</p>
+</details>
+
 ## Sitting timer for Windows
 
 Unseat is a local desktop **timer** and break reminder. It stays on top of your work like a small watch, tracks how long you have been sitting, and alerts you when it is time to get up.
 
-- Keeps counting through idle time, a locked screen, sleep and a minimized overlay; it is wall-clock based, so delayed updates never lose time
+**Timing you can trust**
+- Wall-clock based: idle time, a locked screen, sleep and a minimized overlay never stop it, and delayed updates never lose time
 - Optional **Pause when inactive** (off by default): the overlay shows *away* while you are gone, and being away for the break length starts a fresh session
-- **Breaks**: start one from the tray or `Ctrl+Alt+Shift+B`; it counts down, then a fresh session starts
-- Manual pause, inactivity pause (*away*) and breaks each look different on the overlay
+- **Breaks**: start one from the overlay, the tray or `Ctrl+Alt+Shift+B`; it counts down, then a fresh session starts
 - Reverse countdown or ascending stopwatch, without resetting the session
 - Timer, pause and break state survive restarts; only Reset starts over
-- The overlay pill is the progress bar: it fills as you sit and its colour shows the state (sitting, near the limit, overdue, break, away or paused)
-- One alert at the limit, optional repeats while overdue; an alert card beside the overlay (Take a break / Snooze), or a Windows notification while the overlay is hidden
-- **Edge docking** (optional): attach the overlay to any screen edge; it slides out to a slim progress tab, peeks when you point at it, slides in on click and reveals itself when time is up
-- A tray panel with the countdown and one-click Pause, Take a break, Snooze and Reset
-- Five bundled sounds with a volume slider and Test button; every sound plays at the same loudness
-- Snooze from the overlay (click the overdue time), tray, or `Ctrl+Alt+Shift+S`
-- XS–XL overlay sizes, optional always-on-top, drag anywhere (snaps to screen edges), position remembered
+
+**Alerts that get noticed, not in the way**
+- One alert at the limit, optional repeats while overdue that never pile up
+- An alert card beside the overlay (*Take a break* / *Snooze*), or a Windows notification while the overlay is hidden
+- Five bundled sounds, a volume slider and a Test button; every sound plays at the same loudness
+- Snooze by clicking the overdue time, from the card, the tray panel, or `Ctrl+Alt+Shift+S`
+
+**An overlay that fits your desk**
+- The pill is the progress bar and its colour shows the state: sitting, near the limit, overdue, break, away or paused
+- XS–XL sizes, optional always-on-top, drag anywhere (snaps to screen edges), position remembered on every monitor
+- Optional **edge docking** with auto-hide, peek, pin and reveal-on-alert
+- Tray panel with the countdown and one-click Pause, Take a break, Snooze and Reset
+
+**Everything else**
 - Light, dark or system theme; full keyboard navigation in settings
 - Optional 14-day statistics with a weekly chart, kept only on this PC
 - Optional launch with Windows
@@ -54,7 +81,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for how the engine and Win32 host split.
 
 ## Install
 
-Download `unseat.exe` from [Releases](https://github.com/flyingsatoshi/unseat/releases), put it in a permanent folder of your choice, and run it there. Unseat is portable: it does not copy or relaunch itself, or create shortcuts automatically. You can pin it to the taskbar or create a shortcut yourself.
+Download `unseat.exe` from [Releases](https://github.com/flyingsatoshi/unseat/releases), put it in a permanent folder of your choice (for example `%LOCALAPPDATA%\Programs\Unseat`), and run it there.
+
+> The latest published release is 0.1.1. Version 0.2 described here is on `main`; until its release is published, [build it from source](#build-from-source). Unseat is portable: it does not copy or relaunch itself, or create shortcuts automatically. You can pin it to the taskbar or create a shortcut yourself.
 
 Close from the taskbar or tray **Quit**. Click the pinned icon to open it again. Hide the overlay from the close chip or tray; the timer keeps running.
 
