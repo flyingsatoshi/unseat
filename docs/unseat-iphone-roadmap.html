@@ -723,8 +723,8 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
     </table></div>
     <h3>Open before release</h3>
     <ul>
-      <li><span class="tag t-rec">Decision D10</span> Push format: declarative (default today; shown by iOS itself, no confirmations) or plain JSON (confirmations and measured 20/20, but relies on the service worker showing every push).</li>
-      <li>Not run on the phone: Tailscale off, network switch, phone restart, the three revocation paths.</li>
+      <li><span class="tag t-fact">Decided</span> D10: declarative push format kept (your decision, 2026-10-11).</li>
+      <li>Not run on the phone, accepted risk (your decision, 2026-10-11): Tailscale off, network switch, phone restart, the three revocation paths, battery and antivirus checks. None is recorded as passed.</li>
       <li>Your installed <code>dist&#92;unseat.exe</code> is built from the main tree and has no iPhone code. To use the feature: install this build, run <code>tailscale serve --bg 8790</code>, turn iPhone reminders on, and pair again from a new Home Screen app at the port-443 address (the current one is tied to the test address).</li>
       <li>PR #1 on GitHub is open with CI green. Merging and installing need your approval.</li>
     </ul>
@@ -1017,21 +1017,21 @@ const TASKS = [
   { id: "1.7", phase: "1", title: "Notification on a locked iPhone (scenario 1)", status: "Completed", prio: "P0", cx: "S",
     desc: "Phone locked, one push.", accept: "Shown on the lock screen (marked seen).", deps: "1.6",
     evidence: "Push #1 (phone locked): Apple 201, marked seen, tapping it opened the app 13 s after sending. One sample. Phase 1 run 2026-10-10 (spikes/iphone-push/data/results.json, local, gitignored)." },
-  { id: "1.8", phase: "1", title: "Delivery latency and reliability (scenarios 2, 2b, 3)", status: "In Progress", prio: "P0", cx: "S",
+  { id: "1.8", phase: "1", title: "Delivery latency and reliability (scenarios 2, 2b, 3)", status: "Unknown", prio: "P0", cx: "S",
     desc: "20 pushes 30 s apart (high), 5 with Urgency normal, 3 plain-JSON service-worker pushes.",
     accept: "Proposed: at least 19/20 seen, no lost subscription, PC-clock p95 at most 10 s.", deps: "1.7",
-    evidence: "Phase 3 (2026-10-11, Unseat's own build): 20/20 accepted and 20/20 confirmed by the phone, p95 655 ms, but only for the plain-JSON format; the default declarative format sends no confirmation, so its reliability is not measured. Phase 1: 18/18 pushes accepted by Apple (201), no lost subscription. Marked seen: 5; not seen: 0; unmarked: 13. The 20-push batch stopped after 9. Plain-JSON (service worker) pushes: 3/3 receipts, PC-clock delay 3.0 / 3.6 / 3.7 s (p50 / p95 / max). Declarative pushes: displayed (marked seen) but sent no receipts, so their delay is Unknown. Phone clock was about 41 s ahead of the PC, so phone-clock timings are unusable. Phase 1 run 2026-10-10 (spikes/iphone-push/data/results.json, local, gitignored)." },
-  { id: "1.9", phase: "1", title: "Behaviour after network interruptions (scenarios 4-10)", status: "Blocked", prio: "P0", cx: "M",
+    evidence: "Not run on the phone; you accepted the risk on 2026-10-11 and will report issues from normal use. Declarative-format reliability is not measured (iOS sends no confirmation). Phase 3 (2026-10-11, Unseat's own build): 20/20 accepted and 20/20 confirmed by the phone, p95 655 ms, but only for the plain-JSON format; the default declarative format sends no confirmation, so its reliability is not measured. Phase 1: 18/18 pushes accepted by Apple (201), no lost subscription. Marked seen: 5; not seen: 0; unmarked: 13. The 20-push batch stopped after 9. Plain-JSON (service worker) pushes: 3/3 receipts, PC-clock delay 3.0 / 3.6 / 3.7 s (p50 / p95 / max). Declarative pushes: displayed (marked seen) but sent no receipts, so their delay is Unknown. Phone clock was about 41 s ahead of the PC, so phone-clock timings are unusable. Phase 1 run 2026-10-10 (spikes/iphone-push/data/results.json, local, gitignored)." },
+  { id: "1.9", phase: "1", title: "Behaviour after network interruptions (scenarios 4-10)", status: "Unknown", prio: "P0", cx: "M",
     desc: "Airplane mode with long and short TTL, Tailscale off on phone, Wi-Fi to cellular, PC offline/back, tap to open, after phone restart.",
     accept: "Proposed: held pushes arrive after reconnect; expired ones don't; pushes arrive with Tailscale off; queued receipts flush; PC reports failures.", deps: "1.7",
-    evidence: "Partly run 2026-10-11, then stopped by you. Airplane mode about 2 min: 10-min reminder arrived after reconnect (pass); 60 s reminder arrived about 25 s after expiry (fail); 3 same-Topic pushes all delivered (fail). Not run: Tailscale off, Wi-Fi to cellular, PC offline on a real network, tap after restart." },
-  { id: "1.11", phase: "1", title: "Revoke on the device (check D)", status: "Blocked", prio: "P1", cx: "S",
+    evidence: "Not run on the phone; you accepted the risk on 2026-10-11 and will report issues from normal use. Partly run 2026-10-11, then stopped by you. Airplane mode about 2 min: 10-min reminder arrived after reconnect (pass); 60 s reminder arrived about 25 s after expiry (fail); 3 same-Topic pushes all delivered (fail). Not run: Tailscale off, Wi-Fi to cellular, PC offline on a real network, tap after restart." },
+  { id: "1.11", phase: "1", title: "Revoke on the device (check D)", status: "Unknown", prio: "P1", cx: "S",
     desc: "Revoke the phone on the PC, then open the app.", accept: "App says the phone was removed; API returns 401.", deps: "1.6",
-    evidence: "Not run on the phone: stopped by you on 2026-10-11. Removal locking a phone out passes in test_phone.ps1 (local, fake push service)." },
-  { id: "1.10", phase: "1", title: "Phase 1 results review and your approval", status: "In Progress", prio: "P0", cx: "S",
+    evidence: "Not run on the phone; you accepted the risk on 2026-10-11 and will report issues from normal use. Not run on the phone: stopped by you on 2026-10-11. Removal locking a phone out passes in test_phone.ps1 (local, fake push service)." },
+  { id: "1.10", phase: "1", title: "Phase 1 results review and your approval", status: "Completed", prio: "P0", cx: "S",
     desc: "Results JSON backfilled into this roadmap; you accept or reject. The full companion starts only after this.",
     accept: "Your explicit approval.", deps: "1.5-1.9",
-    evidence: "On 2026-10-10 you directed Phase 2 to start with these partial results. Open items carried forward: full latency batch (1.8), network interruptions (1.9), revoke (1.11). Not marked passed." },
+    evidence: "2026-10-11: you accepted the results and approved the release; the unrun checks are recorded as not run / accepted risk, not passed. On 2026-10-10 you directed Phase 2 to start with these partial results. Open items carried forward: full latency batch (1.8), network interruptions (1.9), revoke (1.11). Not marked passed." },
 
   // ---- Phase 2 ----
   { id: "2.1", phase: "2", title: "Companion protocol types and command mapping", status: "In Progress", prio: "P0", cx: "S",
@@ -1159,26 +1159,28 @@ const TASKS = [
     desc: "scripts/measure.ps1 on baseline vs companion build, feature off and on.",
     accept: "All budgets met or explained.", deps: "B.9, 6.1",
     evidence: "scripts/measure.ps1, 2 x 60 s, baseline 379aa3e vs this build with reminders off: CPU 78.1 vs 78.2 ms/min, private 38.58 vs 38.91 MB, handles 247 vs 257, startup within noise. Reminders on (paired, idle, 1 x 60 s): +3 blocked threads, private +0.07 MB, CPU 109 -> 141 ms/min (one sample; baseline rounds varied 62-94). Exe 1,731,584 -> 2,414,080 bytes." },
-  { id: "6.3", phase: "6", title: "iPhone battery observation", status: "Planned", prio: "P2", cx: "S",
-    desc: "A few days of normal use; check Settings → Battery for Safari/web app and Tailscale.", deps: "4.x" },
-  { id: "6.4", phase: "6", title: "Antivirus re-check with the listener on", status: "Planned", prio: "P1", cx: "S",
-    desc: "Repeat the Bitdefender checks in docs/windows-distribution.md with the companion on and off.", deps: "6.1" },
+  { id: "6.3", phase: "6", title: "iPhone battery observation", status: "Unknown", prio: "P2", cx: "S",
+    desc: "A few days of normal use; check Settings → Battery for Safari/web app and Tailscale.",
+    evidence: "Not run; you accepted the risk on 2026-10-11.", deps: "4.x" },
+  { id: "6.4", phase: "6", title: "Antivirus re-check with the listener on", status: "Unknown", prio: "P1", cx: "S",
+    desc: "Repeat the Bitdefender checks in docs/windows-distribution.md with the companion on and off.",
+    evidence: "Not run; you accepted the risk on 2026-10-11.", deps: "6.1" },
   { id: "6.5", phase: "6", title: "User docs: phone setup guide", status: "Completed", prio: "P2", cx: "S",
     desc: "README section + step-by-step Tailscale and install guide.", deps: "4.x",
     evidence: "docs/iphone.md (setup, choices, behaviour, privacy)." },
-  { id: "6.7", phase: "6", title: "On-device check of this build (real Apple push from Unseat)", status: "Blocked", prio: "P0", cx: "S",
+  { id: "6.7", phase: "6", title: "On-device check of this build (real Apple push from Unseat)", status: "Completed", prio: "P0", cx: "S",
     desc: "Install this build, run tailscale serve, pair the iPhone, and repeat Phase 1's checks: locked phone, a full 20-push batch, network interruptions, revoke.",
     accept: "Same criteria as Phase 1; pushes sent by Unseat (WinHTTP + Rust crypto) arrive on iOS 18.7.", deps: "Your iPhone",
-    evidence: "Partly done 2026-10-11 with real Apple push (see Phase 3). Real reminder end to end on the real clock with the default format: passed (you confirmed it on the iPhone). Also: batch, reminders, idle-only, formats, tap, counters, one offline case pass; late delivery and Topic collapse fail (fixed by showing fired-at time); network switch, restart and revocation not run, stopped by you." },
+    evidence: "Release gate met by your decision on 2026-10-11: real reminder end to end passed; the remaining phone checks are not run / accepted risk. Partly done 2026-10-11 with real Apple push (see Phase 3). Real reminder end to end on the real clock with the default format: passed (you confirmed it on the iPhone). Also: batch, reminders, idle-only, formats, tap, counters, one offline case pass; late delivery and Topic collapse fail (fixed by showing fired-at time); network switch, restart and revocation not run, stopped by you." },
   { id: "6.8", phase: "6", title: "Push the branch and open a PR", status: "Completed", prio: "P1", cx: "S",
     desc: "feature/iphone-companion is committed locally and ready.", accept: "PR open; CI green.",
     evidence: "Pushed to GitHub with your approval on 2026-10-11; PR #1 open, not merged. GitHub Actions (windows-latest): library 198 tests, Windows host 211 tests (including the 13 Windows-only unit tests blocked locally by Smart App Control) and the release GUI build all passed (run 38094340835)." },
   { id: "6.9", phase: "6", title: "Isolate test copies from your Unseat", status: "Completed", prio: "P0", cx: "S",
     desc: "A live-test copy was mistaken for your Unseat; two test copies could attach to each other.",
     evidence: "e6d7141: per-run id, hidden mode, TEST badge and tooltip; scripts stop only their own processes and check your Unseat before and after (27/27, 20/20)." },
-  { id: "6.10", phase: "6", title: "Decide the push format (D10)", status: "Planned", prio: "P0", cx: "S",
+  { id: "6.10", phase: "6", title: "Decide the push format (D10)", status: "Completed", prio: "P0", cx: "S",
     desc: "Declarative (no confirmations) or plain JSON (confirmed, service worker must show each push).",
-    evidence: "Live data in Phase 3. Needs your decision." },
+    evidence: "Decided 2026-10-11: keep the declarative format (real iPhone notifications verified). Live data in Phase 3. Needs your decision." },
   { id: "6.6", phase: "6", title: "Human readiness review", status: "Planned", prio: "P1", cx: "S",
     desc: "Your hands-on sign-off. A passing build alone doesn't count.", deps: "6.1–6.5" }
 ];
@@ -1235,7 +1237,7 @@ const DECISIONS = [
   ["D7", "Off by default, opt-in, with docs updated", "Yes. No socket or outbound traffic until turned on."],
   ["D8", "Who configures Tailscale Serve", "Unseat shows the exact command and checks the result; it doesn't change Tailscale settings itself."],
   ["D9", "Settings schema version 3", "Yes, with a migration test; v2 files load with the companion off."],
-  ["D10", "Push format (open)", "Recommendation: plain JSON, because it is the only format whose delivery the PC can confirm (20/20 live) and it displayed and opened the app; the risk is that iOS may revoke push if the service worker ever fails to show one. Today's default is declarative. Needs your decision."]
+  ["D10", "Push format", "Decided 2026-10-11: keep declarative pushes. Real notifications were verified on the iPhone (lock screen, tap opens the app, real 5-minute reminder). Trade-off accepted: iOS sends no delivery confirmation for this format."]
 ];
 
 const STATUSES = ["Completed", "In Progress", "Planned", "Blocked", "Unknown"];
