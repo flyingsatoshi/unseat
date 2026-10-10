@@ -22,7 +22,7 @@ pub use engine::{
 };
 pub use place::{installed_exe, is_dev_build};
 pub use settings::{
-    AlertSound, DayTotal, InactivityBehavior, Settings, ThemePreference, TimerCheckpoint,
+    AlertSound, DayTotal, InactivityBehavior, PhoneAlerts, Settings, ThemePreference, TimerCheckpoint,
     TimerDisplayMode, TimerShape, WidgetSize, ALERT_DURATION_PRESETS_SECS, DEFAULT_ALERT_VOLUME,
     HISTORY_DAYS, SETTINGS_VERSION, SNOOZE_PRESETS_SECS,
 };
