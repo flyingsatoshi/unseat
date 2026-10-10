@@ -632,7 +632,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
         <tr><td class="mono">b5acd4b</td><td>Settings version 3: iPhone reminders off by default, all reminders or idle-only</td></tr>
         <tr><td class="mono">04130ec</td><td>Library core: Web Push, delivery queue, pairing, device store, API, embedded phone app and PC page</td></tr>
         <tr><td class="mono">d05f851</td><td>Windows host: loopback listeners, push sender (WinHTTP), DPAPI key, tray entry; end-to-end tests</td></tr>
-        <tr><td>(next)</td><td>Docs (SECURITY, ARCHITECTURE, distribution, iPhone guide) and this roadmap</td></tr>
+        <tr><td class="mono">3e07848</td><td>Docs (SECURITY, ARCHITECTURE, distribution, iPhone guide) and this roadmap</td></tr>
       </tbody>
     </table></div>
     <h3>Test results (2026-10-11)</h3>
@@ -643,7 +643,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
         <tr><td>Library tests on Linux</td><td class="mid">all pass except 2 pre-existing path tests</td><td><code>downloads_exe_is_not_a_dev_build</code> and <code>installed_exe_lives_under_localappdata_unseat</code> use Windows paths; same on 379aa3e; pass on Windows</td></tr>
         <tr><td>New tests</td><td class="yes">57 + 11 E2E</td><td>phone_settings 5, phone_webpush 9, phone_delivery 19, phone_api 23, unit 1; scripts/test_phone.ps1 11</td></tr>
         <tr><td>Existing end-to-end (regression)</td><td class="yes">23 / 23</td><td>scripts/test_app.ps1 against this build (one check updated for settings version 3)</td></tr>
-        <tr><td>iPhone with this build</td><td class="no">not run</td><td>Task 6.7; needs you</td></tr>
+        <tr><td>iPhone with this build</td><td class="mid">partly run in Phase 3</td><td>See the Phase 3 section</td></tr>
       </tbody>
     </table></div>
     <h3>Changes from the roadmap</h3>
@@ -657,6 +657,73 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
       <li>Queued reminders are kept in memory. If Unseat restarts while a phone is unreachable, those (short-lived) reminders are dropped instead of counted as missed.</li>
       <li>Each listener handles one request at a time, with 5 s timeouts. That's fine for your own devices on a tailnet, but one slow client can delay others.</li>
       <li>Merging with your uncommitted work will touch <code>src/win/app.rs</code>, <code>src/win/mod.rs</code> and <code>src/lib.rs</code>, which both sides changed. The edits are small and in different functions.</li>
+    </ul>
+  </div>
+</details>
+</section>
+
+<!-- ============ PHASE 3 ============ -->
+<section class="block" id="phase3">
+<details class="sec" open>
+  <summary><h2>Phase 3 — integration, review fixes and live iPhone test</h2><span class="hint">Live testing stopped by you on 2026-10-11; incomplete checks stay open</span></summary>
+  <div class="sec-body">
+    <p>Your uncommitted Windows work was merged into the branch (originals left uncommitted in the main tree; backup ref <code>refs/backup/user-wip-2026-10-11</code>). An independent code review found 12 defects; all were fixed. The integrated build then ran against Apple's live push service on your iPhone (iOS 18.7), as a hidden, isolated test copy beside your own Unseat, published to the tailnet only (Serve on port 8443, since a Phase 1 foreground Serve held 443). You stopped manual testing before the network, restart and revocation checks.</p>
+    <h3>Live results with real Apple push (2026-10-11)</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Check</th><th>Result</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Pair the iPhone via the PC page and QR code</td><td class="yes">Pass</td><td>Installed, paired, subscribed; Apple 201 on the first test</td></tr>
+        <tr><td>20-push batch, 3 s apart (plain-JSON format)</td><td class="yes">Pass</td><td>Apple accepted 20/20; phone confirmed 20/20; reminder fired → phone confirmation p50 584 ms, p95 655 ms, max 683 ms (PC clock)</td></tr>
+        <tr><td>Real reminders: time up, repeat (sound-only on Windows), break over</td><td class="yes">Pass</td><td>Sent and confirmed by the phone in 0.5–2.6 s</td></tr>
+        <tr><td>Idle-only threshold</td><td class="yes">Pass</td><td>No input 5 / 90 / 119 s: skipped. 121 s and 10 min: sent and confirmed</td></tr>
+        <tr><td>All four push formats display on the lock screen</td><td class="yes">Pass</td><td>Your screenshot: declarative, declarative without mutable, mutable inside notification, plain JSON — all shown</td></tr>
+        <tr><td>Which formats confirm delivery</td><td class="mid">Finding</td><td>Only plain JSON wakes the service worker. Declarative pushes never do on iOS 18.7, with or without <code>mutable</code></td></tr>
+        <tr><td>Tap a declarative notification</td><td class="yes">Pass</td><td>You confirmed it opened Unseat Test directly</td></tr>
+        <tr><td>Tap a plain-JSON notification</td><td class="mid">Inconclusive</td><td>The PC saw a fresh app start, but you did not confirm the tap opened it</td></tr>
+        <tr><td>Counters on the phone match the PC</td><td class="yes">Pass</td><td>Phone 47 sent / 35 confirmed; PC the same</td></tr>
+        <tr><td>Offline: reminder with 10-min lifetime arrives after reconnect</td><td class="yes">Pass</td><td>Phone back on the tailnet 04:01:47; Break's over confirmed 04:01:52</td></tr>
+        <tr><td>Offline: reminder with 60 s lifetime must not arrive late</td><td class="no">Fail</td><td>Expired 04:01:26, still delivered and confirmed about 25 s later</td></tr>
+        <tr><td>Offline: newer push on the same Topic replaces older ones</td><td class="no">Fail</td><td>All 3 held test pushes delivered and confirmed</td></tr>
+        <tr><td>What the screen showed after reconnect</td><td class="mid">Inconclusive</td><td>Not reported (only the phone's own confirmations are known)</td></tr>
+        <tr><td>Tailscale off on the phone, Wi-Fi ↔ cellular, phone restart</td><td class="no">Not run</td><td>Stopped by you</td></tr>
+        <tr><td>Revocation: removed on the PC, notifications off in iOS, app deleted</td><td class="no">Not run</td><td>Stopped by you (removal is covered locally by test_phone.ps1)</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Fixes</h3>
+    <ul>
+      <li><span class="tag t-fact">Fixed</span> 12 review findings (764b8be): store no longer wiped on a bad read; Tailscale name retried; phone-made pairing secret that survives a locked phone; busy port reported and retried; natural break cancels queued reminders; late 404/410 for an old endpoint; refused VAPID token re-signed; WinHTTP budget; lost wake-up; idle-only 2-minute threshold; renewed subscriptions re-sent; delivery confirmations added.</li>
+      <li><span class="tag t-fact">Fixed</span> Live findings (0e82ebd): each notification ends with the PC time it fired, so late or backlogged ones are recognisable; "Confirmed by this phone" says "not reported by iOS" instead of a misleading 0; docs and comments no longer promise that Apple drops stale reminders or collapses by Topic.</li>
+      <li><span class="tag t-fact">Fixed</span> A test copy was mistaken for your Unseat (it looked identical). Test copies now have their own id, window titles and lock; a TEST badge and tray tooltip when visible; a hidden background mode; and the scripts stop only what they started and check your Unseat is untouched (e6d7141).</li>
+    </ul>
+    <h3>Commits on the branch</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Commit</th><th>What</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">7540c64</td><td>Your in-progress Windows work: newer-build handoff, autostart, install script</td></tr>
+        <tr><td class="mono">bd27c73</td><td>Your removal of the old planning docs (separate, easy to drop)</td></tr>
+        <tr><td class="mono">764b8be</td><td>Review fixes and delivery confirmations</td></tr>
+        <tr><td class="mono">55ced32</td><td>Test-only push-format switch and phone request log</td></tr>
+        <tr><td class="mono">e6d7141</td><td>Test isolation: own ids, hidden mode, TEST marking</td></tr>
+        <tr><td class="mono">0e82ebd</td><td>Fired-at time on notifications; claims corrected after the live test</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Automated tests on the final build</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Suite</th><th>Result</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Library (Linux container)</td><td class="mid">all pass but 1</td><td><code>downloads_exe_is_not_a_dev_build</code> uses Windows paths; fails on Linux only, as on 379aa3e</td></tr>
+        <tr><td>Windows test programs (native)</td><td class="mid">8 of 12 run, 156/156 pass</td><td>Smart App Control blocked 4 new binaries; 3 of them also pass on Linux; the 13 Windows-only unit tests are left to CI</td></tr>
+        <tr><td>All targets compile (cross-build)</td><td class="yes">Pass</td><td>Release GUI exe 2,471,424 bytes</td></tr>
+        <tr><td>scripts/test_app.ps1</td><td class="yes">27 / 27</td><td>23 existing + 3 isolation scenarios + your-Unseat-untouched check</td></tr>
+        <tr><td>scripts/test_phone.ps1</td><td class="yes">20 / 20</td><td>Includes security: loopback only, tailnet header, admin key, chunked refusal, removal</td></tr>
+        <tr><td>cargo-audit</td><td class="yes">0 advisories</td><td>92 crates against 1,296 RustSec advisories</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Open before release</h3>
+    <ul>
+      <li><span class="tag t-rec">Decision D10</span> Push format: declarative (default today; shown by iOS itself, no confirmations) or plain JSON (confirmations and measured 20/20, but relies on the service worker showing every push).</li>
+      <li>Not run on the phone: Tailscale off, network switch, phone restart, the three revocation paths.</li>
+      <li>The branch has no Gitea remote; <code>origin</code> is GitHub, whose Actions workflow runs on <code>windows-latest</code>. Pushing needs your go-ahead.</li>
     </ul>
   </div>
 </details>
@@ -893,16 +960,16 @@ const TASKS = [
     evidence: "src/win/testhook.rs; scripts/test_app.ps1; commit 8c5032b." },
   { id: "B.7", phase: "B", title: "Latest end-to-end script result", status: "Unknown", prio: "P2", cx: "—",
     desc: "Whether scripts/test_app.ps1 passes on the current tree.",
-    evidence: "Unknown for your main working tree (uncommitted changes, not run). On feature/iphone-companion (based on 379aa3e): test_app.ps1 23/23, 2026-10-11." },
+    evidence: "Your main working tree itself: not run. Its changes merged into feature/iphone-companion: test_app.ps1 27/27 on the final build, 2026-10-11." },
   { id: "B.8", phase: "B", title: "Windows host tests on the uncommitted tree", status: "Unknown", prio: "P1", cx: "—",
     desc: "cargo test --all-targets with the current uncommitted changes.",
-    evidence: "Not run in this session. CI covers only committed 379aa3e." },
+    evidence: "Run on the branch with your changes merged (2026-10-11): all targets compile; 8 of 12 Windows test programs run natively (156/156 pass); 4 blocked by Smart App Control. Not run on the main tree itself." },
   { id: "B.9", phase: "B", title: "Baseline CPU / memory / exe size", status: "Completed", prio: "P2", cx: "—",
     desc: "Numbers to compare companion budgets against.",
     evidence: "Measured 2026-10-11 on 379aa3e (cross-built): startup 72-1122 ms, CPU 62-94 ms/min, private 38.5-38.7 MB, 247 handles, exe 1,731,584 bytes." },
   { id: "B.10", phase: "B", title: "Newer-build handoff, dev-build autostart skip, install script", status: "In Progress", prio: "P1", cx: "—",
     desc: "Ongoing Windows work. Out of companion scope; must stay untouched.",
-    evidence: "Uncommitted: src/win/handoff.rs, src/place.rs, src/win/autostart.rs, src/win/app.rs, tests/view.rs, scripts/install.ps1, scripts/cross_build.sh." },
+    evidence: "Still uncommitted in the main tree. Merged unchanged into feature/iphone-companion as 7540c64 (plus bd27c73 for the docs removal); a newer-build takeover with iPhone reminders on passes in test_phone.ps1." },
 
   // ---- Phase 0 ----
   { id: "0.1", phase: "0", title: "Codebase audit", status: "Completed", prio: "P0", cx: "S",
@@ -950,14 +1017,14 @@ const TASKS = [
   { id: "1.8", phase: "1", title: "Delivery latency and reliability (scenarios 2, 2b, 3)", status: "In Progress", prio: "P0", cx: "S",
     desc: "20 pushes 30 s apart (high), 5 with Urgency normal, 3 plain-JSON service-worker pushes.",
     accept: "Proposed: at least 19/20 seen, no lost subscription, PC-clock p95 at most 10 s.", deps: "1.7",
-    evidence: "Partial. 18/18 pushes accepted by Apple (201), no lost subscription. Marked seen: 5; not seen: 0; unmarked: 13. The 20-push batch stopped after 9. Plain-JSON (service worker) pushes: 3/3 receipts, PC-clock delay 3.0 / 3.6 / 3.7 s (p50 / p95 / max). Declarative pushes: displayed (marked seen) but sent no receipts, so their delay is Unknown. Phone clock was about 41 s ahead of the PC, so phone-clock timings are unusable. Phase 1 run 2026-10-10 (spikes/iphone-push/data/results.json, local, gitignored)." },
-  { id: "1.9", phase: "1", title: "Behaviour after network interruptions (scenarios 4-10)", status: "Planned", prio: "P0", cx: "M",
+    evidence: "Phase 3 (2026-10-11, Unseat's own build): 20/20 accepted and 20/20 confirmed by the phone, p95 655 ms, but only for the plain-JSON format; the default declarative format sends no confirmation, so its reliability is not measured. Phase 1: 18/18 pushes accepted by Apple (201), no lost subscription. Marked seen: 5; not seen: 0; unmarked: 13. The 20-push batch stopped after 9. Plain-JSON (service worker) pushes: 3/3 receipts, PC-clock delay 3.0 / 3.6 / 3.7 s (p50 / p95 / max). Declarative pushes: displayed (marked seen) but sent no receipts, so their delay is Unknown. Phone clock was about 41 s ahead of the PC, so phone-clock timings are unusable. Phase 1 run 2026-10-10 (spikes/iphone-push/data/results.json, local, gitignored)." },
+  { id: "1.9", phase: "1", title: "Behaviour after network interruptions (scenarios 4-10)", status: "Blocked", prio: "P0", cx: "M",
     desc: "Airplane mode with long and short TTL, Tailscale off on phone, Wi-Fi to cellular, PC offline/back, tap to open, after phone restart.",
     accept: "Proposed: held pushes arrive after reconnect; expired ones don't; pushes arrive with Tailscale off; queued receipts flush; PC reports failures.", deps: "1.7",
-    evidence: "Not run yet (scenarios 4-10). Can be rerun against the Phase 2 build." },
-  { id: "1.11", phase: "1", title: "Revoke on the device (check D)", status: "Planned", prio: "P1", cx: "S",
+    evidence: "Partly run 2026-10-11, then stopped by you. Airplane mode about 2 min: 10-min reminder arrived after reconnect (pass); 60 s reminder arrived about 25 s after expiry (fail); 3 same-Topic pushes all delivered (fail). Not run: Tailscale off, Wi-Fi to cellular, PC offline on a real network, tap after restart." },
+  { id: "1.11", phase: "1", title: "Revoke on the device (check D)", status: "Blocked", prio: "P1", cx: "S",
     desc: "Revoke the phone on the PC, then open the app.", accept: "App says the phone was removed; API returns 401.", deps: "1.6",
-    evidence: "Not run in the Phase 1 session (device still listed at export)." },
+    evidence: "Not run on the phone: stopped by you on 2026-10-11. Removal locking a phone out passes in test_phone.ps1 (local, fake push service)." },
   { id: "1.10", phase: "1", title: "Phase 1 results review and your approval", status: "In Progress", prio: "P0", cx: "S",
     desc: "Results JSON backfilled into this roadmap; you accept or reject. The full companion starts only after this.",
     accept: "Your explicit approval.", deps: "1.5-1.9",
@@ -1052,7 +1119,7 @@ const TASKS = [
   { id: "4.7", phase: "4", title: "Offline and reconnection", status: "Completed", prio: "P1", cx: "M",
     desc: "Cached shell, 'last updated', backoff reconnect on visibility/online, controls disabled offline.",
     accept: "Airplane-mode open works; reconnects within 30 s of coming back.", deps: "4.4",
-    evidence: "Shell opens offline from the service worker cache; reconnect on open/online with 1 s doubling to 30 s plus jitter; nothing queued on the phone (04130ec). Not yet tested on the phone with this build." },
+    evidence: "Shell opens offline from the service worker cache; reconnect on open/online with 1 s doubling to 30 s plus jitter; nothing queued on the phone (04130ec). On the phone: the app reloaded and confirmed held pushes right after an airplane-mode reconnect; opening it while offline was not tried." },
   { id: "4.8", phase: "4", title: "Accessibility and dark mode", status: "In Progress", prio: "P2", cx: "S",
     desc: "VoiceOver labels, Dynamic Type, light/dark from the theme palette.",
     accept: "All controls usable with VoiceOver.", deps: "4.4",
@@ -1084,7 +1151,7 @@ const TASKS = [
   // ---- Phase 6 ----
   { id: "6.1", phase: "6", title: "End-to-end tests in test_app.ps1", status: "Completed", prio: "P0", cx: "M",
     desc: "Pair, command, alert→push capture, revoke, feature-off-no-socket.", deps: "3.4, 5.1",
-    evidence: "scripts/test_phone.ps1 11/11 (run twice): off by default, loopback + tailnet header, mirror all, idle-only, 410 recovery, retry/expiry, cancel on PC action, test push, remove, switch off, restart. Regression: test_app.ps1 23/23." },
+    evidence: "Final build: test_phone.ps1 20/20 and test_app.ps1 27/27 (2026-10-11). Earlier: scripts/test_phone.ps1 11/11 (run twice): off by default, loopback + tailnet header, mirror all, idle-only, 410 recovery, retry/expiry, cancel on PC action, test push, remove, switch off, restart. Regression: test_app.ps1 23/23." },
   { id: "6.2", phase: "6", title: "Measure budgets before and after", status: "Completed", prio: "P1", cx: "S",
     desc: "scripts/measure.ps1 on baseline vs companion build, feature off and on.",
     accept: "All budgets met or explained.", deps: "B.9, 6.1",
@@ -1099,10 +1166,16 @@ const TASKS = [
   { id: "6.7", phase: "6", title: "On-device check of this build (real Apple push from Unseat)", status: "Blocked", prio: "P0", cx: "S",
     desc: "Install this build, run tailscale serve, pair the iPhone, and repeat Phase 1's checks: locked phone, a full 20-push batch, network interruptions, revoke.",
     accept: "Same criteria as Phase 1; pushes sent by Unseat (WinHTTP + Rust crypto) arrive on iOS 18.7.", deps: "Your iPhone",
-    evidence: "Needs you and the phone. Everything so far ran against a local fake push service." },
+    evidence: "Partly done 2026-10-11 with real Apple push (see Phase 3): batch, reminders, idle-only, formats, tap, counters, one offline case pass; late delivery and Topic collapse fail (fixed by showing fired-at time); network switch, restart and revocation not run, stopped by you." },
   { id: "6.8", phase: "6", title: "Push the branch and open a PR", status: "Blocked", prio: "P1", cx: "S",
     desc: "feature/iphone-companion is committed locally and ready.", accept: "PR open; CI green.",
-    evidence: "On hold by your instruction while Gitea is busy: no push, PR or CI from this session." },
+    evidence: "Not pushed. The only remote is GitHub (origin); there is no Gitea remote for Unseat. Waiting for your go-ahead and a free runner." },
+  { id: "6.9", phase: "6", title: "Isolate test copies from your Unseat", status: "Completed", prio: "P0", cx: "S",
+    desc: "A live-test copy was mistaken for your Unseat; two test copies could attach to each other.",
+    evidence: "e6d7141: per-run id, hidden mode, TEST badge and tooltip; scripts stop only their own processes and check your Unseat before and after (27/27, 20/20)." },
+  { id: "6.10", phase: "6", title: "Decide the push format (D10)", status: "Planned", prio: "P0", cx: "S",
+    desc: "Declarative (no confirmations) or plain JSON (confirmed, service worker must show each push).",
+    evidence: "Live data in Phase 3. Needs your decision." },
   { id: "6.6", phase: "6", title: "Human readiness review", status: "Planned", prio: "P1", cx: "S",
     desc: "Your hands-on sign-off. A passing build alone doesn't count.", deps: "6.1–6.5" }
 ];
@@ -1135,7 +1208,7 @@ const APPLE = [
 
 const RISKS = [
   ["R1", "Safari revokes push after unshown notifications", "M / H", "Declarative push where available; service worker always shows inside waitUntil; any suppression happens on the PC.", "Apple doc"],
-  ["R2", "Push delayed or dropped; no Apple guarantee", "M / M", "Measure in Phase 1; Urgency high; short TTL; Topic coalescing; Windows alert stays primary.", "Apple doc"],
+  ["R2", "Push delayed or dropped; no Apple guarantee", "M / M", "Urgency high; short TTL; Windows alert stays primary. Live test: TTL is not a hard cutoff and Topic did not coalesce, so each notification shows when it fired.", "Apple doc + live test"],
   ["R3", "Subscription silently goes invalid", "M / M", "Re-check getSubscription() on each open; re-register; show 'notifications off' on the PC.", "WebKit bug 273063"],
   ["R4", "Dependence on Tailscale (outage, pricing, policy)", "L / M", "Only the companion is affected; Windows app unchanged; document an own-domain fallback (D3).", "Assessment"],
   ["R5", "Machine name exposed in public CT logs", "H / L", "Rename the Tailscale machine before enabling HTTPS.", "Tailscale doc"],
@@ -1144,7 +1217,7 @@ const RISKS = [
   ["R8", "Thread-safety bugs with the Win32 App", "M / H", "Single message bridge; server never holds App state.", "src/win/app.rs design"],
   ["R9", "iOS clears the web app's stored credential", "L / M", "Easy re-pair; device list shows last seen. Eviction rules for Home Screen apps: Unknown, check in 1.4.", "Unknown"],
   ["R10", "Phone and settings window overwrite each other", "M / L", "Revision numbers and 409 conflicts (2.6).", "src/win/app.rs:490"],
-  ["R11", "Duplicate alerts annoy the user (all reminders mirrored by default, D4)", "H / L", "Optional idle-only mode; Topic header so a newer reminder replaces an undelivered one.", "Assessment"],
+  ["R11", "Duplicate alerts annoy the user (all reminders mirrored by default, D4)", "H / L", "Optional idle-only mode; the PC queue keeps only the newest per topic. Apple's Topic did not replace held pushes in the live test, so a phone back from offline can get a short backlog.", "Live test"],
   ["R12", "Apple changes web app policy (e.g. EU 2024)", "L / H", "Keep the Windows app fully standalone; monitor WebKit release notes.", "2024 EU episode"],
   ["R13", "Scope creep into the in-progress Windows fixes", "M / M", "Companion work on its own branch after the current uncommitted work lands.", "git status"]
 ];
@@ -1158,7 +1231,8 @@ const DECISIONS = [
   ["D6", "Which settings the phone can edit", "Timer and alert settings only; not autostart, hotkeys, window, dock or theme."],
   ["D7", "Off by default, opt-in, with docs updated", "Yes. No socket or outbound traffic until turned on."],
   ["D8", "Who configures Tailscale Serve", "Unseat shows the exact command and checks the result; it doesn't change Tailscale settings itself."],
-  ["D9", "Settings schema version 3", "Yes, with a migration test; v2 files load with the companion off."]
+  ["D9", "Settings schema version 3", "Yes, with a migration test; v2 files load with the companion off."],
+  ["D10", "Push format (open)", "Recommendation: plain JSON, because it is the only format whose delivery the PC can confirm (20/20 live) and it displayed and opened the app; the risk is that iOS may revoke push if the service worker ever fails to show one. Today's default is declarative. Needs your decision."]
 ];
 
 const STATUSES = ["Completed", "In Progress", "Planned", "Blocked", "Unknown"];
