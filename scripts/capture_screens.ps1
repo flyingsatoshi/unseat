@@ -9,6 +9,8 @@ param(
 )
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "unseat_test_lib.ps1")
+# README screenshots show the overlay as users see it, without the TEST badge.
+$env:UNSEAT_TEST_BADGE = "0"
 Add-Type -AssemblyName System.Drawing
 New-Item -ItemType Directory -Force $Out | Out-Null
 
@@ -94,7 +96,7 @@ foreach ($theme in @("dark", "light")) {
     # Hover reveals pause, reset and hide controls.
     Save-Overlay $inst (Join-Path $Out "overlay-hover-$theme.png") $dark -Hover
     Advance $inst (1200 - 428)
-    $card = Find-TestWindow "UnseatAlertCard" "Unseat alert (test)"
+    $card = Find-TestWindow "UnseatAlertCard" (TestTitle $inst "Unseat alert")
     Start-Sleep -Milliseconds 300
     Save-Window $card (Join-Path $Out "card-timeup-$theme.png") $dark
     Advance $inst (7 * 60 + 20)

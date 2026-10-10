@@ -1,6 +1,9 @@
 # Helpers for driving a real Unseat test instance (dot-source this file).
 # A test instance runs with UNSEAT_TEST_HOOKS=1 and its own %APPDATA%, so it never touches
-# the user's settings, startup entry or running Unseat.
+# the user's settings, startup entry or running Unseat. Each instance also gets its own
+# UNSEAT_TEST_ID, so its windows ("Unseat (test <id>)") and single-instance lock are its
+# own: helpers only ever find the instance they started. Scripts stop only processes they
+# started, and refuse to run while another test instance is up (they share test ports).
 
 Add-Type -TypeDefinition @"
 using System;
@@ -22,7 +25,30 @@ public static class UnseatTest {
   public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll")]
   public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+  public delegate bool EnumProc(IntPtr hWnd, IntPtr lp);
+  [DllImport("user32.dll")]
+  public static extern bool EnumWindows(EnumProc cb, IntPtr lp);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+  public static extern int GetClassNameW(IntPtr hWnd, System.Text.StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+  public static extern int GetWindowTextW(IntPtr hWnd, System.Text.StringBuilder s, int n);
   public struct RECT { public int Left, Top, Right, Bottom; }
+  // Every Unseat overlay window (shown or not): "pid<TAB>title" per line.
+  public static string Overlays() {
+    var sb = new System.Text.StringBuilder();
+    EnumWindows((h, l) => {
+      var c = new System.Text.StringBuilder(64); GetClassNameW(h, c, 64);
+      if (c.ToString() == "UnseatWidget") {
+        var t = new System.Text.StringBuilder(128); GetWindowTextW(h, t, 128);
+        uint pid; GetWindowThreadProcessId(h, out pid);
+        sb.Append(pid).Append('\t').Append(t.ToString()).Append('\n');
+      }
+      return true;
+    }, IntPtr.Zero);
+    return sb.ToString();
+  }
 }
 "@
 [void][UnseatTest]::SetProcessDpiAwarenessContext([IntPtr](-4))
@@ -38,6 +64,27 @@ $TRAY_CALLBACK = $WM_APP + 1
 $ID_PAUSE = 10; $ID_RESET = 11; $ID_SETTINGS = 12; $ID_QUIT = 13; $ID_HIDE = 14
 $ID_SNOOZE_5 = 20; $ID_SNOOZE_CUSTOM = 24; $ID_BREAK = 25
 $TestRoot = Join-Path (Split-Path -Parent $PSScriptRoot) "target\test-appdata"
+# Processes this script started; the only ones it may ever stop.
+$script:TestPids = New-Object System.Collections.Generic.List[int]
+
+# Unseat overlays now open: Pid, Title, Test (a test instance) and Id (its run id).
+function Get-Overlays {
+  @([UnseatTest]::Overlays() -split "`n" | Where-Object { $_ } | ForEach-Object {
+    $pid_, $title = $_ -split "`t", 2
+    $m = [regex]::Match($title, '^Unseat \(test(?: (?<id>[^)]+))?\)$')
+    [pscustomobject]@{ Pid = [int]$pid_; Title = $title; Test = $m.Success; Id = $m.Groups["id"].Value }
+  })
+}
+# The user's own Unseat processes (never a test instance), to prove a run left them alone.
+function Get-RealUnseat { @(Get-Overlays | Where-Object { -not $_.Test } | ForEach-Object { $_.Pid } | Sort-Object -Unique) }
+# Test instances share test ports and the UnseatTest startup value: one suite at a time.
+function Assert-NoOtherTestInstance {
+  $others = @(Get-Overlays | Where-Object { $_.Test -and -not $script:TestPids.Contains($_.Pid) })
+  if ($others.Count) {
+    throw "Another Unseat test instance is running ($(@($others | ForEach-Object { "pid $($_.Pid) '$($_.Title)'" }) -join ', ')). Stop it before running these tests."
+  }
+}
+function TestTitle($inst, [string]$base) { "$base (test $($inst.Id))" }
 
 function Wait-Until([scriptblock]$cond, [int]$ms = 8000) {
   $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -49,22 +96,49 @@ function Wait-Until([scriptblock]$cond, [int]$ms = 8000) {
   throw "timed out waiting for $cond"
 }
 
-function Start-TestInstance([string]$exe, $settings = $null, [string]$appdata = $null) {
+# Launch $exe as test instance $id with %APPDATA% = $appdata (and optionally hidden).
+function Start-UnseatProcess([string]$exe, [string]$appdata, [string]$id, [switch]$Hidden) {
+  $saved = @{}
+  foreach ($k in "APPDATA", "UNSEAT_TEST_HOOKS", "UNSEAT_TEST_ID", "UNSEAT_TEST_HIDDEN") { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+  $env:APPDATA = $appdata; $env:UNSEAT_TEST_HOOKS = "1"; $env:UNSEAT_TEST_ID = $id
+  if ($Hidden) { $env:UNSEAT_TEST_HIDDEN = "1" } else { Remove-Item env:UNSEAT_TEST_HIDDEN -ErrorAction SilentlyContinue }
+  try { $proc = Start-Process -FilePath $exe -PassThru } finally {
+    foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
+  }
+  $script:TestPids.Add($proc.Id)
+  $proc
+}
+
+function Start-TestInstance([string]$exe, $settings = $null, [string]$appdata = $null, [switch]$Hidden, [string]$Id = "") {
+  Assert-NoOtherTestInstance
   if (-not $appdata) { $appdata = Join-Path $TestRoot ([guid]::NewGuid().ToString("N").Substring(0, 8)) }
+  if (-not $Id) { $Id = "t" + [guid]::NewGuid().ToString("N").Substring(0, 8) }
   $dir = Join-Path $appdata "Unseat"
   New-Item -ItemType Directory -Force $dir | Out-Null
   if ($null -ne $settings) {
     ($settings | ConvertTo-Json -Depth 6) | Set-Content -Encoding Ascii (Join-Path $dir "settings.json")
   }
-  $oldAppData = $env:APPDATA; $oldHooks = $env:UNSEAT_TEST_HOOKS
-  $env:APPDATA = $appdata; $env:UNSEAT_TEST_HOOKS = "1"
-  try { $proc = Start-Process -FilePath $exe -PassThru } finally {
-    $env:APPDATA = $oldAppData; $env:UNSEAT_TEST_HOOKS = $oldHooks
-  }
-  $widget = Wait-Until { $h = [UnseatTest]::FindWindowW("UnseatWidget", "Unseat (test)"); if ($h -ne [IntPtr]::Zero) { $h } }
-  $hidden = Wait-Until { $h = [UnseatTest]::FindWindowExW([IntPtr](-3), [IntPtr]::Zero, "UnseatHidden", "Unseat (test)"); if ($h -ne [IntPtr]::Zero) { $h } }
+  $proc = Start-UnseatProcess $exe $appdata $Id -Hidden:$Hidden
+  $title = "Unseat (test $Id)"
+  $widget = Wait-Until { $h = [UnseatTest]::FindWindowW("UnseatWidget", $title); if ($h -ne [IntPtr]::Zero) { $h } }
+  $hiddenWnd = Wait-Until { $h = [UnseatTest]::FindWindowExW([IntPtr](-3), [IntPtr]::Zero, "UnseatHidden", $title); if ($h -ne [IntPtr]::Zero) { $h } }
+  $owner = 0; [void][UnseatTest]::GetWindowThreadProcessId($widget, [ref]$owner)
+  if ($owner -ne $proc.Id) { throw "test window $title belongs to pid $owner, not the instance just started ($($proc.Id))" }
   Start-Sleep -Milliseconds 300
-  [pscustomobject]@{ Process = $proc; AppData = $appdata; Dir = $dir; Widget = $widget; Hidden = $hidden; Exe = $exe }
+  [pscustomobject]@{ Process = $proc; AppData = $appdata; Dir = $dir; Widget = $widget; Hidden = $hiddenWnd; Exe = $exe; Id = $Id }
+}
+
+# Launch another copy of $exe as the same test instance (same id and %APPDATA%), as a user
+# opening Unseat twice would.
+function Start-SameInstance($inst, [string]$exe = $inst.Exe) { Start-UnseatProcess $exe $inst.AppData $inst.Id }
+
+# Stop every process this script started, and nothing else.
+function Stop-AllTestInstances {
+  foreach ($p in @($script:TestPids)) {
+    $proc = Get-Process -Id $p -ErrorAction SilentlyContinue
+    if ($proc -and -not $proc.HasExited) { $proc.Kill(); [void]$proc.WaitForExit(3000) }
+  }
+  $script:TestPids.Clear()
 }
 
 function Stop-TestInstance($inst, [switch]$Keep) {
@@ -137,7 +211,8 @@ function Get-OverlayBitmap($inst, [switch]$Hover) {
 
 function Open-Settings($inst) {
   Send-Command $inst $ID_SETTINGS
-  $dlg = Wait-Until { $h = [UnseatTest]::FindWindowW("UnseatSettings", "Unseat Settings (test)"); if ($h -ne [IntPtr]::Zero) { $h } }
+  $t = TestTitle $inst "Unseat Settings"
+  $dlg = Wait-Until { $h = [UnseatTest]::FindWindowW("UnseatSettings", $t); if ($h -ne [IntPtr]::Zero) { $h } }
   [void][UnseatTest]::SetForegroundWindow($dlg)
   Start-Sleep -Milliseconds 400
   $dlg
@@ -171,7 +246,7 @@ function Find-TestWindow([string]$class, [string]$title, [int]$ms = 4000) {
 
 function Open-TrayPanel($inst) {
   [void][UnseatTest]::SendMessageW($inst.Hidden, $TRAY_CALLBACK, [IntPtr]::Zero, [IntPtr]0x007B)
-  $panel = Find-TestWindow "UnseatTrayPanel" "Unseat panel (test)"
+  $panel = Find-TestWindow "UnseatTrayPanel" (TestTitle $inst "Unseat panel")
   Start-Sleep -Milliseconds 300
   $panel
 }

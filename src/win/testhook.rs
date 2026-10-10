@@ -5,6 +5,15 @@
 //! advance the clock, alert/tray/notification activity is appended to
 //! `%APPDATA%\Unseat\test-events.log`, and autostart writes a separate `UnseatTest` value so a
 //! test run can never touch the user's real startup entry, and windows get " (test)" titles.
+//!
+//! Isolation from the user's Unseat and from other test runs:
+//! - `UNSEAT_TEST_ID=<id>` gives this run its own window titles (" (test <id>)") and its own
+//!   single-instance lock, so two test instances never find or attach to each other.
+//! - `UNSEAT_TEST_HIDDEN=1` runs in the background: the overlay never shows, and there is no
+//!   tray icon, alert card or Windows notification. Long-running harnesses (the live iPhone
+//!   test) use it so nothing on screen can be mistaken for the user's Unseat.
+//! - Otherwise a visible test overlay carries a "TEST" badge and the tray tooltip says so
+//!   (`UNSEAT_TEST_BADGE=0` turns the badge off, for README screenshots).
 
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,13 +44,40 @@ pub fn enabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("UNSEAT_TEST_HOOKS").is_some_and(|v| v == "1"))
 }
 
+/// This run's id from `UNSEAT_TEST_ID`: letters, digits, `-` and `_`, at most 32.
+pub fn run_id() -> Option<&'static str> {
+    static ID: OnceLock<Option<String>> = OnceLock::new();
+    ID.get_or_init(|| {
+        if !enabled() {
+            return None;
+        }
+        let raw = std::env::var("UNSEAT_TEST_ID").ok()?;
+        let id: String = raw.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(32).collect();
+        (!id.is_empty()).then_some(id)
+    })
+    .as_deref()
+}
+
+/// Background test run: nothing visible on screen (see the module notes).
+pub fn hidden() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| enabled() && std::env::var_os("UNSEAT_TEST_HIDDEN").is_some_and(|v| v == "1"))
+}
+
+/// A visible test overlay shows a "TEST" badge.
+pub fn badge() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| enabled() && !hidden() && !std::env::var_os("UNSEAT_TEST_BADGE").is_some_and(|v| v == "0"))
+}
+
 /// Window title for `base`. Test runs use distinct titles (and a distinct singleton) so a
-/// test instance can run beside the user's own Unseat and scripts can tell them apart.
+/// test instance can run beside the user's own Unseat and scripts can tell them apart; a run
+/// id makes them distinct from other test runs too.
 pub fn title(base: &str) -> windows::core::HSTRING {
-    if enabled() {
-        windows::core::HSTRING::from(format!("{base} (test)"))
-    } else {
-        windows::core::HSTRING::from(base)
+    match (enabled(), run_id()) {
+        (true, Some(id)) => windows::core::HSTRING::from(format!("{base} (test {id})")),
+        (true, None) => windows::core::HSTRING::from(format!("{base} (test)")),
+        (false, _) => windows::core::HSTRING::from(base),
     }
 }
 

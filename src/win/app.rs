@@ -384,6 +384,12 @@ impl App {
     }
 
     pub fn add_tray(&mut self) {
+        if testhook::hidden() {
+            // Background test run: no icon, but don't keep retrying either.
+            self.tray_added = true;
+            testhook::log("tray skipped (hidden test run)");
+            return;
+        }
         // After an Explorer restart the old icon may or may not survive; start clean.
         tray::remove(self.hidden);
         self.tray_added = tray::add(self.hidden);
@@ -394,7 +400,7 @@ impl App {
 
     /// Update the tooltip only when its text changes; it is a cross-process call to Explorer.
     fn update_tray(&mut self) {
-        if !self.tray_added {
+        if !self.tray_added || testhook::hidden() {
             return;
         }
         let snap = self.engine.snapshot();

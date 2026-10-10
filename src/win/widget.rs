@@ -16,6 +16,7 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
+use windows::Win32::UI::WindowsAndMessaging::{SWP_SHOWWINDOW, WINDOWPOS, WM_WINDOWPOSCHANGING};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetCursorPos, RegisterWindowMessageW, GetWindowLongPtrW, GetWindowRect, LoadCursorW,
     MoveWindow, PostQuitMessage, RegisterClassW, SetCursor, SetWindowLongPtrW, SetWindowPos,
@@ -147,6 +148,13 @@ unsafe fn lparam_is(lp: LPARAM, expected: &str) -> bool {
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == WM_WINDOWPOSCHANGING && testhook::hidden() {
+        // A background test run never puts its overlay on screen, whatever asks it to.
+        let pos = lp.0 as *mut WINDOWPOS;
+        if !pos.is_null() {
+            (*pos).flags &= !SWP_SHOWWINDOW;
+        }
+    }
     if msg == WM_CREATE {
         let cs = lp.0 as *const CREATESTRUCTW;
         if !cs.is_null() {

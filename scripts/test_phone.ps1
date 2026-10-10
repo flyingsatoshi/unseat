@@ -163,6 +163,8 @@ function Start-PhoneIn([string]$appdata) {
   try { Start-TestInstance $Exe $null $appdata } finally { $env:UNSEAT_TEST_PUSH_ORIGIN = $old[0]; $env:UNSEAT_TEST_PUBLIC_HOST = $old[1] }
 }
 
+$PhoneTestHosts = @{ UNSEAT_TEST_PUSH_ORIGIN = "http://localhost:$FAKE"; UNSEAT_TEST_PUBLIC_HOST = "pc.example.ts.net" }
+
 function Stop-Phone($inst) {
   if ($env:UNSEAT_TEST_VERBOSE) { Read-Log $inst | Where-Object { $_ -notlike "tick *" } | Select-Object -Last 30 | Write-Host }
   Stop-TestInstance $inst
@@ -180,12 +182,13 @@ function Scenario([string]$name, [scriptblock]$body) {
   } catch {
     $results.Add([pscustomobject]@{ Test = $name; Result = "FAIL"; Ms = $sw.ElapsedMilliseconds; Detail = $_.Exception.Message })
   } finally {
-    Get-Process unseat -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Resolve-Path $Exe).Path } | ForEach-Object {
-      if (-not $_.HasExited) { $_.Kill() }
-    }
+    Stop-AllTestInstances
     Start-Sleep -Milliseconds 300
   }
 }
+
+Assert-NoOtherTestInstance
+$RealBefore = Get-RealUnseat
 
 # ------------------------------------------------------------------ scenarios
 
@@ -522,26 +525,26 @@ Scenario "a newer build takes over and keeps iPhone reminders working" {
     $token = Pair $i
     Copy-Item $Exe $newer -Force
     (Get-Item $newer).LastWriteTime = (Get-Date).AddMinutes(5)
-    $old = @($env:APPDATA, $env:UNSEAT_TEST_HOOKS, $env:UNSEAT_TEST_PUSH_ORIGIN, $env:UNSEAT_TEST_PUBLIC_HOST)
-    $env:APPDATA = $i.AppData; $env:UNSEAT_TEST_HOOKS = "1"
+    $old = @($env:UNSEAT_TEST_PUSH_ORIGIN, $env:UNSEAT_TEST_PUBLIC_HOST)
     $env:UNSEAT_TEST_PUSH_ORIGIN = "http://localhost:$FAKE"; $env:UNSEAT_TEST_PUBLIC_HOST = "pc.example.ts.net"
-    try { $p2 = Start-Process -FilePath $newer -PassThru } finally {
-      $env:APPDATA = $old[0]; $env:UNSEAT_TEST_HOOKS = $old[1]; $env:UNSEAT_TEST_PUSH_ORIGIN = $old[2]; $env:UNSEAT_TEST_PUBLIC_HOST = $old[3]
-    }
+    try { $p2 = Start-SameInstance $i $newer } finally { $env:UNSEAT_TEST_PUSH_ORIGIN = $old[0]; $env:UNSEAT_TEST_PUBLIC_HOST = $old[1] }
     Check ($i.Process.WaitForExit(12000)) "older instance quit"
     $owner = Wait-Until { netstat -ano -p tcp | Select-String -Pattern "^\s*TCP\s+127\.0\.0\.1:$PHONE\s+\S+\s+LISTENING\s+(\d+)" | ForEach-Object { [int]$_.Matches[0].Groups[1].Value } | Select-Object -First 1 } 12000
     Check ($owner -eq $p2.Id) "the newer build owns the phone listener"
     Check ((Phone GET "/api/status" -token $token).Status -eq 200) "phone still paired"
-    $widget = Wait-Until { $h = [UnseatTest]::FindWindowW("UnseatWidget", "Unseat (test)"); if ($h -ne [IntPtr]::Zero) { $h } }
+    $widget = Wait-Until { $h = [UnseatTest]::FindWindowW("UnseatWidget", (TestTitle $i "Unseat")); $o = 0; [void][UnseatTest]::GetWindowThreadProcessId($h, [ref]$o); if ($h -ne [IntPtr]::Zero -and $o -eq $p2.Id) { $h } }
     [void][UnseatTest]::SendMessageW($widget, $MSG_ADVANCE, [IntPtr]1200, [IntPtr]::Zero)
     Wait-Pushes 1 | Out-Null
   } finally {
-    Get-Process unseat-newer -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }
+    Stop-AllTestInstances
     Start-Sleep -Milliseconds 300
     Remove-Item $newer -ErrorAction SilentlyContinue
     Stop-Phone $i
   }
 }
+
+$RealAfter = Get-RealUnseat
+$results.Add([pscustomobject]@{ Test = "the user's own Unseat was left alone"; Result = $(if ((@($RealBefore) -join ",") -eq (@($RealAfter) -join ",")) { "PASS" } else { "FAIL" }); Ms = 0; Detail = "before: $($RealBefore -join ',') after: $($RealAfter -join ',')" })
 
 Stop-Job $job -ErrorAction SilentlyContinue; Remove-Job $job -Force -ErrorAction SilentlyContinue
 $results | Format-Table -AutoSize -Wrap | Out-String -Width 220
