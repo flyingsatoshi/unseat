@@ -188,6 +188,9 @@ pub fn paint(d2d: Option<&D2d>, hwnd: HWND, p: &OverlayPaint) {
                     }
                     None => draw_pill(&rt, d2d, pal, p, None, 0.0, 0.0),
                 }
+                if crate::win::testhook::badge() {
+                    draw_test_badge(&rt, &d2d.fonts, cx as f32, cy as f32);
+                }
             }
             drew = rt.EndDraw(None, None).is_ok();
         }
@@ -453,6 +456,16 @@ unsafe fn draw_cup(rt: &ID2D1RenderTarget, cx: f32, cy: f32, r: f32, c: Rgba) {
         c,
         w,
     );
+}
+
+/// "TEST" in the bottom-left corner of a test instance's overlay, so it can't be mistaken for
+/// the user's own Unseat.
+unsafe fn draw_test_badge(rt: &ID2D1RenderTarget, fonts: &Fonts, w: f32, h: f32) {
+    let bh = (h * 0.26).clamp(11.0, 20.0);
+    let bw = bh * 2.7;
+    let rc = gfx::rect(2.0, h - bh - 2.0, (2.0 + bw).min(w), h - 2.0);
+    gfx::fill_round(rt, rc, bh * 0.3, Rgba(200, 30, 120, 235));
+    gfx::text(rt, fonts, Family::Ui, "TEST", rc, bh * 0.62, gfx::SEMIBOLD, gfx::CENTER, Rgba(255, 255, 255, 255));
 }
 
 /// Corner chip: × to hide the overlay, or a pin when docked (filled while pinned open).

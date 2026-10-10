@@ -19,6 +19,7 @@ pub const ID_SNOOZE_15: u32 = 22;
 pub const ID_SNOOZE_30: u32 = 23;
 pub const ID_SNOOZE_CUSTOM: u32 = 24;
 pub const ID_BREAK: u32 = 25;
+pub const ID_PHONE: u32 = 26;
 
 pub fn add(hwnd: HWND) -> bool {
     if !nid(hwnd, true) {
@@ -72,13 +73,21 @@ fn empty_nid(hwnd: HWND) -> NOTIFYICONDATAW {
 }
 
 fn tip(data: &mut NOTIFYICONDATAW, text: &str) {
-    copy_wide(&mut data.szTip, text);
+    if crate::win::testhook::enabled() {
+        // A test instance's icon must never pass for the user's Unseat.
+        copy_wide(&mut data.szTip, &format!("TEST copy · {text}"));
+    } else {
+        copy_wide(&mut data.szTip, text);
+    }
 }
 
 /// Show a Windows notification from the tray icon. Unseat plays its own alert sound, so the
 /// notification is silent; Focus Assist / Do Not Disturb still applies.
 pub fn notify(hwnd: HWND, title: &str, body: &str) {
     crate::win::testhook::log(&format!("notify {title} | {body}"));
+    if crate::win::testhook::hidden() {
+        return;
+    }
     unsafe {
         let mut data = empty_nid(hwnd);
         data.uFlags = NIF_INFO;

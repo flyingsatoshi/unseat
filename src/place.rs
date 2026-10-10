@@ -1,8 +1,5 @@
-use std::path::{Path, PathBuf};
-
-pub fn installed_exe(localappdata: &Path) -> PathBuf {
-    localappdata.join("Unseat").join("unseat.exe")
-}
+use std::path::Path;
+use std::time::SystemTime;
 
 pub fn is_dev_build(exe: &Path) -> bool {
     let parts: Vec<String> = exe
@@ -23,5 +20,26 @@ pub fn is_dev_build(exe: &Path) -> bool {
                 || next.contains("apple")
         }
         None => false,
+    }
+}
+
+/// Whether a new launch should replace the Unseat already running from `running`.
+///
+/// Only a different, newer executable takes over, so opening an updated build always runs
+/// the new code while reopening the same exe (or an older copy) just shows the running one.
+/// A running exe whose file has gone away was replaced or deleted, so it counts as older.
+pub fn newer_build_takes_over(
+    running: &Path,
+    running_built: Option<SystemTime>,
+    mine: &Path,
+    mine_built: Option<SystemTime>,
+) -> bool {
+    let same = running
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&mine.to_string_lossy());
+    match (same, running_built, mine_built) {
+        (true, _, _) | (_, _, None) => false,
+        (false, None, Some(_)) => true,
+        (false, Some(theirs), Some(ours)) => ours > theirs,
     }
 }

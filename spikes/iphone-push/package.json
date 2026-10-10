@@ -1,0 +1,11 @@
+{
+  "name": "unseat-iphone-push-spike",
+  "private": true,
+  "description": "Phase 1 throwaway test: iPhone Home Screen web app + Web Push over Tailscale. Not part of Unseat.",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

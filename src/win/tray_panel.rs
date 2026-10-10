@@ -57,17 +57,19 @@ enum Item {
     Snooze,
     Reset,
     Settings,
+    Phone,
     Overlay,
     Quit,
 }
 
 impl Item {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Pause,
         Self::Break,
         Self::Snooze,
         Self::Reset,
         Self::Settings,
+        Self::Phone,
         Self::Overlay,
         Self::Quit,
     ];
@@ -79,6 +81,7 @@ impl Item {
             Self::Snooze => tray::ID_SNOOZE_CUSTOM,
             Self::Reset => tray::ID_RESET,
             Self::Settings => tray::ID_SETTINGS,
+            Self::Phone => tray::ID_PHONE,
             Self::Overlay => tray::ID_HIDE,
             Self::Quit => tray::ID_QUIT,
         }
@@ -99,6 +102,7 @@ struct View {
     overlay_shown: bool,
     hotkeys: bool,
     dark: bool,
+    phone_on: bool,
 }
 
 fn view(app: &App) -> View {
@@ -129,6 +133,7 @@ fn view(app: &App) -> View {
         overlay_shown: app.widget_visible,
         hotkeys: app.settings.hotkeys_enabled,
         dark: app.is_dark(),
+        phone_on: app.settings.phone_enabled,
     }
 }
 
@@ -139,6 +144,7 @@ fn label(item: Item, v: &View) -> String {
         Item::Snooze => format!("Snooze {}m", v.snooze_min),
         Item::Reset => "Reset".to_string(),
         Item::Settings => "Settings".to_string(),
+        Item::Phone => "iPhone reminders".to_string(),
         Item::Overlay => if v.overlay_shown { "Hide overlay" } else { "Show overlay" }.to_string(),
         Item::Quit => "Quit Unseat".to_string(),
     }
@@ -147,6 +153,7 @@ fn label(item: Item, v: &View) -> String {
 fn hint(item: Item, v: &View) -> String {
     match item {
         Item::Settings => v.today.clone(),
+        Item::Phone => if v.phone_on { "On" } else { "Off" }.to_string(),
         Item::Overlay if v.hotkeys => "Ctrl+Alt+Shift+U".to_string(),
         _ => String::new(),
     }
@@ -188,7 +195,7 @@ unsafe fn layout(fonts: &Fonts, v: &View, s: f32) -> Lay {
     }
     y += chip_h + px(14.0, s);
     let row_h = px(36.0, s);
-    for item in [Item::Settings, Item::Overlay, Item::Quit] {
+    for item in [Item::Settings, Item::Phone, Item::Overlay, Item::Quit] {
         items.push((item, gfx::rect(x0 - px(6.0, s), y, x1 + px(6.0, s), y + row_h)));
         y += row_h;
     }

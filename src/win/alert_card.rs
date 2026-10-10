@@ -131,6 +131,10 @@ pub fn shutdown() {
 
 /// Show `card` next to the overlay window `anchor`.
 pub fn show(app: *mut App, anchor: HWND, card: Card, title_text: &str, body: &str) {
+    if crate::win::testhook::hidden() {
+        crate::win::testhook::log(&format!("alert card skipped (hidden test run): {title_text}"));
+        return;
+    }
     unsafe {
         let hwnd = match FindWindowW(CLASS, &title()) {
             Ok(h) => h,

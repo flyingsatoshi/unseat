@@ -53,11 +53,12 @@ function Scenario([string]$name, [scriptblock]$body) {
   } catch {
     $results.Add([pscustomobject]@{ Test = $name; Result = "FAIL"; Ms = $sw.ElapsedMilliseconds; Detail = $_.Exception.Message })
   } finally {
-    Get-Process unseat -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Resolve-Path $Exe).Path } | ForEach-Object {
-      if (-not $_.HasExited) { $_.Kill() }
-    }
+    Stop-AllTestInstances
   }
 }
+
+Assert-NoOtherTestInstance
+$RealBefore = Get-RealUnseat
 
 Scenario "timer keeps running through inactivity by default" {
   $i = Start-TestInstance $Exe (Base)
@@ -245,7 +246,8 @@ Scenario "older settings migrate without losing preferences" {
     Check ((Get-State $i).state -eq "Sitting") "migrated file keeps running while idle"
     Send-Command $i $ID_PAUSE
     $f = Get-Settings $i
-    Check ($f.settings_version -eq 2) "version stamped"
+    Check ($f.settings_version -eq 3) "version stamped (3 added iPhone reminders, off by default)"
+    Check ($f.phone_enabled -eq $false) "migrated file keeps iPhone reminders off"
     Check ($f.inactivity_behavior -eq "continue") "old pause default migrated"
     Check ($f.widget_size -eq "large" -and $f.sitting_limit_secs -eq 900 -and $f.step -eq 5) "preferences kept"
     Check ($f.alert_sound -eq "glass" -and $f.alert_volume -eq 75) "sound kept, volume defaulted"
@@ -420,7 +422,7 @@ Scenario "alert card offers a break when time is up" {
   $i = Start-TestInstance $Exe (Base)
   try {
     Advance $i 1201
-    $card = Find-TestWindow "UnseatAlertCard" "Unseat alert (test)"
+    $card = Find-TestWindow "UnseatAlertCard" (TestTitle $i "Unseat alert")
     $r = Get-Rect $card
     $s = ($r.Right - $r.Left) / 320.0
     Click-At $card ([int](80 * $s)) ([int](109 * $s))
@@ -433,12 +435,62 @@ Scenario "alert card offers a break when time is up" {
 Scenario "a second launch exits and leaves the first running" {
   $i = Start-TestInstance $Exe (Base)
   try {
-    $old = $env:APPDATA; $env:APPDATA = $i.AppData; $env:UNSEAT_TEST_HOOKS = "1"
-    try { $second = Start-Process -FilePath $Exe -PassThru } finally { $env:APPDATA = $old; Remove-Item env:UNSEAT_TEST_HOOKS }
+    $second = Start-SameInstance $i
     Check ($second.WaitForExit(5000)) "second instance exits"
     Check (-not $i.Process.HasExited) "first instance still running"
   } finally { Stop-TestInstance $i }
 }
+
+Scenario "two test instances run side by side and never reach each other" {
+  $a = Start-TestInstance $Exe (Base)
+  try {
+    # Start-TestInstance refuses while another one is up; this scenario owns both.
+    $b = Start-TestInstance $Exe (Base @{ window_x = 700 })
+    try {
+      Check ($a.Widget -ne $b.Widget -and $a.Process.Id -ne $b.Process.Id) "separate processes and windows"
+      Advance $a 1200
+      Wait-Until { (Read-Log $a) -match "alert LimitReached" } | Out-Null
+      Start-Sleep -Milliseconds 400
+      Check (-not ((Read-Log $b) -match "alert LimitReached")) "advancing one leaves the other alone"
+      Check (-not $b.Process.HasExited -and -not $a.Process.HasExited) "both still running"
+    } finally { Stop-TestInstance $b }
+  } finally { Stop-TestInstance $a }
+}
+
+Scenario "a hidden test instance puts nothing on screen" {
+  $i = Start-TestInstance $Exe (Base @{ notify_enabled = $true }) -Hidden
+  try {
+    Check (-not [UnseatTest]::IsWindowVisible($i.Widget)) "overlay not shown at start"
+    Advance $i 1200
+    Wait-Until { (Read-Log $i) -match "alert LimitReached" } | Out-Null
+    Send-Command $i $ID_HIDE; Send-Command $i $ID_HIDE
+    Start-Sleep -Milliseconds 400
+    Check (-not [UnseatTest]::IsWindowVisible($i.Widget)) "overlay still hidden after time up and show/hide"
+    $log = Read-Log $i
+    Check (@($log -match "tray skipped").Count -gt 0 -and @($log -match "^tray added=true").Count -eq 0) "no tray icon"
+    Check (@($log -match "alert card skipped").Count -gt 0) "no alert card"
+    Check ([UnseatTest]::FindWindowW("UnseatAlertCard", (TestTitle $i "Unseat alert")) -eq [IntPtr]::Zero) "alert card window never created"
+  } finally { Stop-TestInstance $i }
+}
+
+Scenario "a visible test overlay is marked TEST" {
+  $i = Start-TestInstance $Exe (Base)
+  try {
+    $bmp = Get-OverlayBitmap $i
+    $hits = 0
+    for ($y = [int]($bmp.Height * 0.6); $y -lt $bmp.Height; $y++) {
+      for ($x = 0; $x -lt [int]($bmp.Width * 0.35); $x++) {
+        $c = $bmp.GetPixel($x, $y)
+        if ($c.A -gt 200 -and $c.R -gt 170 -and $c.G -lt 80 -and $c.B -gt 90 -and $c.B -lt 160) { $hits++ }
+      }
+    }
+    $bmp.Dispose()
+    Check ($hits -gt 40) "TEST badge drawn in the bottom-left corner ($hits px)"
+  } finally { Stop-TestInstance $i }
+}
+
+$RealAfter = Get-RealUnseat
+$results.Add([pscustomobject]@{ Test = "the user's own Unseat was left alone"; Result = $(if ((@($RealBefore) -join ",") -eq (@($RealAfter) -join ",")) { "PASS" } else { "FAIL" }); Ms = 0; Detail = "before: $($RealBefore -join ',') after: $($RealAfter -join ',')" })
 
 $results | Format-Table -AutoSize -Wrap | Out-String -Width 200
 $failed = @($results | Where-Object Result -eq "FAIL").Count

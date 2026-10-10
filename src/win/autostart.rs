@@ -25,10 +25,15 @@ fn value_name() -> HSTRING {
     }
 }
 
+/// The command for this executable, or `None` for a development build: an entry under
+/// `target\` goes stale as soon as the next build lands, so only a real copy (or a test run,
+/// which writes its own value) is ever registered.
 fn command_line() -> Option<String> {
-    std::env::current_exe()
-        .ok()
-        .map(|exe| format!("\"{}\"", exe.display()))
+    let exe = std::env::current_exe().ok()?;
+    if unseat::is_dev_build(&exe) && !crate::win::testhook::enabled() {
+        return None;
+    }
+    Some(format!("\"{}\"", exe.display()))
 }
 
 unsafe fn open(path: PCWSTR, access: windows::Win32::System::Registry::REG_SAM_FLAGS) -> Option<HKEY> {
@@ -90,42 +95,44 @@ pub fn is_enabled() -> bool {
     registered_command().is_some() && !disabled_in_task_manager()
 }
 
+unsafe fn set_command(cmd: &str) {
+    let Some(key) = open(RUN_KEY, KEY_SET_VALUE) else {
+        return;
+    };
+    let wide: Vec<u16> = cmd.encode_utf16().chain(std::iter::once(0)).collect();
+    let bytes = std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2);
+    let _ = RegSetValueExW(key, &value_name(), 0, REG_SZ, Some(bytes));
+    let _ = RegCloseKey(key);
+}
+
 pub fn apply(enabled: bool) {
     let name = value_name();
     unsafe {
-        let Some(key) = open(RUN_KEY, KEY_SET_VALUE) else {
-            return;
-        };
         if enabled {
-            if let Some(cmd) = command_line() {
-                let wide: Vec<u16> = cmd.encode_utf16().chain(std::iter::once(0)).collect();
-                let bytes = std::slice::from_raw_parts(wide.as_ptr() as *const u8, wide.len() * 2);
-                let _ = RegSetValueExW(key, &name, 0, REG_SZ, Some(bytes));
-            }
+            let Some(cmd) = command_line() else {
+                crate::win::testhook::log("autostart skipped for a development build");
+                return;
+            };
+            set_command(&cmd);
             if let Some(approved) = open(APPROVED_KEY, KEY_SET_VALUE) {
                 let _ = RegDeleteValueW(approved, &name);
                 let _ = RegCloseKey(approved);
             }
-        } else {
+        } else if let Some(key) = open(RUN_KEY, KEY_SET_VALUE) {
             let _ = RegDeleteValueW(key, &name);
+            let _ = RegCloseKey(key);
         }
-        let _ = RegCloseKey(key);
     }
     crate::win::testhook::log(&format!("autostart {enabled} {:?}", registered_command()));
 }
 
-/// Keep an enabled entry pointing at this executable after it has been moved or updated.
-/// Development builds are skipped so running from `target\` never hijacks the user's entry.
+/// Keep an existing entry pointing at this executable after it has been moved or updated
+/// (including one left pointing at an old development build). A Task Manager disable stays.
 pub fn repair() {
-    let Ok(exe) = std::env::current_exe() else {
-        return;
-    };
-    if unseat::is_dev_build(&exe) && !crate::win::testhook::enabled() {
-        return;
-    }
     if let (Some(current), Some(wanted)) = (registered_command(), command_line()) {
-        if !current.eq_ignore_ascii_case(&wanted) && !disabled_in_task_manager() {
-            apply(true);
+        if !current.eq_ignore_ascii_case(&wanted) {
+            unsafe { set_command(&wanted) };
+            crate::win::testhook::log(&format!("autostart repaired {wanted:?}"));
         }
     }
 }

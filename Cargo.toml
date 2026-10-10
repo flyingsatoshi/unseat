@@ -31,6 +31,14 @@ embed-resource = "3.0"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# iPhone reminders (Web Push): P-256 ECDH/ECDSA, HKDF-SHA256, AES-128-GCM, pairing QR.
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+base64 = "0.22"
+hkdf = "0.12"
+p256 = { version = "0.13", default-features = false, features = ["ecdh", "ecdsa", "std"] }
+qrcodegen = "1.8"
+rand_core = { version = "0.6", features = ["getrandom"] }
+sha2 = "0.10"
 windows = { version = "0.58", optional = true, features = [
     "Foundation_Numerics",
     "Win32_Foundation",
@@ -41,7 +49,9 @@ windows = { version = "0.58", optional = true, features = [
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
+    "Win32_Networking_WinHttp",
     "Win32_Security",
+    "Win32_Security_Cryptography",
     "Win32_System_Com",
     "Win32_System_LibraryLoader",
     "Win32_System_Registry",

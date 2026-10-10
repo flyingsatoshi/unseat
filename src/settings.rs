@@ -24,7 +24,8 @@ pub const DEFAULT_ALERT_VOLUME: u8 = 75;
 pub const HISTORY_DAYS: usize = 14;
 /// Version 2 made "continue while inactive" the default. Files written before it stored the
 /// old `pause` default without the user ever choosing it, so loading migrates them.
-pub const SETTINGS_VERSION: u32 = 2;
+/// Version 3 added iPhone reminders, off until the user turns them on.
+pub const SETTINGS_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -111,6 +112,46 @@ impl ThemePreference {
             Self::Light => false,
             Self::Dark => true,
         }
+    }
+}
+
+/// Which Unseat reminders reach a paired iPhone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PhoneAlerts {
+    /// Every reminder the PC gives: time up, repeat reminders (even sound-only ones) and
+    /// break over.
+    #[default]
+    All,
+    /// The same reminders, but only while the PC is idle, locked or asleep.
+    IdleOnly,
+}
+
+impl PhoneAlerts {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::IdleOnly => "idle_only",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Self {
+        match key {
+            "idle_only" => Self::IdleOnly,
+            _ => Self::All,
+        }
+    }
+}
+
+impl serde::Serialize for PhoneAlerts {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.key())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PhoneAlerts {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let key = String::deserialize(deserializer)?;
+        Ok(Self::from_key(&key))
     }
 }
 
@@ -339,6 +380,12 @@ pub struct Settings {
     pub stats_enabled: bool,
     #[serde(default)]
     pub history: Vec<DayTotal>,
+    /// Send reminders to paired iPhones. Off until the user turns it on; while off, Unseat
+    /// opens no socket and sends nothing.
+    #[serde(default)]
+    pub phone_enabled: bool,
+    #[serde(default)]
+    pub phone_alerts: PhoneAlerts,
 }
 
 fn default_sitting_limit() -> u64 {
@@ -417,6 +464,8 @@ impl Default for Settings {
             dock_hide_fullscreen: true,
             stats_enabled: true,
             history: Vec::new(),
+            phone_enabled: false,
+            phone_alerts: PhoneAlerts::All,
         }
     }
 }
@@ -436,10 +485,12 @@ impl Settings {
         self.settings_version = self.settings_version.max(SETTINGS_VERSION);
     }
 
-    /// User preferences reset to defaults; position, today's total, the running timer and
-    /// history are kept.
+    /// User preferences reset to defaults; position, today's total, the running timer,
+    /// history and the iPhone connection are kept.
     pub fn with_default_preferences(&self) -> Self {
         Self {
+            phone_enabled: self.phone_enabled,
+            phone_alerts: self.phone_alerts,
             window_x: self.window_x,
             window_y: self.window_y,
             dock_offset: self.dock_offset,
