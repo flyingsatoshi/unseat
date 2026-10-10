@@ -43,16 +43,24 @@ fn json(r: &Response) -> serde_json::Value {
     serde_json::from_slice(&r.body).unwrap()
 }
 
-/// Pair one phone and return its token.
+/// A pairing request as the phone sends it: the code, a name and the hash of its own secret.
+fn pair_body(code: &str, secret: &str) -> serde_json::Value {
+    serde_json::json!({ "code": code, "name": "Test phone", "secretHash": hash_token(secret) })
+}
+
+/// Pair one phone and return its secret (the bearer token it made itself).
 fn paired(c: &mut Companion) -> String {
+    let secret = b64u(&rand_core::RngCore::next_u64(&mut rand_core::OsRng).to_le_bytes());
     let code = json(&admin(c, "POST", "/admin/pair/new", Some(serde_json::json!({}))).0)["code"].as_str().unwrap().to_string();
-    let r = phone(c, "POST", "/api/pair/request", None, Some(serde_json::json!({ "code": code, "name": "Test phone" })));
+    let r = phone(c, "POST", "/api/pair/request", None, Some(pair_body(&code, &secret)));
     let req_id = json(&r.0)["reqId"].as_str().unwrap().to_string();
     let (r, fx) = admin(c, "POST", "/admin/pair/decide", Some(serde_json::json!({ "reqId": req_id, "approve": true })));
     assert_eq!(r.status, 200);
     assert_eq!(fx, vec![Effect::Persist]);
-    let r = phone(c, "GET", &format!("/api/pair/poll?reqId={req_id}"), None, None);
-    json(&r.0)["token"].as_str().unwrap().to_string()
+    let r = json(&phone(c, "GET", &format!("/api/pair/poll?reqId={req_id}"), None, None).0);
+    assert_eq!(r["status"], "approved");
+    assert!(r.get("token").is_none(), "no secret is ever handed out");
+    secret
 }
 
 fn apple_subscription() -> serde_json::Value {
@@ -120,9 +128,10 @@ fn the_qr_needs_the_key_in_the_url_because_images_cant_send_headers() {
 // ---------------------------------------------------------------- pairing
 
 #[test]
-fn pairing_needs_a_code_and_pc_approval_and_hands_the_token_out_once() {
+fn pairing_needs_a_code_and_pc_approval_and_the_phone_keeps_its_own_secret() {
     let mut c = companion();
     let token = paired(&mut c);
+    assert_eq!(phone(&mut c, "GET", "/api/status", Some(&token), None).0.status, 200);
     assert_eq!(c.store.devices.len(), 1);
     let d = &c.store.devices[0];
     assert_eq!(d.login, LOGIN);
@@ -136,10 +145,10 @@ fn wrong_codes_burn_the_code() {
     let mut c = companion();
     admin(&mut c, "POST", "/admin/pair/new", Some(serde_json::json!({})));
     for _ in 0..CODE_MAX_ATTEMPTS {
-        let r = phone(&mut c, "POST", "/api/pair/request", None, Some(serde_json::json!({ "code": "ZZZZZZZZ" })));
+        let r = phone(&mut c, "POST", "/api/pair/request", None, Some(pair_body("ZZZZZZZZ", "s")));
         assert_eq!(r.0.status, 403);
     }
-    let r = phone(&mut c, "POST", "/api/pair/request", None, Some(serde_json::json!({ "code": "ZZZZZZZZ" })));
+    let r = phone(&mut c, "POST", "/api/pair/request", None, Some(pair_body("ZZZZZZZZ", "s")));
     assert!(json(&r.0)["error"].as_str().unwrap().contains("no active code"));
 }
 
@@ -149,7 +158,7 @@ fn pairing_attempts_are_rate_limited() {
     let mut last = 0;
     for _ in 0..12 {
         admin(&mut c, "POST", "/admin/pair/new", Some(serde_json::json!({})));
-        last = phone(&mut c, "POST", "/api/pair/request", None, Some(serde_json::json!({ "code": "nope" }))).0.status;
+        last = phone(&mut c, "POST", "/api/pair/request", None, Some(pair_body("nope", "s"))).0.status;
     }
     assert_eq!(last, 429);
 }
@@ -158,12 +167,41 @@ fn pairing_attempts_are_rate_limited() {
 fn a_declined_phone_gets_no_token() {
     let mut c = companion();
     let code = json(&admin(&mut c, "POST", "/admin/pair/new", Some(serde_json::json!({}))).0)["code"].as_str().unwrap().to_string();
-    let id = json(&phone(&mut c, "POST", "/api/pair/request", None, Some(serde_json::json!({ "code": code }))).0)["reqId"].as_str().unwrap().to_string();
+    let id = json(&phone(&mut c, "POST", "/api/pair/request", None, Some(pair_body(&code, "declined"))).0)["reqId"].as_str().unwrap().to_string();
     admin(&mut c, "POST", "/admin/pair/decide", Some(serde_json::json!({ "reqId": id, "approve": false })));
     let r = json(&phone(&mut c, "GET", &format!("/api/pair/poll?reqId={id}"), None, None).0);
     assert_eq!(r["status"], "denied");
-    assert!(r.get("token").is_none());
     assert!(c.store.devices.is_empty());
+    assert_eq!(phone(&mut c, "GET", "/api/status", Some("declined"), None).0.status, 401);
+}
+
+#[test]
+fn a_pairing_request_needs_a_well_formed_secret_hash_and_it_cannot_be_reused() {
+    let mut c = companion();
+    let code = json(&admin(&mut c, "POST", "/admin/pair/new", Some(serde_json::json!({}))).0)["code"].as_str().unwrap().to_string();
+    for bad in [serde_json::json!({ "code": code }), serde_json::json!({ "code": code, "secretHash": "abc" }),
+                serde_json::json!({ "code": code, "secretHash": "Z".repeat(64) }), serde_json::json!({ "code": code, "secretHash": hash_token("x").to_uppercase() })] {
+        assert_eq!(phone(&mut c, "POST", "/api/pair/request", None, Some(bad)).0.status, 400);
+    }
+    // Malformed requests don't use up the code's tries.
+    assert_eq!(phone(&mut c, "POST", "/api/pair/request", None, Some(pair_body(&code, "one"))).0.status, 200);
+    let code = json(&admin(&mut c, "POST", "/admin/pair/new", Some(serde_json::json!({}))).0)["code"].as_str().unwrap().to_string();
+    assert_eq!(phone(&mut c, "POST", "/api/pair/request", None, Some(pair_body(&code, "one"))).0.status, 409);
+}
+
+#[test]
+fn approval_can_be_read_again_by_a_phone_that_slept_through_it() {
+    let mut c = companion();
+    let code = json(&admin(&mut c, "POST", "/admin/pair/new", Some(serde_json::json!({}))).0)["code"].as_str().unwrap().to_string();
+    let id = json(&phone(&mut c, "POST", "/api/pair/request", None, Some(pair_body(&code, "sleepy"))).0)["reqId"].as_str().unwrap().to_string();
+    admin(&mut c, "POST", "/admin/pair/decide", Some(serde_json::json!({ "reqId": id, "approve": true })));
+    for _ in 0..3 {
+        assert_eq!(json(&phone(&mut c, "GET", &format!("/api/pair/poll?reqId={id}"), None, None).0)["status"], "approved");
+    }
+    // Even after the PC forgets the request, the phone's own secret proves it was approved.
+    let later = c.handle_phone(&req("GET", &format!("/api/pair/poll?reqId={id}"), PUBLIC, &[(LOGIN_HEADER, LOGIN)], None), 11 * 60_000).0;
+    assert_eq!(later.status, 404);
+    assert_eq!(phone(&mut c, "GET", "/api/status", Some("sleepy"), None).0.status, 200);
 }
 
 #[test]
@@ -206,6 +244,44 @@ fn subscriptions_must_come_from_apple_with_valid_keys() {
     assert_eq!(r.status, 200);
     assert_eq!(fx, vec![Effect::Persist]);
     assert!(c.store.devices[0].can_receive());
+}
+
+#[test]
+fn status_tells_the_phone_which_subscription_the_pc_has() {
+    let mut c = companion();
+    let token = paired(&mut c);
+    assert!(json(&phone(&mut c, "GET", "/api/status", Some(&token), None).0)["endpoint"].is_null());
+    let sub = apple_subscription();
+    phone(&mut c, "POST", "/api/subscribe", Some(&token), Some(sub.clone()));
+    assert_eq!(json(&phone(&mut c, "GET", "/api/status", Some(&token), None).0)["endpoint"], sub["subscription"]["endpoint"]);
+}
+
+#[test]
+fn a_phone_confirms_each_reminder_once_and_unknown_ones_are_ignored() {
+    let mut c = companion();
+    let token = paired(&mut c);
+    c.note_sent(5, 400);
+    let (r, fx) = phone(&mut c, "POST", "/api/receipt", Some(&token), Some(serde_json::json!({ "event": 5 })));
+    assert_eq!(r.status, 200);
+    let device = c.store.devices[0].id.clone();
+    assert_eq!(fx, vec![Effect::Receipt { device, event: 5, after_ms: 600 }, Effect::Persist]);
+    assert_eq!(c.store.devices[0].received, 1);
+    let (r, fx) = phone(&mut c, "POST", "/api/receipt", Some(&token), Some(serde_json::json!({ "event": 5 })));
+    assert_eq!((r.status, fx.len()), (200, 0), "a second receipt for the same reminder doesn't count");
+    let (_, fx) = phone(&mut c, "POST", "/api/receipt", Some(&token), Some(serde_json::json!({ "event": 99 })));
+    assert!(fx.is_empty());
+    assert_eq!(phone(&mut c, "POST", "/api/receipt", None, Some(serde_json::json!({ "event": 5 }))).0.status, 401);
+    assert_eq!(json(&phone(&mut c, "GET", "/api/status", Some(&token), None).0)["received"], 1);
+}
+
+#[test]
+fn a_damaged_store_is_an_error_not_an_empty_store() {
+    assert!(Store::parse(b"{ not json").is_err());
+    assert!(Store::parse(b"").is_err());
+    let mut c = companion();
+    paired(&mut c);
+    let back = Store::parse(&c.store.to_json()).unwrap();
+    assert_eq!(back.devices.len(), 1);
 }
 
 #[test]
@@ -267,7 +343,7 @@ fn json_endpoints_refuse_other_content_types() {
 fn names_are_cleaned() {
     let mut c = companion();
     let code = json(&admin(&mut c, "POST", "/admin/pair/new", Some(serde_json::json!({}))).0)["code"].as_str().unwrap().to_string();
-    let id = json(&phone(&mut c, "POST", "/api/pair/request", None, Some(serde_json::json!({ "code": code, "name": "<script>x</script>" }))).0)["reqId"].as_str().unwrap().to_string();
+    let id = json(&phone(&mut c, "POST", "/api/pair/request", None, Some(serde_json::json!({ "code": code, "name": "<script>x</script>", "secretHash": hash_token("named") }))).0)["reqId"].as_str().unwrap().to_string();
     admin(&mut c, "POST", "/admin/pair/decide", Some(serde_json::json!({ "reqId": id, "approve": true })));
     assert_eq!(c.store.devices[0].name, "scriptxscript");
 }

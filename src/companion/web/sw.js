@@ -2,7 +2,7 @@
 // Shows every push at once (Safari cancels the subscription otherwise). On iOS 18.4+ the
 // declarative messages Unseat sends are shown by iOS itself; older iOS hands them here.
 
-const SHELL = "unseat-shell-1";
+const SHELL = "unseat-shell-2";
 const SHELL_FILES = ["/", "/app.js", "/manifest.webmanifest", "/icon-180.png"];
 
 self.addEventListener("install", (event) => {
@@ -45,14 +45,71 @@ self.addEventListener("push", (event) => {
   } catch {}
   const n = data && data.web_push === 8030 ? data.notification || {} : data || {};
   event.waitUntil(
-    self.registration.showNotification(n.title || "Unseat", {
-      body: n.body || "",
-      tag: n.tag || "unseat",
-      icon: "/icon-180.png",
-      data: { navigate: n.navigate || "/" },
-    })
+    Promise.all([
+      self.registration.showNotification(n.title || "Unseat", {
+        body: n.body || "",
+        tag: n.tag || "unseat",
+        icon: "/icon-180.png",
+        data: { navigate: n.navigate || "/" },
+      }),
+      receipt(n.navigate),
+    ])
   );
 });
+
+// Tell the PC this reminder reached the phone (best effort; needs the tailnet).
+async function receipt(navigate) {
+  try {
+    const m = /#e=(\d+)/.exec(navigate || "");
+    const token = m && (await idbGet("unseat-token"));
+    if (!token) return;
+    await fetch("/api/receipt", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ event: Number(m[1]) }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {}
+}
+
+// The browser renewed the subscription in the background: send the new one to the PC, if
+// the app has stored its token here. (Without it, the app re-sends it when next opened.)
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    (async () => {
+      const token = await idbGet("unseat-token");
+      if (!token) return;
+      let sub = event.newSubscription;
+      if (!sub) {
+        const key = event.oldSubscription && event.oldSubscription.options.applicationServerKey;
+        if (!key) return;
+        sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      }
+      await fetch("/api/subscribe", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: sub.toJSON() }),
+      });
+    })().catch(() => {})
+  );
+});
+
+function idbGet(key) {
+  return new Promise((resolve) => {
+    try {
+      const open = indexedDB.open("unseat", 1);
+      open.onupgradeneeded = () => open.result.createObjectStore("kv");
+      open.onerror = () => resolve(null);
+      open.onsuccess = () => {
+        const req = open.result.transaction("kv").objectStore("kv").get(key);
+        req.onsuccess = () => { resolve(req.result || null); open.result.close(); };
+        req.onerror = () => { resolve(null); open.result.close(); };
+      };
+    } catch {
+      resolve(null);
+    }
+  });
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

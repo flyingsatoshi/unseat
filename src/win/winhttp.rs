@@ -59,7 +59,9 @@ pub fn post(url: &str, headers: &[(&str, String)], body: &[u8], timeout_ms: i32)
             WinHttpOpen(&HSTRING::from("Unseat"), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, PCWSTR::null(), PCWSTR::null(), 0),
             "open",
         )?;
-        let _ = WinHttpSetTimeouts(session.0, timeout_ms, timeout_ms, timeout_ms, timeout_ms);
+        // Resolve, connect and send get half the budget each and the response the whole of it,
+        // so one unreachable push service holds the sender for well under a reminder's life.
+        let _ = WinHttpSetTimeouts(session.0, timeout_ms / 2, timeout_ms / 2, timeout_ms / 2, timeout_ms);
         let connect = open(WinHttpConnect(session.0, &HSTRING::from(host), port, 0), "connect")?;
         let flags = if secure { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) };
         let request = open(

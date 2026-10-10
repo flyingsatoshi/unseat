@@ -42,9 +42,16 @@ function Start-FakePush {
       $h = @{}
       foreach ($k in $ctx.Request.Headers.AllKeys) { $h[$k] = $ctx.Request.Headers[$k] }
       $status = [int](Get-Content (Join-Path $dir "status.txt") -Raw)
+      $delay = 0; $df = Join-Path $dir "delay.txt"; if (Test-Path $df) { $delay = [int](Get-Content $df -Raw) }
+      if ($delay -gt 0) { Start-Sleep -Milliseconds $delay }
       $line = @{ path = $ctx.Request.Url.AbsolutePath; method = $ctx.Request.HttpMethod; headers = $h; length = $ms.Length; status = $status } | ConvertTo-Json -Compress -Depth 4
-      for ($try = 0; $try -lt 50; $try++) {
-        try { Add-Content -Path (Join-Path $dir "pushes.jsonl") -Value $line -Encoding UTF8 -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 20 }
+      # Append with full sharing so the test's reads never make a line go missing.
+      $bytes = [Text.Encoding]::UTF8.GetBytes($line + "`n")
+      for ($try = 0; $try -lt 250; $try++) {
+        try {
+          $fs = [IO.File]::Open((Join-Path $dir "pushes.jsonl"), [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+          $fs.Write($bytes, 0, $bytes.Length); $fs.Close(); break
+        } catch { Start-Sleep -Milliseconds 20 }
       }
       $ctx.Response.StatusCode = $status
       $ctx.Response.Close()
@@ -52,6 +59,7 @@ function Start-FakePush {
   }
 }
 function Set-FakeStatus([int]$s) { Set-Content -Path (Join-Path $FakeDir "status.txt") -Value $s -NoNewline }
+function Set-FakeDelay([int]$ms) { Set-Content -Path (Join-Path $FakeDir "delay.txt") -Value $ms -NoNewline }
 # The fake service appends while tests read, so read with sharing and treat a busy file as "not yet".
 function Get-Pushes {
   $f = Join-Path $FakeDir "pushes.jsonl"
@@ -125,20 +133,34 @@ function Start-Phone($settings) {
   $i
 }
 
-# Pair a phone and turn on its notifications; returns the device token.
+function Sha256Hex([string]$text) {
+  $sha = [Security.Cryptography.SHA256]::Create()
+  (($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)) | ForEach-Object { $_.ToString("x2") }) -join "")
+}
+function New-Secret { [Convert]::ToBase64String([Guid]::NewGuid().ToByteArray() + [Guid]::NewGuid().ToByteArray()).TrimEnd("=").Replace("+", "-").Replace("/", "_") }
+
+# Pair a phone the way the app does (it makes its own secret and sends only the hash) and turn
+# on its notifications; returns the secret, which is the phone's bearer token.
 function Pair($inst, [string]$name = "Test iPhone") {
+  $secret = New-Secret
   $code = (Admin $inst POST "/admin/pair/new" @{}).Json.code
-  $r = Phone POST "/api/pair/request" @{ code = $code.ToLower(); name = $name }
+  $r = Phone POST "/api/pair/request" @{ code = $code.ToLower(); name = $name; secretHash = (Sha256Hex $secret) }
   Check ($r.Status -eq 200) "pair request accepted ($($r.Status))"
   $req = (Admin $inst GET "/admin/state").Json.requests | Where-Object { $_.reqId -eq $r.Json.reqId }
   Check ($req.login -eq $LOGIN) "PC sees the tailnet login"
+  Check ((Phone GET "/api/status" -token $secret).Status -eq 401) "not usable before approval"
   Check ((Admin $inst POST "/admin/pair/decide" @{ reqId = $r.Json.reqId; approve = $true }).Status -eq 200) "approved"
   $p = Phone GET "/api/pair/poll?reqId=$($r.Json.reqId)"
-  Check ($p.Json.status -eq "approved" -and $p.Json.token) "token handed out"
-  Check (-not (Phone GET "/api/pair/poll?reqId=$($r.Json.reqId)").Json.token) "token handed out only once"
+  Check ($p.Json.status -eq "approved" -and -not $p.Json.token) "approved, and no secret crosses the network"
   $sub = @{ subscription = @{ endpoint = "http://localhost:$FAKE/push/$name"; keys = @{ p256dh = $P256DH; auth = $AUTH } } }
-  Check ((Phone POST "/api/subscribe" $sub $p.Json.token).Status -eq 200) "subscribed"
-  $p.Json.token
+  Check ((Phone POST "/api/subscribe" $sub $secret).Status -eq 200) "subscribed"
+  $secret
+}
+
+function Start-PhoneIn([string]$appdata) {
+  $old = @($env:UNSEAT_TEST_PUSH_ORIGIN, $env:UNSEAT_TEST_PUBLIC_HOST)
+  $env:UNSEAT_TEST_PUSH_ORIGIN = "http://localhost:$FAKE"; $env:UNSEAT_TEST_PUBLIC_HOST = "pc.example.ts.net"
+  try { Start-TestInstance $Exe $null $appdata } finally { $env:UNSEAT_TEST_PUSH_ORIGIN = $old[0]; $env:UNSEAT_TEST_PUBLIC_HOST = $old[1] }
 }
 
 function Stop-Phone($inst) {
@@ -151,7 +173,7 @@ function Wait-Pushes([int]$n, [int]$ms = 8000) { @(Wait-Until { $p = @(Get-Pushe
 function Scenario([string]$name, [scriptblock]$body) {
   if ($Only -and $name -notlike "*$Only*") { return }
   $sw = [Diagnostics.Stopwatch]::StartNew()
-  Clear-Pushes; Set-FakeStatus 201
+  Clear-Pushes; Set-FakeStatus 201; Set-FakeDelay 0
   try {
     & $body
     $results.Add([pscustomobject]@{ Test = $name; Result = "PASS"; Ms = $sw.ElapsedMilliseconds; Detail = "" })
@@ -314,6 +336,14 @@ Scenario "test push from the phone, rate-limited" {
     $p = @(Wait-Pushes 1)
     Check ($p[0].headers.Topic -eq "unseat-test") "test topic"
     Check ((Phone POST "/api/test" @{} $token).Status -eq 429) "second test too soon"
+    # What the phone's service worker does when the push arrives: confirm it to the PC.
+    $event = [int](((Read-Log $i) -match "phone queued test event=" | Select-Object -Last 1) -replace '^.*event=(\d+).*$', '$1')
+    Check ((Phone POST "/api/receipt" @{ event = $event } $token).Status -eq 200) "receipt accepted"
+    Wait-Until { (Read-Log $i) -match "phone receipt event=$event after_ms=\d+" } | Out-Null
+    [void](Phone POST "/api/receipt" @{ event = $event } $token)
+    $s = (Phone GET "/api/status" -token $token).Json
+    Check ($s.received -eq 1) "counted once ($($s.received))"
+    Check ((Admin $i GET "/admin/state").Json.devices[0].received -eq 1) "PC page shows it reached the phone"
   } finally { Stop-Phone $i }
 }
 
@@ -364,6 +394,153 @@ Scenario "the device store survives a restart and the key stays the same" {
     Advance $i 1200
     Wait-Pushes 1 | Out-Null
   } finally { Stop-Phone $i }
+}
+
+Scenario "a natural break (Pause when idle) cancels a queued reminder" {
+  $i = Start-Phone (Base @{ phone_enabled = $true; inactivity_behavior = "pause"; idle_after_secs = 60 })
+  try {
+    Pair $i | Out-Null
+    Set-FakeStatus 503
+    Set-Idle $i 0
+    Advance $i 1200
+    Wait-Until { (Read-Log $i) -match "phone push time_up event=1 attempt=1 status=503" } | Out-Null
+    Set-Idle $i 600
+    Advance $i 300
+    Wait-Until { (Read-Log $i) -match "phone note Cancelled" } | Out-Null
+    Set-FakeStatus 201
+    Start-Sleep -Seconds 4
+    Check (@(Get-Pushes | Where-Object { $_.status -eq 201 }).Count -eq 0) "the stale reminder was not sent after the break"
+  } finally { Stop-Phone $i }
+}
+
+Scenario "a late 'gone' for the old subscription goes to the new one instead" {
+  $i = Start-Phone (Base @{ phone_enabled = $true })
+  try {
+    $token = Pair $i "late"
+    Set-FakeStatus 410; Set-FakeDelay 2500
+    Advance $i 1200
+    Wait-Until { @(Get-Content (Join-Path $i.Dir "test-events.log") | Where-Object { $_ -like "phone queued time_up*" }).Count -gt 0 } | Out-Null
+    Start-Sleep -Milliseconds 700
+    Set-FakeStatus 201; Set-FakeDelay 0
+    $sub = @{ subscription = @{ endpoint = "http://localhost:$FAKE/push/renewed"; keys = @{ p256dh = $P256DH; auth = $AUTH } } }
+    Check ((Phone POST "/api/subscribe" $sub $token).Status -eq 200) "phone re-subscribed while the send was in flight"
+    Wait-Until { (Read-Log $i) -match "old subscription gone; resending" } | Out-Null
+    $p = @(Wait-Until { $x = @(Get-Pushes | Where-Object { $_.path -eq "/push/renewed" }); if ($x.Count) { ,$x } } 10000)
+    Check ($p[0].status -eq 201) "delivered to the new subscription"
+    $s = (Phone GET "/api/status" -token $token).Json
+    Check (-not $s.needsResubscribe) "the new subscription was not flagged"
+    Check ($s.endpoint -like "*/push/renewed") "status reports the PC's copy of the endpoint"
+  } finally { Stop-Phone $i }
+}
+
+Scenario "a refused cached VAPID token is replaced once, not reused for an hour" {
+  $i = Start-Phone (Base @{ phone_enabled = $true })
+  try {
+    $token = Pair $i
+    Check ((Phone POST "/api/test" @{} $token).Status -eq 200) "first test"
+    Wait-Pushes 1 | Out-Null
+    Set-FakeStatus 403
+    Advance $i 1200
+    Wait-Until { (Read-Log $i) -match "phone push time_up .*outcome=Rejected" } | Out-Null
+    Check (@((Read-Log $i) -match "token refused; signing a new one").Count -eq 1) "re-signed once"
+    $auths = @(Get-Pushes | Where-Object { $_.status -eq 403 } | ForEach-Object { $_.headers.Authorization })
+    Check ($auths.Count -eq 2 -and $auths[0] -ne $auths[1]) "second try used a fresh token"
+  } finally { Stop-Phone $i }
+}
+
+Scenario "a damaged device store is kept aside, never silently overwritten" {
+  $appdata = Join-Path $TestRoot ([guid]::NewGuid().ToString("N").Substring(0, 8))
+  $dir = Join-Path $appdata "Unseat"; New-Item -ItemType Directory -Force $dir | Out-Null
+  (Base @{ phone_enabled = $true }) | ConvertTo-Json | Set-Content -Encoding Ascii (Join-Path $dir "settings.json")
+  Set-Content -Path (Join-Path $dir "companion.json") -Value "{ damaged" -NoNewline
+  $i = Start-PhoneIn $appdata
+  try {
+    Wait-Until { @(Listening $PHONE).Count -gt 0 } | Out-Null
+    $aside = @(Get-ChildItem $dir -Filter "companion.json.bad-*")
+    Check ($aside.Count -eq 1) "damaged file kept aside"
+    Check ((Get-Content $aside[0].FullName -Raw) -eq "{ damaged") "with its contents"
+    Check (@((Read-Log $i) -match "phone store unreadable").Count -gt 0) "logged"
+  } finally { Stop-Phone $i }
+}
+
+Scenario "a locked device store is retried, not replaced with an empty one" {
+  $i = Start-Phone (Base @{ phone_enabled = $true })
+  $appdata = $i.AppData
+  $lock = $null
+  try {
+    $token = Pair $i
+    Stop-TestInstance $i -Keep
+    $store = Join-Path $i.Dir "companion.json"
+    $before = Get-Content $store -Raw
+    $lock = [IO.File]::Open($store, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+    $i = Start-PhoneIn $appdata
+    Wait-Until { (Read-Log $i) -match "phone store busy" } | Out-Null
+    Check (@(Listening $PHONE).Count -eq 0) "no listener while the store can't be read"
+    $lock.Close(); $lock = $null
+    Wait-Until { @(Listening $PHONE).Count -gt 0 } 15000 | Out-Null
+    Check ((Phone GET "/api/status" -token $token).Status -eq 200) "still paired after the lock cleared"
+    Check ((Get-Content $store -Raw) -eq $before) "store unchanged"
+  } finally { if ($lock) { $lock.Close() }; Stop-Phone $i }
+}
+
+Scenario "a busy phone port is reported on the PC page and retried" {
+  $squat = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, $PHONE)
+  $squat.Start()
+  try {
+    $i = Start-Phone (Base @{ phone_enabled = $true })
+    try {
+      Wait-Until { (Read-Log $i) -match "phone listener failed" } | Out-Null
+      $err = (Admin $i GET "/admin/state").Json.listenerError
+      Check ($err -like "*$PHONE*in use*") "PC page explains ($err)"
+      $squat.Stop(); $squat = $null
+      Wait-Until { (Read-Log $i) -match "phone listener on" } 15000 | Out-Null
+      Check ($null -eq (Admin $i GET "/admin/state").Json.listenerError) "warning cleared"
+      Check ((Phone GET "/").Status -eq 200) "phone reaches Unseat again"
+    } finally { Stop-Phone $i }
+  } finally { if ($squat) { $squat.Stop() } }
+}
+
+Scenario "turning reminders off and on quickly always leaves the listener running" {
+  $i = Start-Phone (Base @{ phone_enabled = $true })
+  try {
+    Wait-Until { @(Listening $PHONE).Count -gt 0 } | Out-Null
+    for ($n = 0; $n -lt 5; $n++) {
+      [void](Phone GET "/")
+      [void](Admin $i POST "/admin/settings" @{ enabled = $false })
+      [void](Admin $i POST "/admin/settings" @{ enabled = $true })
+    }
+    Wait-Until { (Get-Settings $i).phone_enabled -eq $true } | Out-Null
+    Wait-Until { (Phone GET "/").Status -eq 200 } 15000 | Out-Null
+    Wait-Until { @(Listening $PHONE).Count -eq 1 } | Out-Null
+  } finally { Stop-Phone $i }
+}
+
+Scenario "a newer build takes over and keeps iPhone reminders working" {
+  $i = Start-Phone (Base @{ phone_enabled = $true })
+  $newer = Join-Path $TestRoot "unseat-newer.exe"
+  try {
+    $token = Pair $i
+    Copy-Item $Exe $newer -Force
+    (Get-Item $newer).LastWriteTime = (Get-Date).AddMinutes(5)
+    $old = @($env:APPDATA, $env:UNSEAT_TEST_HOOKS, $env:UNSEAT_TEST_PUSH_ORIGIN, $env:UNSEAT_TEST_PUBLIC_HOST)
+    $env:APPDATA = $i.AppData; $env:UNSEAT_TEST_HOOKS = "1"
+    $env:UNSEAT_TEST_PUSH_ORIGIN = "http://localhost:$FAKE"; $env:UNSEAT_TEST_PUBLIC_HOST = "pc.example.ts.net"
+    try { $p2 = Start-Process -FilePath $newer -PassThru } finally {
+      $env:APPDATA = $old[0]; $env:UNSEAT_TEST_HOOKS = $old[1]; $env:UNSEAT_TEST_PUSH_ORIGIN = $old[2]; $env:UNSEAT_TEST_PUBLIC_HOST = $old[3]
+    }
+    Check ($i.Process.WaitForExit(12000)) "older instance quit"
+    $owner = Wait-Until { netstat -ano -p tcp | Select-String -Pattern "^\s*TCP\s+127\.0\.0\.1:$PHONE\s+\S+\s+LISTENING\s+(\d+)" | ForEach-Object { [int]$_.Matches[0].Groups[1].Value } | Select-Object -First 1 } 12000
+    Check ($owner -eq $p2.Id) "the newer build owns the phone listener"
+    Check ((Phone GET "/api/status" -token $token).Status -eq 200) "phone still paired"
+    $widget = Wait-Until { $h = [UnseatTest]::FindWindowW("UnseatWidget", "Unseat (test)"); if ($h -ne [IntPtr]::Zero) { $h } }
+    [void][UnseatTest]::SendMessageW($widget, $MSG_ADVANCE, [IntPtr]1200, [IntPtr]::Zero)
+    Wait-Pushes 1 | Out-Null
+  } finally {
+    Get-Process unseat-newer -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }
+    Start-Sleep -Milliseconds 300
+    Remove-Item $newer -ErrorAction SilentlyContinue
+    Stop-Phone $i
+  }
 }
 
 Stop-Job $job -ErrorAction SilentlyContinue; Remove-Job $job -Force -ErrorAction SilentlyContinue

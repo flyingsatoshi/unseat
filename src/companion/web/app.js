@@ -3,6 +3,10 @@
 
 const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = "unseat-token";
+// A pairing in progress: { reqId, secret, at }. Kept so pairing survives the app being
+// suspended (locked phone, app switch) while the user walks to the PC to approve it.
+const PENDING_KEY = "unseat-pending";
+const PENDING_FOR_MS = 10 * 60_000;
 const standalone = navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
 let config = null; // fetched before any tap, so subscribe() runs straight from the gesture
 let swReg = null;
@@ -14,7 +18,28 @@ const getToken = () => {
 };
 const setToken = (token) => {
   try { token ? localStorage.setItem(TOKEN_KEY, token) : localStorage.removeItem(TOKEN_KEY); } catch {}
+  // The service worker can't read localStorage; it needs the token to re-send a subscription
+  // that the browser renewed in the background.
+  idbSet(TOKEN_KEY, token || null);
 };
+const getPending = () => {
+  try { return JSON.parse(localStorage.getItem(PENDING_KEY) || "null"); } catch { return null; }
+};
+const setPending = (p) => {
+  try { p ? localStorage.setItem(PENDING_KEY, JSON.stringify(p)) : localStorage.removeItem(PENDING_KEY); } catch {}
+};
+
+function idbSet(key, value) {
+  try {
+    const open = indexedDB.open("unseat", 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("kv");
+    open.onsuccess = () => {
+      const tx = open.result.transaction("kv", "readwrite");
+      value === null ? tx.objectStore("kv").delete(key) : tx.objectStore("kv").put(value, key);
+      tx.oncomplete = () => open.result.close();
+    };
+  } catch {}
+}
 
 function show(id) {
   for (const s of ["install", "pair", "main", "removed"]) $(s).classList.toggle("hidden", s !== id);
@@ -44,29 +69,88 @@ function b64uToBytes(s) {
 
 // ---------------------------------------------------------------- pairing
 
+function bytesToB64u(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function sha256Hex(text) {
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// The phone makes its own secret and sends only its hash; the PC never hands a secret out.
 async function pair() {
   $("pairBtn").disabled = true;
   $("pairMsg").textContent = "Sending code…";
   try {
-    const { reqId } = await api("/api/pair/request", { method: "POST", body: { code: $("code").value, name: $("name").value } });
-    $("pairMsg").textContent = "Code accepted. Approve this phone on the PC…";
-    const started = Date.now();
-    while (Date.now() - started < 5 * 60_000) {
-      await new Promise((r) => setTimeout(r, 2000));
-      const r = await api(`/api/pair/poll?reqId=${encodeURIComponent(reqId)}`);
-      if (r.status === "approved" && r.token) {
-        setToken(r.token);
-        $("pairMsg").textContent = "";
-        show("main");
-        return refresh();
-      }
-      if (r.status === "denied") throw new Error("The PC declined this phone.");
-    }
-    throw new Error("Timed out waiting for approval.");
+    const secret = bytesToB64u(crypto.getRandomValues(new Uint8Array(32)));
+    const body = { code: $("code").value, name: $("name").value, secretHash: await sha256Hex(secret) };
+    const { reqId } = await api("/api/pair/request", { method: "POST", body });
+    setPending({ reqId, secret, at: Date.now() });
+    await waitForApproval();
   } catch (e) {
     $("pairMsg").textContent = e.message;
   } finally {
     $("pairBtn").disabled = false;
+  }
+}
+
+let waiting = false;
+
+// Poll until the PC decides. Network errors and timeouts just mean "try again"; the pending
+// pairing is kept, so locking the phone or switching apps doesn't lose it.
+async function waitForApproval() {
+  if (waiting) return;
+  waiting = true;
+  try {
+    let delay = 2000;
+    for (;;) {
+      const p = getPending();
+      if (!p) return;
+      if (Date.now() - p.at > PENDING_FOR_MS) return finishPending(p);
+      $("pairMsg").textContent = "Code accepted. Approve this phone on the PC…";
+      await new Promise((r) => setTimeout(r, delay));
+      if (document.visibilityState !== "visible") continue;
+      try {
+        const r = await api(`/api/pair/poll?reqId=${encodeURIComponent(p.reqId)}`);
+        if (r.status === "approved") return approved(p);
+        if (r.status === "denied") {
+          setPending(null);
+          $("pairMsg").textContent = "The PC declined this phone.";
+          return;
+        }
+        delay = 2000;
+      } catch (e) {
+        // The PC forgets a request after 10 minutes; the secret then tells whether it was approved.
+        if (/unknown request/.test(e.message)) return finishPending(p);
+        $("pairMsg").textContent = `Waiting for the PC (${e.message}); still trying…`;
+        delay = Math.min(delay * 2, 15_000);
+      }
+    }
+  } finally {
+    waiting = false;
+  }
+}
+
+function approved(p) {
+  setToken(p.secret);
+  setPending(null);
+  $("pairMsg").textContent = "";
+  show("main");
+  return refresh();
+}
+
+// The request is gone from the PC (or too old): the phone is paired if its secret works.
+async function finishPending(p) {
+  try {
+    const res = await fetch("/api/status", { headers: { Authorization: `Bearer ${p.secret}` }, cache: "no-store", signal: AbortSignal.timeout(8000) });
+    if (res.ok) return approved(p);
+    if (res.status === 401) {
+      setPending(null);
+      $("pairMsg").textContent = "Pairing wasn't approved in time. Make a new code on the PC and try again.";
+    }
+  } catch {
+    $("pairMsg").textContent = "Can't reach the PC to finish pairing. Open the app again when it's online.";
   }
 }
 
@@ -116,6 +200,11 @@ async function refresh() {
   try {
     if (!config) config = await api("/api/config");
     let status = await api("/api/status");
+    if (sub && status.subscribed && status.endpoint && status.endpoint !== sub.endpoint && !status.needsResubscribe) {
+      // The browser renewed the subscription and the PC still has the old one.
+      await api("/api/subscribe", { method: "POST", body: { subscription: sub.toJSON() } });
+      status = await api("/api/status");
+    }
     if (sub && status.needsResubscribe) {
       // Apple dropped the old subscription. Clear it here so the next tap makes a fresh one.
       await sub.unsubscribe().catch(() => {});
@@ -134,6 +223,7 @@ async function refresh() {
     $("offBanner").classList.toggle("hidden", status.enabled);
     $("resubBanner").classList.toggle("hidden", !status.needsResubscribe);
     $("delivered").textContent = String(status.delivered);
+    $("received").textContent = String(status.received || 0);
     $("missed").textContent = String(status.missed);
     const working = Boolean(sub) && status.subscribed && !status.needsResubscribe && perm === "granted";
     $("sub").textContent = working ? "receiving" : "not receiving";
@@ -163,7 +253,8 @@ function start() {
   $("repairBtn").addEventListener("click", () => show("pair"));
   addEventListener("online", () => { backoff = 1000; if (getToken()) refresh(); });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && getToken()) { backoff = 1000; refresh(); }
+    if (document.visibilityState !== "visible") return;
+    if (getToken()) { backoff = 1000; refresh(); } else if (getPending()) waitForApproval();
   });
 
   const code = new URLSearchParams(location.hash.slice(1)).get("pair");
@@ -175,11 +266,13 @@ function start() {
     return show("install");
   }
   if (getToken()) {
+    idbSet(TOKEN_KEY, getToken());
     show("main");
     return refresh();
   }
   if (code) $("code").value = code;
   show("pair");
+  if (getPending()) waitForApproval();
 }
 
 start();

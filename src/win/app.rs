@@ -353,7 +353,12 @@ impl App {
             ));
         }
         self.handle_beep(result.beep);
-        self.phone.update_view(&status_line(result.snapshot), &format_today(result.snapshot.today_sitting));
+        self.phone.tick(
+            &status_line(result.snapshot),
+            &format_today(result.snapshot.today_sitting),
+            result.snapshot.state,
+            result.snapshot.sitting_elapsed,
+        );
         if now.saturating_sub(self.last_save_at) >= SAVE_EVERY {
             self.persist_today();
             self.last_save_at = now;

@@ -1,6 +1,6 @@
 use std::time::Duration;
 use unseat::companion::outbox::{Note, Outbox, BACKOFF_MAX_MS, MAX_JOBS_PER_DEVICE};
-use unseat::companion::reminder::{message, phone_should_alert, reminder_for, Presence, ReminderKind};
+use unseat::companion::reminder::{message, phone_should_alert, reminder_for, Presence, ReminderKind, AWAY_AFTER_MAX_SECS};
 use unseat::companion::webpush::Outcome;
 use unseat::{Beep, PhoneAlerts, Settings};
 
@@ -51,6 +51,15 @@ fn idle_only_waits_until_the_user_is_away() {
 }
 
 #[test]
+fn idle_only_counts_two_minutes_without_input_as_away_even_with_a_long_inactivity_time() {
+    // With "Pause when idle" the timer stops after the inactivity time, so idle-only must
+    // treat the user as away sooner or the phone would hardly ever get a reminder.
+    let s = Settings { phone_alerts: PhoneAlerts::IdleOnly, idle_after_secs: 600, ..on() };
+    assert!(!phone_should_alert(&s, Presence { idle_for: Duration::from_secs(AWAY_AFTER_MAX_SECS - 1), locked: false }));
+    assert!(phone_should_alert(&s, Presence { idle_for: Duration::from_secs(AWAY_AFTER_MAX_SECS), locked: false }));
+}
+
+#[test]
 fn sitting_reminders_expire_at_the_next_repeat_and_never_live_long() {
     let s = Settings { repeat_every_secs: 300, ..on() };
     assert_eq!(reminder_for(Beep::LimitReached, &s, Duration::ZERO).unwrap().ttl_secs, 300);
@@ -64,10 +73,11 @@ fn sitting_reminders_expire_at_the_next_repeat_and_never_live_long() {
 #[test]
 fn the_push_is_a_declarative_message_tagged_by_topic() {
     let r = reminder_for(Beep::LimitReached, &on(), Duration::from_secs(3600)).unwrap();
-    let v: serde_json::Value = serde_json::from_slice(&message(&r, "https://pc.example.ts.net/")).unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&message(&r, "https://pc.example.ts.net/", 7)).unwrap();
     assert_eq!(v["web_push"], 8030);
+    assert_eq!(v["mutable"], true, "the service worker may see it, to confirm delivery");
     assert_eq!(v["notification"]["title"], "Time to stand up");
-    assert_eq!(v["notification"]["navigate"], "https://pc.example.ts.net/");
+    assert_eq!(v["notification"]["navigate"], "https://pc.example.ts.net/#e=7");
     assert_eq!(v["notification"]["tag"], "unseat-sitting");
     assert_eq!(ReminderKind::Repeat.topic(), ReminderKind::TimeUp.topic());
     assert_ne!(ReminderKind::BreakOver.topic(), ReminderKind::TimeUp.topic());

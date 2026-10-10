@@ -101,7 +101,12 @@ pub fn test_reminder() -> Reminder {
     }
 }
 
-/// Whether the PC user is away: idle past the inactivity threshold, locked or asleep.
+/// No input for this long (or the inactivity time, if shorter) counts as away from the PC.
+/// Capped so idle-only still works with "Pause when idle", where the timer stops (and no
+/// reminders fire) once the full inactivity time has passed.
+pub const AWAY_AFTER_MAX_SECS: u64 = 120;
+
+/// Whether the PC user is away: idle for a while, locked or asleep.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Presence {
     pub idle_for: Duration,
@@ -115,19 +120,24 @@ pub fn phone_should_alert(settings: &Settings, presence: Presence) -> bool {
     }
     match settings.phone_alerts {
         PhoneAlerts::All => true,
-        PhoneAlerts::IdleOnly => presence.locked || presence.idle_for >= Duration::from_secs(settings.idle_after_secs),
+        PhoneAlerts::IdleOnly => {
+            presence.locked || presence.idle_for >= Duration::from_secs(settings.idle_after_secs.min(AWAY_AFTER_MAX_SECS))
+        }
     }
 }
 
 /// The push body: a Declarative Web Push message. iOS 18.4+ shows it itself; older iOS hands
-/// the same JSON to the app's service worker, which shows it.
-pub fn message(reminder: &Reminder, navigate: &str) -> Vec<u8> {
+/// the same JSON to the app's service worker, which shows it. `mutable` also lets the service
+/// worker see it on 18.4+, so it can tell the PC the reminder reached the phone; if the worker
+/// fails, iOS still shows the notification. The event number rides in the `navigate` fragment.
+pub fn message(reminder: &Reminder, navigate: &str, event: u64) -> Vec<u8> {
     serde_json::json!({
         "web_push": 8030,
+        "mutable": true,
         "notification": {
             "title": reminder.title,
             "body": reminder.body,
-            "navigate": navigate,
+            "navigate": format!("{navigate}#e={event}"),
             "tag": reminder.kind.topic(),
             "silent": false,
         }

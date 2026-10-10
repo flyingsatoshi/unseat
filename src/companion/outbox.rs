@@ -67,6 +67,11 @@ impl Outbox {
         Self::default()
     }
 
+    /// The event number the next `enqueue` will use.
+    pub fn next_event(&self) -> u64 {
+        self.next_event + 1
+    }
+
     pub fn pending(&self) -> usize {
         self.jobs.iter().filter(|j| !j.dead).count()
     }

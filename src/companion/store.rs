@@ -35,6 +35,11 @@ pub struct Device {
     pub missed: u64,
     #[serde(default)]
     pub last_delivered_ms: u64,
+    /// Reminders the phone itself confirmed (its service worker saw the push).
+    #[serde(default)]
+    pub received: u64,
+    #[serde(default)]
+    pub last_received_ms: u64,
     #[serde(default)]
     pub last_error: Option<String>,
 }
@@ -57,11 +62,13 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn from_json(bytes: &[u8]) -> Self {
-        let mut s: Store = serde_json::from_slice(bytes).unwrap_or_default();
+    /// Read a saved store. An error means the file is damaged: the host keeps it aside
+    /// instead of overwriting it, so a bad read never silently unpairs every phone.
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let mut s: Store = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
         s.version = STORE_VERSION;
         s.devices.truncate(MAX_DEVICES);
-        s
+        Ok(s)
     }
 
     pub fn to_json(&self) -> Vec<u8> {

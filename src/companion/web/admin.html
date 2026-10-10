@@ -48,8 +48,9 @@
       <p class="muted">All Unseat reminders: time up, repeat reminders (including sound-only ones) and break over.</p>
       <label>When <select id="alerts">
         <option value="all">Always</option>
-        <option value="idle_only">Only while I'm away from the PC (idle, locked or asleep)</option>
+        <option value="idle_only">Only while I'm away from the PC (no input for 2 minutes, locked or asleep)</option>
       </select></label>
+      <p class="bad" id="listenerError" hidden></p>
       <p class="muted" id="pending"></p>
     </section>
 
@@ -78,7 +79,7 @@
 
     <section class="card full">
       <h2>Paired phones</h2>
-      <div class="tw"><table><thead><tr><th>Name</th><th>Tailnet login</th><th>Notifications</th><th>Delivered</th><th>Missed</th><th>Last seen</th><th>Last delivered</th><th></th></tr></thead><tbody id="devices"></tbody></table></div>
+      <div class="tw"><table><thead><tr><th>Name</th><th>Tailnet login</th><th>Notifications</th><th>Sent</th><th>Reached phone</th><th>Missed</th><th>Last seen</th><th>Last delivered</th><th></th></tr></thead><tbody id="devices"></tbody></table></div>
       <p class="muted" id="msg" role="status"></p>
     </section>
   </div>

@@ -19,12 +19,14 @@ play a sound on Windows) and break over. No App Store, no Unseat account, no clo
 4. **New pairing code**, then scan the QR code with the iPhone camera.
 5. In Safari: **Share → Add to Home Screen**, then open **Unseat** from the Home Screen.
 6. Type the code, approve the phone on the PC page, then tap **Turn on notifications** and allow.
+   The phone makes its own secret and sends the PC only a hash of it, so pairing still finishes
+   if the phone locks while you walk to the PC.
 
 ## Choices
 
 - **Always** (default): every reminder goes to the phone.
-- **Only while I'm away from the PC**: only when the PC has been idle past your inactivity time,
-  or is locked or asleep.
+- **Only while I'm away from the PC**: only when there has been no keyboard or mouse input for
+  2 minutes (or your inactivity time, if shorter), or the PC is locked or asleep.
 
 ## How it behaves
 
@@ -35,6 +37,11 @@ play a sound on Windows) and break over. No App Store, no Unseat account, no clo
 - If the PC can't reach Apple, it retries (2 s, doubling up to 60 s) until the reminder goes stale,
   then counts it as missed. The phone app shows delivered and missed counts.
 - Pausing, resetting, snoozing or taking a break on the PC cancels reminders that haven't gone out.
+  A reminder already handed to Apple can't be recalled; it may still show if the phone was offline.
+- The app shows how many reminders were sent and how many the phone confirmed (its service
+  worker reports back over the tailnet, so confirmations need Tailscale on the phone).
+- If Tailscale isn't running yet when Unseat starts, Unseat keeps checking; if the port is taken
+  by another program, the PC page says so and Unseat keeps trying.
 - If Apple drops the phone's subscription, the app says so: open it and tap **Turn on notifications**.
 - Remove a phone on the PC page to cut it off at once.
 

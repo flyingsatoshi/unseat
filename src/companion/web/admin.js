@@ -45,6 +45,8 @@ function render(s) {
   if (document.activeElement !== $("enabled")) $("enabled").checked = s.enabled;
   if (document.activeElement !== $("alerts")) $("alerts").value = s.alerts;
   $("pending").textContent = s.pending ? `${s.pending} reminder(s) waiting to be delivered.` : "";
+  $("listenerError").hidden = !s.listenerError;
+  $("listenerError").textContent = s.listenerError || "";
   $("phoneUrl").textContent = s.phoneUrl || "unknown — is Tailscale running and signed in?";
   $("serveCmd").textContent = s.serveCommand;
   $("tsStatus").textContent = `serve:\n${s.serveStatus || "unknown"}\n\nfunnel:\n${s.funnelStatus || "unknown"}`;
@@ -83,7 +85,7 @@ function render(s) {
   for (const d of s.devices) {
     const tr = el("tr");
     const state = d.needsResubscribe ? ["needs reconnect (open the app)", "warn"] : d.subscribed ? ["on", "ok"] : ["not turned on yet", "warn"];
-    tr.append(el("td", d.name), el("td", d.login), el("td", state[0], state[1]), el("td", String(d.delivered)), el("td", String(d.missed), d.missed ? "warn" : ""),
+    tr.append(el("td", d.name), el("td", d.login), el("td", state[0], state[1]), el("td", String(d.delivered)), el("td", String(d.received || 0)), el("td", String(d.missed), d.missed ? "warn" : ""),
       el("td", fmt(d.lastSeenMs)), el("td", fmt(d.lastDeliveredMs)));
     const actions = el("td");
     actions.append(button("Send test", "ghost", () => act("/admin/test", { deviceId: d.id }, "Test sent.")), " ",
@@ -94,7 +96,7 @@ function render(s) {
   if (!s.devices.length) {
     const tr = el("tr");
     const td = el("td", "No phones paired yet.", "muted");
-    td.colSpan = 8;
+    td.colSpan = 9;
     tr.appendChild(td);
     tbody.appendChild(tr);
   }
