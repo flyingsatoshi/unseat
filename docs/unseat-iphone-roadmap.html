@@ -713,7 +713,8 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
       <thead><tr><th>Suite</th><th>Result</th><th>Notes</th></tr></thead>
       <tbody>
         <tr><td>Library (Linux container)</td><td class="mid">all pass but 1</td><td><code>downloads_exe_is_not_a_dev_build</code> uses Windows paths; fails on Linux only, as on 379aa3e</td></tr>
-        <tr><td>Windows test programs (native)</td><td class="mid">8 of 12 run, 156/156 pass</td><td>Smart App Control blocked 4 new binaries; 3 of them also pass on Linux; the 13 Windows-only unit tests are left to CI</td></tr>
+        <tr><td>Windows test programs (native)</td><td class="mid">8 of 12 run, 156/156 pass</td><td>Smart App Control blocked 4 new binaries locally</td></tr>
+        <tr><td>GitHub Actions on windows-latest (PR #1)</td><td class="yes">Pass</td><td>Library 198, Windows host 211 (incl. the 13 Windows-only unit tests), release GUI build</td></tr>
         <tr><td>All targets compile (cross-build)</td><td class="yes">Pass</td><td>Release GUI exe 2,471,424 bytes</td></tr>
         <tr><td>scripts/test_app.ps1</td><td class="yes">27 / 27</td><td>23 existing + 3 isolation scenarios + your-Unseat-untouched check</td></tr>
         <tr><td>scripts/test_phone.ps1</td><td class="yes">20 / 20</td><td>Includes security: loopback only, tailnet header, admin key, chunked refusal, removal</td></tr>
@@ -725,7 +726,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
       <li><span class="tag t-rec">Decision D10</span> Push format: declarative (default today; shown by iOS itself, no confirmations) or plain JSON (confirmations and measured 20/20, but relies on the service worker showing every push).</li>
       <li>Not run on the phone: Tailscale off, network switch, phone restart, the three revocation paths.</li>
       <li>Your installed <code>dist&#92;unseat.exe</code> is built from the main tree and has no iPhone code. To use the feature: install this build, run <code>tailscale serve --bg 8790</code>, turn iPhone reminders on, and pair again from a new Home Screen app at the port-443 address (the current one is tied to the test address).</li>
-      <li>The branch has no Gitea remote; <code>origin</code> is GitHub, whose Actions workflow runs on <code>windows-latest</code>. Pushing needs your go-ahead.</li>
+      <li>PR #1 on GitHub is open with CI green. Merging and installing need your approval.</li>
     </ul>
   </div>
 </details>
@@ -1169,9 +1170,9 @@ const TASKS = [
     desc: "Install this build, run tailscale serve, pair the iPhone, and repeat Phase 1's checks: locked phone, a full 20-push batch, network interruptions, revoke.",
     accept: "Same criteria as Phase 1; pushes sent by Unseat (WinHTTP + Rust crypto) arrive on iOS 18.7.", deps: "Your iPhone",
     evidence: "Partly done 2026-10-11 with real Apple push (see Phase 3). Real reminder end to end on the real clock with the default format: passed (you confirmed it on the iPhone). Also: batch, reminders, idle-only, formats, tap, counters, one offline case pass; late delivery and Topic collapse fail (fixed by showing fired-at time); network switch, restart and revocation not run, stopped by you." },
-  { id: "6.8", phase: "6", title: "Push the branch and open a PR", status: "Blocked", prio: "P1", cx: "S",
+  { id: "6.8", phase: "6", title: "Push the branch and open a PR", status: "Completed", prio: "P1", cx: "S",
     desc: "feature/iphone-companion is committed locally and ready.", accept: "PR open; CI green.",
-    evidence: "Not pushed. The only remote is GitHub (origin); there is no Gitea remote for Unseat. Waiting for your go-ahead and a free runner." },
+    evidence: "Pushed to GitHub with your approval on 2026-10-11; PR #1 open, not merged. GitHub Actions (windows-latest): library 198 tests, Windows host 211 tests (including the 13 Windows-only unit tests blocked locally by Smart App Control) and the release GUI build all passed (run 38094340835)." },
   { id: "6.9", phase: "6", title: "Isolate test copies from your Unseat", status: "Completed", prio: "P0", cx: "S",
     desc: "A live-test copy was mistaken for your Unseat; two test copies could attach to each other.",
     evidence: "e6d7141: per-run id, hidden mode, TEST badge and tooltip; scripts stop only their own processes and check your Unseat before and after (27/27, 20/20)." },
