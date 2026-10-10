@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Unseat Test">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1216">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<title>Unseat Push Test</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#16191f; --muted:#5a6270; --line:#d9dee6; --accent:#2f5bd3; --ok:#1f7a4d; --bad:#b3261e; --warn:#9a5b00; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1216; --card:#171b21; --text:#e8ebf0; --muted:#9aa3b2; --line:#2c333d; --accent:#7c9dff; --ok:#5fd39a; --bad:#ff8a80; --warn:#f2b65a; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 -apple-system, system-ui, sans-serif;
+         padding: calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 24px); }
+  h1 { font-size:1.4rem; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 16px; font-size:.9rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin:12px 0; }
+  .card h2 { font-size:1rem; margin:0 0 8px; }
+  .row { display:flex; justify-content:space-between; gap:12px; padding:6px 0; border-top:1px solid var(--line); font-size:.92rem; }
+  .row:first-of-type { border-top:0; }
+  .row span:first-child { color:var(--muted); }
+  .ok { color:var(--ok); font-weight:600; } .bad { color:var(--bad); font-weight:600; } .warn { color:var(--warn); font-weight:600; }
+  button { font:inherit; font-weight:600; width:100%; padding:13px; border-radius:12px; border:0; background:var(--accent); color:#fff; margin-top:10px; }
+  button.secondary { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  button:disabled { opacity:.5; }
+  input { font:inherit; width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--text); margin-top:6px; }
+  input.code { font-family: ui-monospace, Menlo, monospace; font-size:1.4rem; letter-spacing:.15em; text-transform:uppercase; text-align:center; }
+  .bigcode { font-family: ui-monospace, Menlo, monospace; font-size:2rem; letter-spacing:.2em; text-align:center; padding:8px 0; }
+  ol { padding-left:20px; margin:6px 0; } li { margin:6px 0; }
+  .hidden { display:none; }
+  .msg { font-size:.9rem; color:var(--muted); margin-top:8px; min-height:1.2em; }
+  table { width:100%; border-collapse:collapse; font-size:.85rem; }
+  td, th { text-align:left; padding:5px 4px; border-top:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; border-top:0; }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size:.8rem; word-break:break-all; }
+</style>
+</head>
+<body>
+  <h1>Unseat push test</h1>
+  <p class="sub">Phase 1 feasibility test. Not the real app.</p>
+
+  <section id="install" class="card hidden">
+    <h2>Step 1: Add to Home Screen</h2>
+    <p>Notifications only work from the Home Screen app, and it keeps its own storage, so pairing happens there.</p>
+    <ol>
+      <li>Tap the <b>Share</b> button in Safari.</li>
+      <li>Tap <b>Add to Home Screen</b>. Keep <b>Open as Web App</b> on if you see it.</li>
+      <li>Open <b>Unseat Test</b> from your Home Screen.</li>
+    </ol>
+    <div id="installCode" class="hidden">
+      <p>Then type this pairing code in the app:</p>
+      <div class="bigcode" id="installCodeText"></div>
+    </div>
+  </section>
+
+  <section id="pair" class="card hidden">
+    <h2>Step 2: Pair with your PC</h2>
+    <label>Pairing code (shown on the PC)<input id="code" class="code" autocomplete="one-time-code" autocapitalize="characters" maxlength="12" inputmode="text"></label>
+    <label>Name for this phone<input id="name" value="iPhone" maxlength="40"></label>
+    <button id="pairBtn" type="button">Pair</button>
+    <div class="msg" id="pairMsg"></div>
+  </section>
+
+  <section id="paired" class="hidden">
+    <div class="card">
+      <h2>Status</h2>
+      <div class="row"><span>PC connection</span><span id="conn">…</span></div>
+      <div class="row"><span>Notifications</span><span id="perm">…</span></div>
+      <div class="row"><span>Push subscription</span><span id="sub">…</span></div>
+      <div class="row"><span>Queued receipts</span><span id="queued">0</span></div>
+      <button id="enableBtn" type="button">Enable notifications</button>
+      <button id="refreshBtn" type="button" class="secondary">Check again</button>
+      <div class="msg" id="statusMsg"></div>
+    </div>
+    <div class="card">
+      <h2>Recent test pushes</h2>
+      <table><thead><tr><th>#</th><th>Scenario</th><th>Sent</th><th>Received</th></tr></thead><tbody id="recent"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Diagnostics</h2>
+      <div class="row"><span>Home Screen app</span><span id="dStandalone"></span></div>
+      <div class="row"><span>Declarative push API</span><span id="dDecl"></span></div>
+      <div class="row"><span>Service worker</span><span id="dSw"></span></div>
+      <div class="row"><span>Online</span><span id="dOnline"></span></div>
+      <p class="mono" id="dUa"></p>
+    </div>
+  </section>
+
+  <section id="revoked" class="card hidden">
+    <h2>This phone was removed</h2>
+    <p>The PC revoked this phone. Make a new pairing code on the PC to pair again.</p>
+    <button id="repairBtn" type="button">Pair again</button>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

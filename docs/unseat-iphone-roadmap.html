@@ -1,0 +1,1201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unseat iPhone Roadmap</title>
+<meta name="description" content="Feasibility audit and development roadmap for an Unseat iPhone companion. Draft for review; nothing in the companion is implemented.">
+<style>
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --text: #16191f;
+  --muted: #5a6270;
+  --line: #d9dee6;
+  --accent: #2f5bd3;
+  --accent-soft: #e3eafc;
+  --done: #1f7a4d;
+  --done-soft: #ddf3e7;
+  --prog: #9a5b00;
+  --prog-soft: #fdf0d9;
+  --plan: #3b55a8;
+  --plan-soft: #e3e9fa;
+  --block: #b3261e;
+  --block-soft: #fbe2e0;
+  --unk: #5b5f6a;
+  --unk-soft: #e7e8ec;
+  --fact: #1f7a4d;
+  --assume: #9a5b00;
+  --rec: #2f5bd3;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
+  --radius: 12px;
+  --mono: ui-monospace, "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1216;
+    --surface: #171b21;
+    --surface-2: #1f252d;
+    --text: #e8ebf0;
+    --muted: #9aa3b2;
+    --line: #2c333d;
+    --accent: #7c9dff;
+    --accent-soft: #1d2a4d;
+    --done: #5fd39a;
+    --done-soft: #14301f;
+    --prog: #f2b65a;
+    --prog-soft: #3a2a10;
+    --plan: #93a8ff;
+    --plan-soft: #1e2847;
+    --block: #ff8a80;
+    --block-soft: #3d1715;
+    --unk: #b4b9c4;
+    --unk-soft: #2a2f37;
+    --fact: #5fd39a;
+    --assume: #f2b65a;
+    --rec: #7c9dff;
+    --shadow: none;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1216;
+  --surface: #171b21;
+  --surface-2: #1f252d;
+  --text: #e8ebf0;
+  --muted: #9aa3b2;
+  --line: #2c333d;
+  --accent: #7c9dff;
+  --accent-soft: #1d2a4d;
+  --done: #5fd39a;
+  --done-soft: #14301f;
+  --prog: #f2b65a;
+  --prog-soft: #3a2a10;
+  --plan: #93a8ff;
+  --plan-soft: #1e2847;
+  --block: #ff8a80;
+  --block-soft: #3d1715;
+  --unk: #b4b9c4;
+  --unk-soft: #2a2f37;
+  --fact: #5fd39a;
+  --assume: #f2b65a;
+  --rec: #7c9dff;
+  --shadow: none;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+a { color: var(--accent); }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+code { background: var(--surface-2); padding: .1em .35em; border-radius: 5px; overflow-wrap: anywhere; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px 64px; }
+header.top { padding: 28px 0 8px; }
+header.top h1 { margin: 0 0 4px; font-size: 1.9rem; letter-spacing: -.01em; }
+.sub { color: var(--muted); margin: 0; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line); background: var(--surface);
+  border-radius: 999px; padding: 3px 10px; font-size: .82rem; color: var(--muted);
+}
+.pill b { color: var(--text); font-weight: 600; }
+.banner {
+  margin: 18px 0 0; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--prog-soft); color: var(--text); border: 1px solid var(--line);
+}
+nav.toc {
+  position: sticky; top: 0; z-index: 5;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--line);
+  margin: 18px -16px 0; padding: 8px 16px;
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+}
+nav.toc a {
+  white-space: nowrap; text-decoration: none; color: var(--muted);
+  padding: 4px 10px; border-radius: 999px; font-size: .85rem;
+}
+nav.toc a:hover { background: var(--surface-2); color: var(--text); }
+.theme-btn {
+  margin-left: auto; border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  border-radius: 999px; padding: 3px 10px; font: inherit; font-size: .85rem; cursor: pointer;
+}
+section.block { margin-top: 22px; }
+details.sec {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+details.sec > summary {
+  list-style: none; cursor: pointer; padding: 14px 18px;
+  display: flex; align-items: center; gap: 10px;
+}
+details.sec > summary::-webkit-details-marker { display: none; }
+details.sec > summary h2 { margin: 0; font-size: 1.15rem; }
+details.sec > summary .hint { color: var(--muted); font-size: .85rem; margin-left: auto; text-align: right; }
+details.sec > summary::before {
+  content: ""; width: 8px; height: 8px; flex: none;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg); transition: transform .15s;
+}
+details.sec[open] > summary::before { transform: rotate(45deg); }
+.sec-body { padding: 0 18px 18px; }
+h3 { font-size: 1rem; margin: 18px 0 8px; }
+p { margin: 8px 0; }
+ul { padding-left: 20px; margin: 8px 0; }
+li { margin: 3px 0; }
+.grid { display: grid; gap: 12px; }
+.g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 860px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .g3 { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .g2 { grid-template-columns: 1fr; } }
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px; box-shadow: var(--shadow); min-width: 0;
+}
+.card.flat { box-shadow: none; background: var(--surface-2); border-color: transparent; }
+.kpi .n { font-size: 1.9rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.kpi .l { color: var(--muted); font-size: .85rem; }
+.bar { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; display: flex; }
+.bar > span { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: .82rem; color: var(--muted); margin-top: 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 5px; vertical-align: middle; }
+.phase-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 2fr) auto; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+.phase-row:first-child { border-top: 0; }
+.phase-row .pct { font-variant-numeric: tabular-nums; color: var(--muted); font-size: .85rem; min-width: 7.5em; text-align: right; }
+@media (max-width: 620px) { .phase-row { grid-template-columns: 1fr; gap: 4px; } .phase-row .pct { text-align: left; } }
+.status {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  font-size: .78rem; font-weight: 600; border-radius: 999px; padding: 2px 9px;
+}
+.st-Completed { background: var(--done-soft); color: var(--done); }
+.st-InProgress { background: var(--prog-soft); color: var(--prog); }
+.st-Planned { background: var(--plan-soft); color: var(--plan); }
+.st-Blocked { background: var(--block-soft); color: var(--block); }
+.st-Unknown { background: var(--unk-soft); color: var(--unk); }
+.prio { font-family: var(--mono); font-size: .75rem; font-weight: 700; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+.p0 { color: var(--block); } .p1 { color: var(--prog); } .p2 { color: var(--plan); } .p3 { color: var(--muted); }
+.tag { font-size: .72rem; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; border-radius: 5px; padding: 1px 6px; border: 1px solid currentColor; white-space: nowrap; }
+.t-fact { color: var(--fact); } .t-assume { color: var(--assume); } .t-rec { color: var(--rec); } .t-unk { color: var(--unk); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { text-align: left; vertical-align: top; padding: 9px 11px; border-top: 1px solid var(--line); }
+thead th { border-top: 0; background: var(--surface-2); font-size: .8rem; color: var(--muted); font-weight: 600; white-space: nowrap; }
+td.yes { color: var(--done); font-weight: 600; } td.no { color: var(--block); font-weight: 600; } td.mid { color: var(--prog); font-weight: 600; }
+.rec-col { background: color-mix(in srgb, var(--accent-soft) 55%, transparent); }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 12px; align-items: center; }
+.toolbar input[type="search"], .toolbar select {
+  font: inherit; font-size: .9rem; color: var(--text); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; min-width: 0;
+}
+.toolbar input[type="search"] { flex: 1 1 240px; }
+.toolbar .count { color: var(--muted); font-size: .85rem; margin-left: auto; }
+.chipset { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  font: inherit; font-size: .8rem; border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+  border-radius: 999px; padding: 4px 10px; cursor: pointer;
+}
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.phase-group { margin-top: 14px; }
+.phase-group > h3 { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin-bottom: 6px; }
+.phase-group > h3 small { color: var(--muted); font-weight: 400; }
+details.task {
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: 6px 0;
+}
+details.task > summary {
+  list-style: none; cursor: pointer; padding: 10px 12px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center;
+}
+details.task > summary::-webkit-details-marker { display: none; }
+details.task > summary .tid { font-family: var(--mono); font-size: .78rem; color: var(--muted); }
+details.task > summary .tt { font-weight: 600; overflow-wrap: anywhere; }
+@media (max-width: 620px) {
+  details.task > summary { grid-template-columns: auto minmax(0, 1fr); }
+  details.task > summary .status, details.task > summary .prio { grid-row: 2; }
+}
+.task-body { padding: 0 12px 12px; display: grid; gap: 8px; }
+.kv { display: grid; grid-template-columns: 9.5em minmax(0, 1fr); gap: 4px 12px; font-size: .9rem; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 620px) { .kv { grid-template-columns: 1fr; } .kv dd { margin-bottom: 6px; } }
+.empty { color: var(--muted); padding: 14px; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
+.diagram { width: 100%; height: auto; display: block; }
+.diagram text { fill: var(--text); font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; }
+.diagram .small { fill: var(--muted); font-size: 11.5px; }
+.diagram .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.diagram .zone { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; stroke-width: 1.2; }
+.diagram .local { fill: var(--done-soft); stroke: var(--done); stroke-width: 1.5; }
+.diagram .ext { fill: var(--prog-soft); stroke: var(--prog); stroke-width: 1.5; }
+.diagram .line { stroke: var(--accent); stroke-width: 2; fill: none; }
+.diagram .line.push { stroke: var(--prog); stroke-dasharray: 6 4; }
+.diagram .arrow { fill: var(--accent); }
+.diagram .arrow.push { fill: var(--prog); }
+.note { color: var(--muted); font-size: .86rem; }
+.callout { border-left: 3px solid var(--accent); padding: 8px 12px; background: var(--surface-2); border-radius: 0 8px 8px 0; margin: 10px 0; }
+.callout.warn { border-left-color: var(--block); }
+.srcs li { overflow-wrap: anywhere; }
+footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
+@media print {
+  nav.toc, .toolbar, .theme-btn { display: none !important; }
+  details.sec, details.task { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <h1>Unseat iPhone Companion — Feasibility Audit &amp; Roadmap</h1>
+  <p class="sub">Pair an iPhone with the Windows app, get the same reminders, and control the timer remotely. No App Store.</p>
+  <div class="meta">
+    <span class="pill">Audit date <b>2026-10-10</b></span>
+    <span class="pill">Baseline commit <b class="mono">379aa3e</b> (Unseat 0.2.0)</span>
+    <span class="pill">Working tree <b>has uncommitted Windows changes</b> (left as they are)</span>
+    <span class="pill">Document status <b>Phase 1 partly verified · Phase 2 in progress</b></span>
+  </div>
+  <div class="banner"><b>Decisions D1–D9 approved on 2026-10-10</b> (D4 changed: mirror all reminders by default). <b>Phase 1</b>, an isolated iPhone notification test outside the Unseat code, ran on your iPhone (iOS 18.7): HTTPS over the tailnet, install, pairing and a locked-screen notification worked; the latency batch and network tests are incomplete. On your instruction, Phase 2 has started on branch <code>feature/iphone-companion</code>, local only. No companion code is in Unseat. The full companion stays on hold until Phase 1 passes and you approve the results.</div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#dashboard">Dashboard</a>
+  <a href="#summary">Summary</a>
+  <a href="#compare">Three approaches</a>
+  <a href="#apple">Apple constraints</a>
+  <a href="#arch">Architecture</a>
+  <a href="#design">Design</a>
+  <a href="#features">Existing vs planned</a>
+  <a href="#phase1">Phase 1 test</a>
+  <a href="#tasks">Phases &amp; tasks</a>
+  <a href="#quality">Tests &amp; budgets</a>
+  <a href="#security">Security</a>
+  <a href="#risks">Risks</a>
+  <a href="#decisions">Decisions</a>
+  <a href="#evidence">Evidence</a>
+  <button class="theme-btn" id="themeBtn" type="button" aria-label="Switch colour theme">Theme</button>
+</nav>
+
+<!-- ============ DASHBOARD ============ -->
+<section class="block" id="dashboard">
+<details class="sec" open>
+  <summary><h2>Progress dashboard</h2><span class="hint">Calculated from the task list below</span></summary>
+  <div class="sec-body">
+    <div class="grid g4" id="kpis"></div>
+    <div class="card" style="margin-top:12px">
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:baseline">
+        <b>All tasks by status</b>
+        <span class="note" id="pctNote"></span>
+      </div>
+      <div class="bar" id="statusBar" style="margin-top:8px" role="img" aria-label="Task status distribution"></div>
+      <div class="legend" id="statusLegend"></div>
+    </div>
+    <div class="grid g2" style="margin-top:12px">
+      <div class="card">
+        <b>By phase</b>
+        <div id="phaseBars" style="margin-top:6px"></div>
+      </div>
+      <div class="card">
+        <b>Open work by priority</b>
+        <div class="note" style="margin:2px 0 8px">Planned + In Progress + Blocked</div>
+        <div id="prioBars"></div>
+        <p class="note" style="margin-top:12px"><b>How it's counted:</b> completion % = Completed ÷ (all tasks − Unknown). Tasks marked Unknown are left out of the % and counted on their own. Effort in hours is <b>Unknown</b> for every task: this repo has no history of similar networked work to estimate from. Complexity (S/M/L) is a judgment call, not a measurement.</p>
+      </div>
+    </div>
+  </div>
+</details>
+</section>
+
+<!-- ============ SUMMARY ============ -->
+<section class="block" id="summary">
+<details class="sec" open>
+  <summary><h2>Executive summary</h2><span class="hint">Recommendation and why</span></summary>
+  <div class="sec-body">
+    <div class="callout"><span class="tag t-rec">Recommendation</span> Build a <b>Home Screen web app (PWA)</b>. Unseat serves it itself, on <code>127.0.0.1</code> only, and <b>Tailscale Serve</b> publishes it privately to your own devices over HTTPS. Unseat sends reminders through <b>Apple Web Push</b> straight from Windows, with no Unseat cloud server and no third-party push service.</div>
+    <h3>Why this approach</h3>
+    <ul>
+      <li><span class="tag t-fact">Fact</span> iPhone web apps get push notifications on iOS 16.4 and later. They must be added to the Home Screen, and the user must allow notifications by tapping a button. No Apple Developer account is needed. (Apple developer docs, WebKit blog)</li>
+      <li><span class="tag t-fact">Fact</span> A native app installed without the App Store needs a Mac with Xcode to build it. With a free Apple ID it stops working after 7 days and cannot get push notifications. Push needs the $99/year Developer Program. (Apple membership comparison)</li>
+      <li><span class="tag t-fact">Fact</span> A plain web page (no Home Screen install, no push) can't alert you while it's closed or in the background, so on its own it doesn't meet the "same reminders" goal.</li>
+      <li><span class="tag t-fact">Fact</span> Push and the service worker need a real HTTPS address with a trusted certificate. Tailscale Serve gives the PC one (<code>&lt;machine&gt;.&lt;tailnet&gt;.ts.net</code>, a Let's Encrypt certificate) that only your tailnet can reach. (Tailscale docs)</li>
+      <li><span class="tag t-rec">Recommendation</span> The PWA can be plain HTML/JS built into <code>unseat.exe</code>: no npm, no framework, no separate hosting. That keeps maintenance low and matches how Unseat already ships as one file.</li>
+    </ul>
+    <h3>What it needs from outside your PC</h3>
+    <ul>
+      <li><b>Apple Push service</b> (<code>*.push.apple.com</code>) carries each reminder. The message is encrypted end to end. Apple still sees when it was sent and which device it went to.</li>
+      <li><b>Tailscale</b> (free Personal plan) on the PC and the iPhone, for the private HTTPS address and for remote access.</li>
+      <li><b>Let's Encrypt</b> issues the certificate. Your PC's Tailscale machine name appears in public Certificate Transparency logs.</li>
+    </ul>
+    <h3>Main limits to accept</h3>
+    <ul>
+      <li>The phone gets reminders only while the PC is awake, running Unseat and online. The timer runs on the PC.</li>
+      <li>Apple publishes no delivery-time guarantee for web push. Real-world delay has to be measured on your phone (Phase 1).</li>
+      <li>Same-Wi-Fi use without Tailscale is <b>not recommended</b>: a LAN IP address can't get a publicly trusted certificate. See decision D3.</li>
+      <li>Turning this on adds a network listener (loopback only, off by default) to an app whose <code>SECURITY.md</code> and <code>ARCHITECTURE.md</code> currently say "no network". Both docs need updating when it ships.</li>
+    </ul>
+  </div>
+</details>
+</section>
+
+<!-- ============ COMPARISON ============ -->
+<section class="block" id="compare">
+<details class="sec" open>
+  <summary><h2>Three approaches compared</h2><span class="hint">Native app · PWA · private web page</span></summary>
+  <div class="sec-body">
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Criterion</th><th>A. Native iOS app (sideloaded)</th><th class="rec-col">B. PWA on Home Screen <span class="tag t-rec">Recommended, with C as transport</span></th><th>C. Private web page via Tailscale only</th></tr></thead>
+      <tbody>
+        <tr><td>Install without App Store</td><td class="mid">Yes, but needs a Mac with Xcode. Free Apple ID: re-install every 7 days, max 3 apps. Paid ($99/yr): ad hoc install, about 1 year per build.</td><td class="yes rec-col">Yes. Safari → Share → Add to Home Screen. No Apple account.</td><td class="yes">Yes. Just a Safari tab or bookmark.</td></tr>
+        <tr><td>Reminders while phone is locked / app closed</td><td class="mid">Yes, with APNs, which needs the paid program. A free Apple ID can't use push.</td><td class="yes rec-col">Yes. Web Push on iOS 16.4+, after the user allows it.</td><td class="no">No. A page can't alert when closed or in the background.</td></tr>
+        <tr><td>Background work on phone</td><td class="mid">Limited by iOS; still needs push to learn about PC-side changes.</td><td class="mid rec-col">None beyond showing pushes. No Background Sync or Periodic Sync on iOS.</td><td class="no">None.</td></tr>
+        <tr><td>Remote controls &amp; settings</td><td class="yes">Yes</td><td class="yes rec-col">Yes, over the tailnet</td><td class="yes">Yes, over the tailnet</td></tr>
+        <tr><td>Away from home</td><td class="mid">Needs a VPN or relay to reach the PC (Tailscale works).</td><td class="yes rec-col">Controls through Tailscale; pushes through Apple.</td><td class="yes">Through Tailscale</td></tr>
+        <tr><td>Toolchain &amp; upkeep</td><td class="no">Swift codebase, Mac, yearly re-signing, iOS SDK churn.</td><td class="yes rec-col">Plain HTML/JS inside the exe; Rust on Windows.</td><td class="yes">Smallest</td></tr>
+        <tr><td>Infrastructure</td><td>APNs, Apple developer account</td><td class="rec-col">Apple Web Push, Tailscale, Let's Encrypt (via Tailscale)</td><td>Tailscale, Let's Encrypt</td></tr>
+        <tr><td>Main risk</td><td>Expiring provisioning; needs hardware you may not have</td><td class="rec-col">Safari cancels a push subscription if a push isn't shown; delivery timing not guaranteed</td><td>Doesn't meet the reminder goal</td></tr>
+        <tr><td>Verdict</td><td>Not recommended unless you have a Mac and want the paid program</td><td class="rec-col"><b>Recommended</b></td><td>Use only as B's private delivery channel</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="note">Native-app facts: Apple's membership comparison and device-registration help pages. PWA facts: Apple's "Sending web push notifications" doc and WebKit posts. Tailscale facts: Tailscale Serve and HTTPS docs. Links are under <a href="#evidence">Evidence</a>. "Xcode needs a Mac" is general platform knowledge and wasn't re-checked in this audit.</p>
+  </div>
+</details>
+</section>
+
+<!-- ============ APPLE CONSTRAINTS ============ -->
+<section class="block" id="apple">
+<details class="sec">
+  <summary><h2>Apple &amp; platform constraints, checked</h2><span class="hint">Primary sources first; on-device checks still needed</span></summary>
+  <div class="sec-body">
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Constraint</th><th>Finding</th><th>Level</th><th>Source</th></tr></thead>
+      <tbody id="appleRows"></tbody>
+    </table>
+    </div>
+    <p class="note">Level key: <span class="tag t-fact">Verified</span> stated in a primary source (Apple, WebKit, Tailscale). <span class="tag t-assume">Secondary</span> consistent third-party reports. <span class="tag t-unk">Unknown</span> needs an on-device test (Phase 1).</p>
+  </div>
+</details>
+</section>
+
+<!-- ============ ARCHITECTURE ============ -->
+<section class="block" id="arch">
+<details class="sec" open>
+  <summary><h2>Proposed architecture</h2><span class="hint">Recommendation, not yet approved</span></summary>
+  <div class="sec-body">
+    <svg class="diagram" viewBox="0 0 980 430" role="img" aria-labelledby="dgTitle dgDesc">
+      <title id="dgTitle">Proposed Unseat iPhone companion architecture</title>
+      <desc id="dgDesc">The iPhone PWA talks to Tailscale Serve on the PC over the tailnet. Tailscale Serve forwards to an Unseat companion server bound to 127.0.0.1, which passes requests to the Unseat app and engine on the UI thread. For reminders, Unseat sends encrypted Web Push to Apple's push service, which delivers to the iPhone.</desc>
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="ahp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow push" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+      <!-- PC zone -->
+      <rect class="zone" x="430" y="16" width="534" height="300" rx="14"/>
+      <text x="446" y="38">Windows PC (all local)</text>
+      <rect class="local" x="450" y="56" width="230" height="74" rx="10"/>
+      <text x="466" y="82">Tailscale Serve</text>
+      <text class="small" x="466" y="101">HTTPS, *.ts.net certificate</text>
+      <text class="small" x="466" y="118">tailnet only; Funnel off</text>
+      <rect class="local" x="450" y="160" width="230" height="86" rx="10"/>
+      <text x="466" y="186">Companion server (new)</text>
+      <text class="small" x="466" y="205">127.0.0.1 only · worker thread</text>
+      <text class="small" x="466" y="222">pairing · auth · API · PWA files</text>
+      <text class="small" x="466" y="239">push sender (outbound)</text>
+      <rect class="local" x="720" y="160" width="224" height="86" rx="10"/>
+      <text x="736" y="186">Unseat App (existing)</text>
+      <text class="small" x="736" y="205">UI thread · SittingEngine</text>
+      <text class="small" x="736" y="222">alert_actions · Settings</text>
+      <text class="small" x="736" y="239">tray / alert card (unchanged)</text>
+      <rect class="local" x="720" y="56" width="224" height="74" rx="10"/>
+      <text x="736" y="82">%APPDATA%\Unseat</text>
+      <text class="small" x="736" y="101">settings.json (+ devices, v3)</text>
+      <text class="small" x="736" y="118">VAPID key (DPAPI-protected)</text>
+      <rect class="local" x="450" y="268" width="494" height="34" rx="8"/>
+      <text class="small" x="466" y="290">PWA assets embedded in unseat.exe (HTML, JS, manifest, icons) — no npm, no CDN</text>
+      <!-- iPhone -->
+      <rect class="box" x="16" y="56" width="250" height="190" rx="18"/>
+      <text x="34" y="84">iPhone</text>
+      <text class="small" x="34" y="106">Unseat PWA (Home Screen)</text>
+      <text class="small" x="34" y="124">status · controls · settings</text>
+      <text class="small" x="34" y="142">device credential (local storage)</text>
+      <text class="small" x="34" y="160">service worker: show push</text>
+      <text class="small" x="34" y="190">Tailscale iOS app (VPN)</text>
+      <text class="small" x="34" y="208">iOS Notification Center, Focus</text>
+      <!-- Apple -->
+      <rect class="ext" x="16" y="330" width="420" height="80" rx="10"/>
+      <text x="34" y="356">Apple Push service (web.push.apple.com → APNs)</text>
+      <text class="small" x="34" y="376">carries encrypted payload ≤ 4 KB · stores ≤ TTL (max 30 days)</text>
+      <text class="small" x="34" y="394">sees timing + endpoint, not content</text>
+      <!-- Tailscale infra -->
+      <rect class="ext" x="300" y="150" width="112" height="74" rx="10"/>
+      <text x="312" y="174">Tailscale</text>
+      <text class="small" x="312" y="192">coordination</text>
+      <text class="small" x="312" y="208">DERP if no direct</text>
+      <!-- lines -->
+      <path class="line" d="M266 100 L448 92" marker-end="url(#ah)"/>
+      <text class="small" x="282" y="88">HTTPS over WireGuard</text>
+      <path class="line" d="M565 130 L565 158" marker-end="url(#ah)"/>
+      <text class="small" x="572" y="149">http://127.0.0.1</text>
+      <path class="line" d="M680 203 L718 203" marker-end="url(#ah)"/>
+      <path class="line" d="M832 160 L832 132" marker-end="url(#ah)"/>
+      <path class="line push" d="M520 246 C 520 320, 460 360, 438 366" marker-end="url(#ahp)"/>
+      <text class="small" x="470" y="336">Web Push (VAPID, RFC 8291)</text>
+      <path class="line push" d="M120 330 L120 248" marker-end="url(#ahp)"/>
+      <text class="small" x="128" y="294">push → notification</text>
+    </svg>
+    <div class="legend"><span><span class="dot" style="background:var(--done)"></span>Runs on your PC</span><span><span class="dot" style="background:var(--prog)"></span>Apple / third-party infrastructure</span><span><span class="dot" style="background:var(--accent)"></span>Control traffic (tailnet)</span><span><span class="dot" style="background:var(--prog)"></span>Push (internet, via Apple)</span></div>
+
+    <h3>What runs locally and what needs outside services</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Piece</th><th>Where it runs</th><th>Needs internet?</th><th>Basis</th></tr></thead>
+      <tbody>
+        <tr><td>Timer, engine, alert decisions, settings</td><td>PC (existing code)</td><td>No</td><td><span class="tag t-fact">Fact</span> <code>src/engine.rs</code>, <code>src/alerts.rs</code>, <code>src/settings.rs</code></td></tr>
+        <tr><td>Device list, pairing secrets, VAPID key</td><td>PC (new)</td><td>No</td><td><span class="tag t-rec">Design</span></td></tr>
+        <tr><td>Companion API + PWA files</td><td>PC, 127.0.0.1 only (new)</td><td>No</td><td><span class="tag t-rec">Design</span></td></tr>
+        <tr><td>Private HTTPS address + certificate</td><td>Tailscale client on PC; cert from Let's Encrypt</td><td>For certificate issue and renewal</td><td><span class="tag t-fact">Fact</span> Tailscale HTTPS docs</td></tr>
+        <tr><td>Phone ↔ PC connection</td><td>Tailscale (WireGuard); direct on same LAN when possible, otherwise DERP relay</td><td>Coordination needs internet; same-LAN data path should stay local (to verify)</td><td><span class="tag t-fact">Fact</span> connection types doc · <span class="tag t-assume">Assumption</span> same-LAN direct path</td></tr>
+        <tr><td>Reminder delivery to locked phone</td><td>Apple Push service</td><td><b>Yes</b>, PC and phone</td><td><span class="tag t-fact">Fact</span> Apple web push doc</td></tr>
+        <tr><td>Showing the notification</td><td>iPhone (service worker, or declarative push on iOS 18.4+)</td><td>No (after delivery)</td><td><span class="tag t-fact">Fact</span> WebKit</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Fit with the current code</h3>
+    <ul>
+      <li><span class="tag t-fact">Fact</span> Unseat is a single-threaded Win32 app. <code>App</code> owns the engine and runs everything from the hidden window's messages (<code>src/win/app.rs:762</code>). The new server must run on its own thread and hand each request to the UI thread as a window message. It must never touch <code>App</code> directly.</li>
+      <li><span class="tag t-fact">Fact</span> All remote controls already exist as <code>Command::{TogglePause, Reset, Snooze, StartBreak}</code> (<code>src/engine.rs:39</code>), run by <code>App::apply_engine_command</code> (<code>src/win/app.rs:300</code>). Remote settings can reuse <code>App::apply_settings</code> (<code>src/win/app.rs:490</code>), which already keeps live state and clamps values.</li>
+      <li><span class="tag t-fact">Fact</span> Reminder text comes from <code>alert_actions()</code> → <code>Notice</code> (<code>src/alerts.rs:29</code>). Only time-up and break-over produce a notification; repeat reminders play a sound only. The phone push should hook in next to <code>tray::notify</code> in <code>App::handle_beep</code> (<code>src/win/app.rs:247</code>).</li>
+      <li><span class="tag t-rec">Recommendation</span> Following <code>ARCHITECTURE.md</code> ("the host must not invent timer rules"), put protocol, pairing, push encryption and sync rules in the Win32-free library so they're unit-tested on any OS. Only sockets, WinHTTP and DPAPI go in <code>src/win/</code>.</li>
+    </ul>
+  </div>
+</details>
+</section>
+
+<!-- ============ DESIGN ============ -->
+<section class="block" id="design">
+<details class="sec">
+  <summary><h2>Design details</h2><span class="hint">Pairing · auth · notifications · controls · offline · battery · privacy</span></summary>
+  <div class="sec-body">
+    <div class="grid g2">
+      <div class="card flat">
+        <h3 style="margin-top:0">1. Secure pairing (QR)</h3>
+        <ol>
+          <li>In Settings → Phone, the user turns the companion on. Unseat checks that Tailscale Serve is set up and shows the <code>https://…ts.net</code> address.</li>
+          <li>"Pair iPhone" makes a one-time code: 128-bit random, valid 5 minutes, single use, 5 tries at most. Unseat shows a QR of <code>https://&lt;host&gt;.ts.net/#pair=&lt;code&gt;</code> plus a short code to type by hand. The <code>#</code> part never reaches server logs.</li>
+          <li>The phone opens the link in Safari. <span class="tag t-fact">Fact</span> Home Screen web apps have <b>separate storage</b> from Safari, so the page first walks the user through Add to Home Screen. Pairing then finishes <b>inside the installed app</b>, where the user types the short code.</li>
+          <li>The PC asks for local confirmation ("Allow 'iPhone'?") before the device gets a credential.</li>
+          <li>The phone gets a device ID plus a 256-bit secret. The PC stores only a SHA-256 hash of it.</li>
+        </ol>
+      </div>
+      <div class="card flat">
+        <h3 style="margin-top:0">2. Authentication &amp; access</h3>
+        <ul>
+          <li>Network layer: only devices on your tailnet can reach the address (Tailscale Serve, not Funnel).</li>
+          <li>App layer: every API call carries the device credential, compared in constant time. Origin is checked; no CORS.</li>
+          <li>Extra check: Tailscale Serve adds a <code>Tailscale-User-Login</code> header and strips any copy a client sends. Unseat can require it to match the login saved at pairing. <span class="tag t-fact">Fact</span> header behaviour per Tailscale docs.</li>
+          <li>Revoking a device deletes its hash and push subscription and closes its open streams at once.</li>
+        </ul>
+      </div>
+      <div class="card flat">
+        <h3 style="margin-top:0">3. Notification sync</h3>
+        <ul>
+          <li>Trigger (D4, approved): <b>every Unseat reminder</b> is mirrored by default: time-up, break-over <b>and repeat reminders</b>, sent from <code>handle_beep</code>. Repeat reminders only play a sound on Windows today, so they need new push text. Optional setting: <b>idle-only</b> (push only while the PC is idle or locked).</li>
+          <li>Payload: declarative Web Push JSON (<code>"web_push": 8030</code>, title, body, <code>navigate</code>), plus a service worker that shows the notification for iOS 16.4–18.3. Encrypted per RFC 8291; signed with VAPID.</li>
+          <li>Headers: <code>Urgency: high</code>, short <code>TTL</code> (a stale "stand up" is useless), and <code>Topic</code> so a newer alert replaces an undelivered one.</li>
+          <li><span class="tag t-fact">Fact</span> Safari cancels the subscription if a push isn't shown, so <b>any "don't alert" choice is made on the PC</b> (don't send). The phone never silently drops a push.</li>
+          <li>On <code>410</code> the subscription is removed and the device is marked "notifications off — reopen app".</li>
+        </ul>
+      </div>
+      <div class="card flat">
+        <h3 style="margin-top:0">4. Remote controls &amp; two-way settings</h3>
+        <ul>
+          <li>Controls: pause/resume, reset, snooze (preset), start/end break. Each maps 1:1 to an existing <code>Command</code>.</li>
+          <li>Settings: a whitelisted subset (sitting limit, break length, repeat reminders and interval, sound, volume, notifications, snooze length). Machine-specific settings (autostart, hotkeys, window position, dock) stay PC-only. Final list is decision D6.</li>
+          <li>Sync: the PC is the source of truth and keeps a revision number. A change sends <code>If-Match: rev</code>; a stale revision gets <code>409</code> plus the current values. Changes made on the PC reach the open app over a live event stream.</li>
+          <li>The Windows settings window gets the same rule, so it never overwrites a newer phone change without warning.</li>
+        </ul>
+      </div>
+      <div class="card flat">
+        <h3 style="margin-top:0">5. Offline &amp; reconnection</h3>
+        <ul>
+          <li>The service worker caches the app shell, so the app opens with no connection and shows the last state with "last updated …".</li>
+          <li>Reconnect on <code>visibilitychange</code> / <code>online</code>, with backoff (1 s → 30 s, with jitter). No background polling. <span class="tag t-fact">Fact</span> iOS has no Background Sync or Periodic Sync for web apps.</li>
+          <li>Controls are disabled while offline. Nothing queues, because a delayed "pause" would be wrong.</li>
+          <li>PC asleep or Unseat closed: no pushes. The app shows "PC not reachable".</li>
+          <li>Phone offline: Apple holds the push up to its TTL, then drops it.</li>
+          <li>PC can't reach Apple: retry with backoff, give up when the TTL ends, and log it.</li>
+        </ul>
+      </div>
+      <div class="card flat">
+        <h3 style="margin-top:0">6. Delays, battery &amp; privacy</h3>
+        <ul>
+          <li>Delay: Apple publishes no delivery bound. <span class="tag t-unk">Unknown</span> until measured on your phone. Focus modes can hold notifications back. <span class="tag t-fact">Fact</span> (WebKit)</li>
+          <li>Phone battery: the PWA does nothing in the background except show pushes (about one per sitting period). Tailscale's always-on VPN cost is <span class="tag t-unk">Unknown</span>; VPN On Demand rules can limit when it runs.</li>
+          <li>PC: one listener thread blocked on <code>accept</code>, no timers. Nothing at all when the feature is off.</li>
+          <li>Privacy: notification text is encrypted end to end. Apple sees timing and endpoint metadata. Tailscale sees device metadata. Let's Encrypt CT logs publish the machine name, so rename the PC first if its name is personal. No analytics, no third-party scripts.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</details>
+</section>
+
+<!-- ============ FEATURES ============ -->
+<section class="block" id="features">
+<details class="sec">
+  <summary><h2>Existing vs planned functionality</h2><span class="hint">What can be reused today</span></summary>
+  <div class="sec-body">
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Capability</th><th>Today (verified)</th><th>Companion plan</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Sitting timer, states, snooze, break</td><td class="yes">Exists</td><td>Reuse as-is; expose read-only state</td><td><code>src/engine.rs</code>; 52 engine tests passed (container run, 2026-10-10)</td></tr>
+        <tr><td>Remote-callable commands</td><td class="yes">Exists (internal)</td><td>Map API → <code>Command</code></td><td><code>src/engine.rs:39</code>, <code>src/win/app.rs:300</code></td></tr>
+        <tr><td>Alert decision (sound / notification)</td><td class="yes">Exists</td><td>Reuse <code>Notice</code> for push text</td><td><code>src/alerts.rs:29</code>; 10 tests passed</td></tr>
+        <tr><td>Windows notifications</td><td class="yes">Exists: tray balloon + alert card</td><td>Unchanged; phone push added beside it</td><td><code>src/win/tray.rs:80</code>, <code>src/win/app.rs:247</code>; commits <code>02191c2</code>, <code>8dd20c6</code></td></tr>
+        <tr><td>Settings save, clamp, migration</td><td class="yes">Exists (version 2)</td><td>Version 3: companion fields, off by default</td><td><code>src/settings.rs</code>; 27 tests passed</td></tr>
+        <tr><td>Apply settings while running</td><td class="yes">Exists</td><td>Reuse for remote edits</td><td><code>src/win/app.rs:490</code></td></tr>
+        <tr><td>Theme palettes</td><td class="yes">Exists</td><td>Reuse colours in the PWA</td><td><code>src/theme.rs</code>; 6 tests passed</td></tr>
+        <tr><td>E2E test hooks</td><td class="yes">Exists</td><td>Add a fake push endpoint + API calls</td><td><code>src/win/testhook.rs</code>, <code>scripts/test_app.ps1</code></td></tr>
+        <tr><td>Resource measurement</td><td class="yes">Script exists</td><td>Before/after comparison</td><td><code>scripts/measure.ps1</code> (no baseline numbers recorded)</td></tr>
+        <tr><td>Network listener / client</td><td class="no">None</td><td>Loopback server + outbound push</td><td><code>ARCHITECTURE.md</code> "Local only. No network."; <code>SECURITY.md</code></td></tr>
+        <tr><td>Device pairing, registry, revocation</td><td class="no">None</td><td>New</td><td>No matching code found</td></tr>
+        <tr><td>Web Push, VAPID, payload crypto</td><td class="no">None</td><td>New</td><td><code>Cargo.toml</code> has only serde, serde_json, windows</td></tr>
+        <tr><td>QR code drawing</td><td class="no">None</td><td>New (Direct2D)</td><td>Direct2D helpers exist in <code>src/win/gfx.rs</code></td></tr>
+        <tr><td>Newer-build handoff, dev-build autostart skip, install script</td><td class="mid">In progress (uncommitted)</td><td>Out of scope; left untouched</td><td><code>src/win/handoff.rs</code>, <code>src/place.rs</code>, <code>src/win/autostart.rs</code>, <code>scripts/install.ps1</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</details>
+</section>
+
+<!-- ============ PHASE 1 ============ -->
+<section class="block" id="phase1">
+<details class="sec" open>
+  <summary><h2>Phase 1 — iPhone notification feasibility test</h2><span class="hint">Run on the iPhone; partly complete</span></summary>
+  <div class="sec-body">
+    <p>An isolated test in <code>spikes/iphone-push/</code> (not part of Unseat, no npm dependencies). It serves a small Home Screen test app from <code>127.0.0.1:8780</code>, which <code>tailscale serve</code> publishes to the tailnet only, plus a PC control page on <code>127.0.0.1:8781</code> for pairing, approvals, sending test pushes and recording results. Run it with <code>spikes\iphone-push\start.ps1</code>; see its README.</p>
+    <h3>Verified so far</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Check</th><th>Result</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Push encryption (RFC 8291) and VAPID</td><td class="yes">Pass</td><td>RFC 8291 section 5 example reproduced byte for byte; JWT checked against Apple's documented rules (<code>test/webpush.test.mjs</code>)</td></tr>
+        <tr><td>Spike access rules</td><td class="yes">Pass</td><td>Loopback-only listeners, tailnet identity required, Host checks, admin header, 8 KB limit, token hashing, 410 handling, revocation (<code>test/server.test.mjs</code>); 35/35 tests on 2026-10-10</td></tr>
+        <tr><td>PC can reach Apple's push service</td><td class="yes">Pass</td><td><code>https://web.push.apple.com/</code> answered over TLS (HTTP 405 to a GET, as expected)</td></tr>
+        <tr><td>Tailscale on this PC</td><td class="yes">Ready</td><td>1.102.3, MagicDNS on, HTTPS certificate domain present (after your setup)</td></tr>
+        <tr><td>iPhone on the tailnet</td><td class="yes">Yes</td><td>iOS device online; paired phone reports iOS 18.7</td></tr>
+      </tbody>
+    </table></div>
+    <h3>On-device results (run on 2026-10-10)</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Your requirement</th><th>Test scenario</th><th>Proposed pass criterion <span class="tag t-rec">Proposed</span></th><th>Result (evidence in tasks 1.5–1.11)</th></tr></thead>
+      <tbody>
+        <tr><td>Tailscale HTTPS connectivity</td><td>A</td><td>No certificate warning; Funnel off</td><td><span class="status st-Completed">Completed</span> app and service worker loaded over the tailnet; no Serve/Funnel left behind</td></tr>
+        <tr><td>Home Screen installation and pairing</td><td>B, C, D</td><td>Works without workarounds; revoke locks the phone out</td><td><span class="status st-Completed">Completed</span> install + pairing; <span class="status st-Planned">Planned</span> revoke</td></tr>
+        <tr><td>Notifications when the iPhone is locked</td><td>1</td><td>Shown on the lock screen</td><td><span class="status st-Completed">Completed</span> seen; tap opened the app (1 sample)</td></tr>
+        <tr><td>Delivery latency and reliability</td><td>2, 2b, 3</td><td>≥ 19/20 seen; no lost subscription; PC-clock p95 ≤ 10 s</td><td><span class="status st-InProgress">In Progress</span> 18/18 accepted, 5 seen, 0 not seen, 13 unmarked; batch stopped at 9/20; service-worker path p95 3.6 s (n=3); declarative delay Unknown</td></tr>
+        <tr><td>Behaviour after network interruptions</td><td>4–10</td><td>Held pushes arrive after reconnect; expired ones don't; pushes arrive with Tailscale off; receipts flush; PC reports failures</td><td><span class="status st-Planned">Planned</span> not run</td></tr>
+      </tbody>
+    </table></div>
+    <h3>What Phase 1 changed in the design</h3>
+    <ul>
+      <li><span class="tag t-fact">Observed</span> On iOS 18.7, declarative pushes were shown but the service worker never reported them, while plain-JSON pushes did (3/3). <span class="tag t-assume">Assumption</span> The service worker only gets declarative pushes when the message opts in (a "mutable" flag); not confirmed in Apple's docs.</li>
+      <li><span class="tag t-rec">Decision for Phase 2</span> Unseat sends declarative messages (shown by iOS itself, so there is no service-worker revocation risk). Delivery tracking uses Apple's response codes, not phone receipts.</li>
+      <li><span class="tag t-fact">Observed</span> The phone's clock was about 41 s ahead of the PC's. Expiry and duplicate rules use only the PC clock plus Apple's TTL.</li>
+    </ul>
+    <p class="note">Measurement: "PC clock" delay is push sent → the phone's service worker reporting back over the tailnet. It's an upper bound on delivery time. A receipt shows the service worker ran; your seen / not-seen marks are the evidence the notification was shown. Results land in <code>spikes/iphone-push/data/results.json</code> (gitignored) and get copied here after the run.</p>
+  </div>
+</details>
+</section>
+
+<!-- ============ TASKS ============ -->
+<section class="block" id="tasks">
+<details class="sec" open>
+  <summary><h2>Phases, milestones &amp; tasks</h2><span class="hint">Search and filter; click a task for details</span></summary>
+  <div class="sec-body">
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="Search tasks, files, evidence…" aria-label="Search tasks">
+      <select id="fPhase" aria-label="Filter by phase"><option value="">All phases</option></select>
+      <select id="fPrio" aria-label="Filter by priority"><option value="">All priorities</option><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select>
+      <span class="count" id="taskCount"></span>
+    </div>
+    <div class="chipset" id="fStatus" role="group" aria-label="Filter by status"></div>
+    <div id="taskList"></div>
+    <h3>Milestones</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Milestone</th><th>Done when</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>M0 Feasibility</td><td>Audit + roadmap delivered for review</td><td><span class="status st-Completed">Completed</span></td></tr>
+        <tr><td>M1 Approval</td><td>D1–D9 decided</td><td><span class="status st-Completed">Completed</span> 2026-10-10</td></tr>
+        <tr><td>M2 Proven on device</td><td>Phase 1 spike passes on your iPhone, delivery delay measured, and you approve the results</td><td><span class="status st-InProgress">In Progress</span> core path proven; latency and network checks incomplete</td></tr>
+        <tr><td>M3 Library core</td><td>Phase 2 merged with tests passing on CI</td><td><span class="status st-Planned">Planned</span></td></tr>
+        <tr><td>M4 Pair &amp; notify</td><td>Pair, receive time-up push, revoke, end to end</td><td><span class="status st-Planned">Planned</span></td></tr>
+        <tr><td>M5 Controls &amp; sync</td><td>Remote controls + settings sync with conflict handling</td><td><span class="status st-Planned">Planned</span></td></tr>
+        <tr><td>M6 Ready for your review</td><td>Security review, measurements and docs done; human sign-off</td><td><span class="status st-Planned">Planned</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</details>
+</section>
+
+<!-- ============ QUALITY ============ -->
+<section class="block" id="quality">
+<details class="sec">
+  <summary><h2>Test coverage &amp; performance budgets</h2><span class="hint">Current baseline and planned checks</span></summary>
+  <div class="sec-body">
+    <h3>Current baseline (verified this session)</h3>
+    <ul>
+      <li><span class="tag t-fact">Fact</span> 148 <code>#[test]</code> functions in the repo (tests/: alerts 10, dock 13, engine 52, settings 27, theme 6, view 27; src/win: session 2, settings_dlg 11).</li>
+      <li><span class="tag t-fact">Fact</span> GitHub Actions run <code>37980013280</code> on commit <code>379aa3e</code> (windows-latest) passed: library tests, Windows host tests, release build.</li>
+      <li><span class="tag t-fact">Fact</span> <code>cargo test --locked --no-default-features</code> on the <b>current working tree</b>, in a Linux Docker copy (<code>rust:1.98-bookworm</code>): 134 passed, 1 failed. The failure is <code>downloads_exe_is_not_a_dev_build</code> (<code>tests/view.rs:259</code>). It uses Windows <code>C:\…</code> paths, which Linux reads as a single path part. The test is unchanged by the uncommitted work and passes on Windows CI, so it looks Linux-only, not a regression. <span class="tag t-assume">Assessment</span></li>
+      <li><span class="tag t-fact">Fact</span> Phase 1 spike: <code>node --test test/*.test.mjs</code> in <code>spikes/iphone-push</code>, 35/35 passed on 2026-10-10 (Node 24.20.0).</li>
+      <li><span class="tag t-unk">Unknown</span> Windows host tests and <code>scripts/test_app.ps1</code> on the current uncommitted tree weren't run in this session.</li>
+      <li><span class="tag t-unk">Unknown</span> No baseline idle CPU, memory or exe-size numbers are recorded; <code>scripts/measure.ps1</code> exists but wasn't run.</li>
+    </ul>
+    <h3>Planned tests</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Layer</th><th>What</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td>Library (any OS)</td><td>Command and settings mapping + clamping; pairing state machine (expiry, reuse, attempt limit); settings v2→v3 migration; RFC 8291 example vector; VAPID JWT shape and ES256 verify; payload ≤ 4 KB; revision conflicts</td><td><code>tests/companion*.rs</code></td></tr>
+        <tr><td>Host (Windows)</td><td>HTTP parser limits and malformed input; loopback-only bind; thread bridge; DPAPI round trip; revocation closes streams</td><td><code>cargo test --all-targets</code></td></tr>
+        <tr><td>End to end</td><td>Pair → command → engine state; alert → captured push (fake endpoint via test hooks); revoked device gets 401; feature off = no listening socket</td><td><code>scripts/test_app.ps1</code></td></tr>
+        <tr><td>Security</td><td>Unauthenticated / revoked / replayed / oversized / wrong-Origin requests all rejected; fuzzing the request parser</td><td>Host tests + fuzz target</td></tr>
+        <tr><td>Manual device checklist</td><td>Install, permission prompt, push while locked, Focus, offline open, reconnect, off-tailnet push, revoke</td><td>Recorded in this roadmap</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <h3>Performance budgets <span class="tag t-rec">Proposed targets, not measurements</span></h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Budget</th><th>Target</th><th>Measured</th></tr></thead>
+      <tbody>
+        <tr><td>Feature off: threads, sockets, CPU, memory</td><td>No change from baseline (within measurement noise)</td><td>Unknown (baseline not recorded)</td></tr>
+        <tr><td>Feature on, idle: added private memory</td><td>≤ 2 MB</td><td>Unknown</td></tr>
+        <tr><td>Feature on, idle: added CPU</td><td>No periodic wakeups (thread blocked on accept)</td><td>Unknown</td></tr>
+        <tr><td>Phone → PC command round trip (direct tailnet path)</td><td>p95 ≤ 500 ms</td><td>Unknown</td></tr>
+        <tr><td>Alert event → push request sent</td><td>≤ 1 s</td><td>Unknown</td></tr>
+        <tr><td>Push delivery delay</td><td>No target; Apple gives no guarantee. Measure and report p50/p95.</td><td>Unknown</td></tr>
+        <tr><td>PWA shell size</td><td>≤ 100 KB uncompressed, no framework</td><td>Unknown</td></tr>
+        <tr><td>Exe size growth</td><td>≤ 1 MB</td><td>Unknown (baseline not recorded)</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</details>
+</section>
+
+<!-- ============ SECURITY ============ -->
+<section class="block" id="security">
+<details class="sec">
+  <summary><h2>Security requirements</h2><span class="hint">The Windows control API is never public</span></summary>
+  <div class="sec-body">
+    <ol>
+      <li><b>Never public.</b> The server binds <code>127.0.0.1</code> only and is reached only through Tailscale Serve. Funnel is never used, and setup docs say how to check it's off.</li>
+      <li><b>Off by default.</b> No socket, thread or outbound request until the user turns the companion on. Existing settings files load with it off.</li>
+      <li><b>Pairing:</b> one-time 128-bit code, 5-minute expiry, single use, 5 tries, local confirmation on the PC.</li>
+      <li><b>Credentials:</b> 256-bit random device secret; the PC stores only its SHA-256 hash and compares in constant time; secrets never appear in logs or settings.json.</li>
+      <li><b>Every request authenticated.</b> Origin checked; no CORS; changes require a custom header and a credential (prevents cross-site requests).</li>
+      <li><b>Tailnet identity check:</b> <code>Tailscale-User-Login</code> must match the owner saved at pairing (decision D2).</li>
+      <li><b>Input limits:</b> whitelisted commands and settings only, values clamped with existing <code>Settings::clamp</code>, 8 KB request limit, header timeout, connection cap.</li>
+      <li><b>VAPID private key</b> encrypted with Windows DPAPI (current user), stored apart from settings.json.</li>
+      <li><b>Push content:</b> only the alert title and body; no personal data; encrypted per RFC 8291.</li>
+      <li><b>Revocation</b> takes effect at once and also deletes the push subscription.</li>
+      <li><b>PWA:</b> strict Content-Security-Policy (<code>default-src 'self'</code>), no third-party scripts, no analytics.</li>
+      <li><b>Local audit log</b> of pair, revoke, and settings/command changes, with no secrets.</li>
+      <li><b>Docs:</b> update <code>SECURITY.md</code>, <code>ARCHITECTURE.md</code> and <code>docs/windows-distribution.md</code> (which currently say "no network") in the same change that adds networking.</li>
+    </ol>
+  </div>
+</details>
+</section>
+
+<!-- ============ RISKS ============ -->
+<section class="block" id="risks">
+<details class="sec">
+  <summary><h2>Risk register</h2><span class="hint">Likelihood and impact are judgments</span></summary>
+  <div class="sec-body">
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Risk</th><th>L / I</th><th>Mitigation</th><th>Basis</th></tr></thead>
+      <tbody id="riskRows"></tbody>
+    </table>
+    </div>
+  </div>
+</details>
+</section>
+
+<!-- ============ DECISIONS ============ -->
+<section class="block" id="decisions">
+<details class="sec" open>
+  <summary><h2>Decisions, blockers &amp; open questions</h2><span class="hint">Needs your approval before Phase 1</span></summary>
+  <div class="sec-body">
+    <h3>Decisions (approved 2026-10-10)</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Decision</th><th>Approved outcome</th><th>Status</th></tr></thead>
+      <tbody id="decRows"></tbody>
+    </table>
+    </div>
+    <h3>Blockers</h3>
+    <ul>
+      <li><span class="status st-Blocked">Blocked</span> <b>Remaining on-device checks need you and the phone:</b> full latency batch (1.8), network interruptions (1.9), revoke (1.11).</li>
+    </ul>
+    <h3>Open questions</h3>
+    <ol>
+      <li>Are you in the EU? (Home Screen web apps were kept there in 2024; the test will show it on your device either way.)</li>
+      <li>One phone, or several phones/people?</li>
+      <li>Do you accept the proposed Phase 1 pass criteria (Phase 1 section), or want different thresholds?</li>
+    </ol>
+    <h3>Answered</h3>
+    <ul>
+      <li>iPhone iOS version: 18.7 (declarative push supported).</li>
+      <li>Tailscale in use: yes. Version 1.102.3, MagicDNS on; HTTPS certificates enabled and the iPhone added (2026-10-10).</li>
+      <li>Machine name in public certificate logs: accepted (D2).</li>
+      <li>When the phone alerts: all reminders by default, idle-only optional (D4).</li>
+    </ul>
+  </div>
+</details>
+</section>
+
+<!-- ============ EVIDENCE ============ -->
+<section class="block" id="evidence">
+<details class="sec">
+  <summary><h2>Evidence &amp; sources</h2><span class="hint">What this roadmap is based on</span></summary>
+  <div class="sec-body">
+    <h3>Repository evidence</h3>
+    <ul class="srcs">
+      <li>Files read: <code>ARCHITECTURE.md</code>, <code>SECURITY.md</code>, <code>docs/windows-distribution.md</code>, <code>Cargo.toml</code>, <code>.github/workflows/ci.yml</code>, <code>src/lib.rs</code>, <code>src/engine.rs</code>, <code>src/alerts.rs</code>, <code>src/settings.rs</code>, <code>src/place.rs</code>, <code>src/win/app.rs</code>, <code>src/win/tray.rs</code>, <code>src/win/handoff.rs</code>, <code>src/win/autostart.rs</code> (diff), <code>scripts/measure.ps1</code>, <code>scripts/cross_build.sh</code>, <code>scripts/install.ps1</code>.</li>
+      <li>Git: 18 commits from <code>774fb51</code> (2026-09-03) to <code>379aa3e</code> (2026-10-10). No commit, spec or doc mentions an iPhone, PWA, Web Push, pairing or Tailscale. The earlier plan/spec files under <code>docs/superpowers/</code> are deleted in the working tree (not committed) and only cover the Windows timer.</li>
+      <li>CI: GitHub Actions run <code>37980013280</code>, head <code>379aa3e3a3f9</code>, conclusion success.</li>
+      <li>Local test run: Linux container, read-only copy of the working tree, 2026-10-10 (results above).</li>
+      <li>Phase 1 spike: <code>spikes/iphone-push/</code> (uncommitted); 35/35 tests; Tailscale state read with <code>tailscale status --json</code>, <code>serve status</code> and <code>funnel status</code> (read-only) on 2026-10-10.</li>
+      <li>Vendored: qrcode-generator 1.4.4 (MIT), SHA-256 <code>18ae399f…f1780</code>, in <code>spikes/iphone-push/vendor/</code>.</li>
+    </ul>
+    <h3>External sources (checked 2026-10-10)</h3>
+    <ul class="srcs">
+      <li><a href="https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers">Apple — Sending web push notifications in web apps and browsers</a></li>
+      <li><a href="https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/">WebKit — Web Push for Web Apps on iOS and iPadOS</a></li>
+      <li><a href="https://webkit.org/blog/16535/meet-declarative-web-push/">WebKit — Meet Declarative Web Push</a></li>
+      <li><a href="https://webkit.org/blog/16574/webkit-features-in-safari-18-4/">WebKit — Features in Safari 18.4</a></li>
+      <li><a href="https://bugs.webkit.org/show_bug.cgi?id=273063">WebKit bug 273063 — push subscription becomes invalid</a></li>
+      <li><a href="https://bugs.webkit.org/show_bug.cgi?id=181849">WebKit bug 181849 — Home Screen apps don't share storage with Safari</a></li>
+      <li><a href="https://dev.to/progressier/how-to-fix-ios-push-subscriptions-being-terminated-after-3-notifications-39a7">Progressier — iOS push subscriptions ended after 3 unshown notifications</a> (secondary)</li>
+      <li><a href="https://heise.de/-10749652">heise — iOS 26 Home Screen web app default</a> (secondary)</li>
+      <li><a href="https://9to5mac.com/2024/03/01/apple-home-screen-web-apps-ios-17-eu/">9to5Mac — Apple keeps Home Screen web apps in the EU</a> (secondary)</li>
+      <li><a href="https://developer.apple.com/support/compare-memberships/">Apple — Compare memberships (free vs paid provisioning)</a></li>
+      <li><a href="https://developer.apple.com/help/account/devices/devices-overview">Apple — Devices overview (100 devices per family per year)</a></li>
+      <li><a href="https://tailscale.com/kb/1153/enabling-https">Tailscale — Enabling HTTPS (Let's Encrypt, CT logs)</a></li>
+      <li><a href="https://tailscale.com/docs/features/tailscale-serve">Tailscale — Serve (tailnet-only, identity headers, bind to localhost)</a></li>
+      <li><a href="https://tailscale.com/docs/reference/connection-types">Tailscale — Connection types (direct, DERP)</a></li>
+      <li><a href="https://www.rfc-editor.org/rfc/rfc8291">RFC 8291 — Message Encryption for Web Push</a> (example values used in tests)</li>
+      <li><a href="https://tailscale.com/kb/1291/ios-vpn-on-demand">Tailscale — VPN On Demand for iOS</a></li>
+      <li><a href="https://web.dev/articles/periodic-background-sync">web.dev — Periodic Background Sync (Safari: not supported)</a></li>
+    </ul>
+    <h3>Label key</h3>
+    <p><span class="tag t-fact">Fact</span> checked in the repo or a primary source · <span class="tag t-assume">Assumption</span> reasonable but not yet checked · <span class="tag t-rec">Recommendation</span> proposed design choice · <span class="tag t-unk">Unknown</span> not verifiable yet</p>
+  </div>
+</details>
+</section>
+
+<footer>Generated during a read-only feasibility audit on 2026-10-10. Update this file after each phase: change task status only with a commit or test result as evidence, and record it in the task's Evidence field.</footer>
+</div>
+
+<script>
+const PHASES = [
+  { id: "B", name: "Existing Unseat baseline", note: "Already in the repo; reused by the companion" },
+  { id: "0", name: "Phase 0 — Feasibility & approval", note: "This audit" },
+  { id: "1", name: "Phase 1 — On-device spike", note: "Prove iOS behaviour before touching Unseat" },
+  { id: "2", name: "Phase 2 — Library core (no Win32)", note: "Unit-tested on any OS · starts only after Phase 1 is approved" },
+  { id: "3", name: "Phase 3 — Windows host integration", note: "Server, push sender, settings UI" },
+  { id: "4", name: "Phase 4 — iPhone PWA", note: "Plain HTML/JS embedded in the exe" },
+  { id: "5", name: "Phase 5 — Security & device management", note: "Hardening and docs" },
+  { id: "6", name: "Phase 6 — Verification & readiness", note: "E2E, measurements, sign-off" }
+];
+
+// status: Completed | In Progress | Planned | Blocked | Unknown. cx = complexity estimate (judgment). effort is Unknown for all.
+const TASKS = [
+  // ---- Baseline (existing) ----
+  { id: "B.1", phase: "B", title: "Sitting engine, states and commands", status: "Completed", prio: "P0", cx: "—",
+    desc: "SittingEngine with Sitting/Overdue/Paused/Away/Break and Command::{TogglePause, Reset, Snooze, StartBreak}.",
+    evidence: "src/engine.rs; tests/engine.rs 52 passed (Linux container, 2026-10-10); CI run 37980013280 on 379aa3e passed." },
+  { id: "B.2", phase: "B", title: "Alert decision logic (sound / notification)", status: "Completed", prio: "P0", cx: "—",
+    desc: "alert_actions() returns Notice for LimitReached and BreakOver only.",
+    evidence: "src/alerts.rs:29; tests/alerts.rs 10 passed; commit 02191c2." },
+  { id: "B.3", phase: "B", title: "Settings persistence, clamping, migration (v2)", status: "Completed", prio: "P0", cx: "—",
+    desc: "Atomic save via temp + rename, clamp on load/save, schema version 2.",
+    evidence: "src/settings.rs:513-530; tests/settings.rs 27 passed." },
+  { id: "B.4", phase: "B", title: "Windows notifications (tray balloon + alert card)", status: "Completed", prio: "P0", cx: "—",
+    desc: "Shell_NotifyIconW balloon, or alert card when the overlay is on screen.",
+    evidence: "src/win/tray.rs:80; src/win/app.rs:247; commits 02191c2, 8dd20c6; host tests passed in CI on 379aa3e (display not checked by unit tests)." },
+  { id: "B.5", phase: "B", title: "Apply settings while running", status: "Completed", prio: "P1", cx: "—",
+    desc: "App::apply_settings merges new preferences and keeps live state.",
+    evidence: "src/win/app.rs:490." },
+  { id: "B.6", phase: "B", title: "End-to-end test hooks and script", status: "Completed", prio: "P1", cx: "—",
+    desc: "UNSEAT_TEST_HOOKS=1 fake idle, clock advance, event log; scripts/test_app.ps1.",
+    evidence: "src/win/testhook.rs; scripts/test_app.ps1; commit 8c5032b." },
+  { id: "B.7", phase: "B", title: "Latest end-to-end script result", status: "Unknown", prio: "P2", cx: "—",
+    desc: "Whether scripts/test_app.ps1 passes on the current tree.",
+    evidence: "Not run in this session; no stored result found." },
+  { id: "B.8", phase: "B", title: "Windows host tests on the uncommitted tree", status: "Unknown", prio: "P1", cx: "—",
+    desc: "cargo test --all-targets with the current uncommitted changes.",
+    evidence: "Not run in this session. CI covers only committed 379aa3e." },
+  { id: "B.9", phase: "B", title: "Baseline CPU / memory / exe size", status: "Unknown", prio: "P2", cx: "—",
+    desc: "Numbers to compare companion budgets against.",
+    evidence: "scripts/measure.ps1 exists; no recorded results found." },
+  { id: "B.10", phase: "B", title: "Newer-build handoff, dev-build autostart skip, install script", status: "In Progress", prio: "P1", cx: "—",
+    desc: "Ongoing Windows work. Out of companion scope; must stay untouched.",
+    evidence: "Uncommitted: src/win/handoff.rs, src/place.rs, src/win/autostart.rs, src/win/app.rs, tests/view.rs, scripts/install.ps1, scripts/cross_build.sh." },
+
+  // ---- Phase 0 ----
+  { id: "0.1", phase: "0", title: "Codebase audit", status: "Completed", prio: "P0", cx: "S",
+    desc: "Architecture, timers, notifications, settings, Windows integration, tests, history.",
+    evidence: "This document, Evidence section (files read, git log, CI run)." },
+  { id: "0.2", phase: "0", title: "Verify Apple and Tailscale constraints", status: "Completed", prio: "P0", cx: "S",
+    desc: "Web Push, Home Screen install, HTTPS, background limits, sideloading, Tailscale Serve/HTTPS.",
+    evidence: "Apple constraints table; sources checked 2026-10-10." },
+  { id: "0.3", phase: "0", title: "Compare approaches and write roadmap", status: "Completed", prio: "P0", cx: "S",
+    desc: "Native vs PWA vs private web page; recommended architecture; this file.",
+    evidence: "docs/unseat-iphone-roadmap.html (new, uncommitted)." },
+  { id: "0.4", phase: "0", title: "Approve architecture and decisions D1–D9", status: "Completed", prio: "P0", cx: "S",
+    desc: "Your decisions gate every later phase.",
+    evidence: "User approval in session, 2026-10-10: D1–D9 approved; D4 changed to mirror all reminders by default with optional idle-only.", deps: "0.3" },
+
+  // ---- Phase 1 ----
+  { id: "1.1", phase: "1", title: "Build the isolated push test (spike)", status: "Completed", prio: "P0", cx: "M",
+    desc: "Throwaway Node server (no npm dependencies) + Home Screen test app + PC control page, outside Unseat's code. Loopback-only listeners; phone side published by tailscale serve.",
+    accept: "Unseat source, settings, autostart and exe untouched; spike runs with one script.",
+    evidence: "spikes/iphone-push/ (uncommitted): server.mjs, lib/webpush.mjs, lib/pairing.mjs, lib/stats.mjs, public/, admin/, start.ps1, README.md. git status shows only new files under spikes/ and this roadmap." },
+  { id: "1.2", phase: "1", title: "Automated checks of the spike", status: "Completed", prio: "P0", cx: "S",
+    desc: "Encryption, VAPID, pairing limits, access checks, receipts, revocation.",
+    accept: "All tests pass; RFC 8291 example reproduced exactly.",
+    tests: "node --test test/*.test.mjs",
+    evidence: "2026-10-10, Node 24.20.0: 35/35 tests passed, including RFC 8291 section 5 example byte for byte. Smoke run: both listeners bound to 127.0.0.1 only (netstat); pages and pairing QR render; PC reached web.push.apple.com over TLS (HTTP 405 on GET, as expected for a POST-only service)." },
+  { id: "1.3", phase: "1", title: "Enable HTTPS certificates for the tailnet", status: "Completed", prio: "P0", cx: "S",
+    desc: "Tailscale admin console > DNS > HTTPS Certificates. Needed for the *.ts.net certificate (machine name goes to CT logs, approved in D2).",
+    accept: "tailscale status --json lists a cert domain for this PC.",
+    evidence: "After your setup: tailscale status --json lists an HTTPS cert domain for this PC (checked 2026-10-10)." },
+  { id: "1.4", phase: "1", title: "Add the iPhone to the tailnet; record iOS version", status: "Completed", prio: "P0", cx: "S",
+    desc: "Install Tailscale on the iPhone and sign in with the same account. The iOS version decides whether declarative push (18.4+) is the main path.",
+    accept: "iPhone listed in tailscale status; iOS version shown on the control page.",
+    evidence: "An iOS device is online in the tailnet; the paired phone reports iPhone OS 18_7 (control page diagnostics). Phase 1 run 2026-10-10 (spikes/iphone-push/data/results.json, local, gitignored)." },
+  { id: "1.5", phase: "1", title: "Tailscale HTTPS from the iPhone (check A)", status: "Completed", prio: "P0", cx: "S",
+    desc: "Open the https://...ts.net address in Safari; confirm Funnel is off.",
+    accept: "No certificate warning; serve status shows tailnet only; funnel status shows none.", deps: "1.3, 1.4",
+    evidence: "The phone loaded the app, registered its service worker (needs a trusted certificate) and paired through tailscale serve; the phone API rejects any request without Tailscale identity headers, so all recorded traffic came via the tailnet. start.ps1 refuses to run over an existing Serve/Funnel config; afterwards serve and funnel status both report no config. Phase 1 run 2026-10-10 (spikes/iphone-push/data/results.json, local, gitignored)." },
+  { id: "1.6", phase: "1", title: "Home Screen install, pairing and revoke (checks B, C, D)", status: "Completed", prio: "P0", cx: "S",
+    desc: "QR > Add to Home Screen > code in the installed app > approve on PC > enable notifications; later revoke.",
+    accept: "Standalone = yes; subscription on web.push.apple.com; revoked app shows 'removed'.", deps: "1.5",
+    evidence: "Install, pairing and notifications: standalone = yes, permission granted, subscription on web.push.apple.com, declarative push API present; code accepted on the first try, approved on the PC. Revoke moved to 1.11. Phase 1 run 2026-10-10 (spikes/iphone-push/data/results.json, local, gitignored)." },
+  { id: "1.7", phase: "1", title: "Notification on a locked iPhone (scenario 1)", status: "Completed", prio: "P0", cx: "S",
+    desc: "Phone locked, one push.", accept: "Shown on the lock screen (marked seen).", deps: "1.6",
+    evidence: "Push #1 (phone locked): Apple 201, marked seen, tapping it opened the app 13 s after sending. One sample. Phase 1 run 2026-10-10 (spikes/iphone-push/data/results.json, local, gitignored)." },
+  { id: "1.8", phase: "1", title: "Delivery latency and reliability (scenarios 2, 2b, 3)", status: "In Progress", prio: "P0", cx: "S",
+    desc: "20 pushes 30 s apart (high), 5 with Urgency normal, 3 plain-JSON service-worker pushes.",
+    accept: "Proposed: at least 19/20 seen, no lost subscription, PC-clock p95 at most 10 s.", deps: "1.7",
+    evidence: "Partial. 18/18 pushes accepted by Apple (201), no lost subscription. Marked seen: 5; not seen: 0; unmarked: 13. The 20-push batch stopped after 9. Plain-JSON (service worker) pushes: 3/3 receipts, PC-clock delay 3.0 / 3.6 / 3.7 s (p50 / p95 / max). Declarative pushes: displayed (marked seen) but sent no receipts, so their delay is Unknown. Phone clock was about 41 s ahead of the PC, so phone-clock timings are unusable. Phase 1 run 2026-10-10 (spikes/iphone-push/data/results.json, local, gitignored)." },
+  { id: "1.9", phase: "1", title: "Behaviour after network interruptions (scenarios 4-10)", status: "Planned", prio: "P0", cx: "M",
+    desc: "Airplane mode with long and short TTL, Tailscale off on phone, Wi-Fi to cellular, PC offline/back, tap to open, after phone restart.",
+    accept: "Proposed: held pushes arrive after reconnect; expired ones don't; pushes arrive with Tailscale off; queued receipts flush; PC reports failures.", deps: "1.7",
+    evidence: "Not run yet (scenarios 4-10). Can be rerun against the Phase 2 build." },
+  { id: "1.11", phase: "1", title: "Revoke on the device (check D)", status: "Planned", prio: "P1", cx: "S",
+    desc: "Revoke the phone on the PC, then open the app.", accept: "App says the phone was removed; API returns 401.", deps: "1.6",
+    evidence: "Not run in the Phase 1 session (device still listed at export)." },
+  { id: "1.10", phase: "1", title: "Phase 1 results review and your approval", status: "In Progress", prio: "P0", cx: "S",
+    desc: "Results JSON backfilled into this roadmap; you accept or reject. The full companion starts only after this.",
+    accept: "Your explicit approval.", deps: "1.5-1.9",
+    evidence: "On 2026-10-10 you directed Phase 2 to start with these partial results. Open items carried forward: full latency batch (1.8), network interruptions (1.9), revoke (1.11). Not marked passed." },
+
+  // ---- Phase 2 ----
+  { id: "2.1", phase: "2", title: "Companion protocol types and command mapping", status: "Planned", prio: "P0", cx: "S",
+    desc: "StateView from Snapshot; RemoteCommand → Command; settings subset with clamping.",
+    accept: "Every remote command maps to an existing Command; out-of-range values clamp the same way as the settings window.",
+    tests: "Unit tests in tests/companion.rs.", deps: "0.4, 1.10" },
+  { id: "2.2", phase: "2", title: "Settings v3: companion fields and device registry", status: "Planned", prio: "P0", cx: "M",
+    desc: "companion_enabled (default off), devices [id, name, token hash, created, last seen, push subscription], settings revision.",
+    accept: "v2 files load unchanged with companion off; round-trip and migration tests pass.",
+    tests: "tests/settings.rs additions.", deps: "2.1" },
+  { id: "2.3", phase: "2", title: "Pairing state machine", status: "Planned", prio: "P0", cx: "M",
+    desc: "One-time code (128-bit), 5-minute expiry, single use, 5 tries, local confirmation step.",
+    accept: "Expired, reused, wrong and over-limit codes all rejected; success issues a 256-bit secret, hash stored.",
+    tests: "Unit tests with an injected clock and RNG.", deps: "2.2" },
+  { id: "2.4", phase: "2", title: "Web Push crypto: VAPID JWT and RFC 8291 encryption", status: "Planned", prio: "P0", cx: "L",
+    desc: "ES256 JWT (aud = push origin, exp ≤ 24 h, reuse ≥ 1 h) and aes128gcm payload encryption.",
+    accept: "Matches the RFC 8291 example vector; JWT verifies; meets Apple's documented header rules.",
+    tests: "Known-answer tests.", deps: "D5" },
+  { id: "2.5", phase: "2", title: "Push payload builder", status: "Planned", prio: "P1", cx: "S",
+    desc: "Declarative JSON (web_push 8030, title, body, navigate) from Notice; Topic, TTL and Urgency values.",
+    accept: "Payload ≤ 4 KB; text matches the Windows notification.", tests: "Unit tests.", deps: "2.4" },
+  { id: "2.6", phase: "2", title: "Settings revision and conflict rules", status: "Planned", prio: "P1", cx: "M",
+    desc: "PC is the source of truth; If-Match revision; 409 with the current values.",
+    accept: "A stale write is rejected; settings window and phone can't silently overwrite each other.", tests: "Unit tests.", deps: "2.2" },
+
+  // ---- Phase 3 ----
+  { id: "3.1", phase: "3", title: "Loopback HTTP server thread", status: "Planned", prio: "P0", cx: "L",
+    desc: "Binds 127.0.0.1 only; request size, header timeout and connection limits; serves embedded PWA files and the API.",
+    accept: "Never listens on another interface; malformed input never panics; no socket when the feature is off.",
+    tests: "Host tests + fuzz target.", deps: "2.1, D5" },
+  { id: "3.2", phase: "3", title: "Thread bridge to the UI thread", status: "Planned", prio: "P0", cx: "M",
+    desc: "Requests become window messages to the hidden window; replies come back over a channel.",
+    accept: "App is only touched on the UI thread; commands take effect exactly like the tray menu.", tests: "Host + E2E.", deps: "3.1" },
+  { id: "3.3", phase: "3", title: "Outbound push sender (WinHTTP)", status: "Planned", prio: "P0", cx: "M",
+    desc: "Worker thread with retry and backoff until the TTL ends; removes subscription on 404/410.",
+    accept: "No UI-thread blocking; error reasons logged without secrets.", tests: "Fake endpoint via test hooks.", deps: "2.4" },
+  { id: "3.4", phase: "3", title: "Hook alerts into push", status: "Planned", prio: "P0", cx: "S",
+    desc: "In handle_beep, next to tray::notify: send every reminder (time-up, break-over, repeat) to each enabled device, following notify_enabled; optional idle-only mode (D4).",
+    accept: "Windows alert behaviour unchanged; push sent ≤ 1 s after the alert event.", tests: "E2E with captured pushes.", deps: "3.3, D4" },
+  { id: "3.5", phase: "3", title: "Settings → Phone tab", status: "Planned", prio: "P1", cx: "L",
+    desc: "Turn on/off, Tailscale status and address, Pair iPhone, device list with last seen, Revoke.",
+    accept: "Keyboard operable like other tabs; layout/focus tests extended.", tests: "settings_dlg tests.", deps: "3.1" },
+  { id: "3.6", phase: "3", title: "QR code drawing", status: "Planned", prio: "P1", cx: "S",
+    desc: "Generate the QR matrix (dependency per D5) and draw it with Direct2D.",
+    accept: "An iPhone camera scans it from the screen at default size.", tests: "Matrix unit test + manual scan.", deps: "3.5, D5" },
+  { id: "3.7", phase: "3", title: "Tailscale detection and setup guidance", status: "Planned", prio: "P2", cx: "M",
+    desc: "Detect the Tailscale CLI and Serve config; show the exact command. Only change Tailscale config with consent (D8).",
+    accept: "Clear message when Tailscale is missing, logged out, or Funnel is on.", deps: "D8" },
+
+  // ---- Phase 4 ----
+  { id: "4.1", phase: "4", title: "App shell, manifest, icons", status: "Planned", prio: "P0", cx: "M",
+    desc: "Plain HTML/JS/CSS embedded in the exe; reuses Unseat icon and theme palette.",
+    accept: "≤ 100 KB; opens standalone from the Home Screen; strict CSP.", deps: "3.1; reuse proven pieces of spikes/iphone-push" },
+  { id: "4.2", phase: "4", title: "Install guidance", status: "Planned", prio: "P0", cx: "S",
+    desc: "Detects Safari vs standalone and explains Add to Home Screen before pairing.",
+    accept: "A first-time user reaches the installed app without help.", deps: "4.1" },
+  { id: "4.3", phase: "4", title: "Pairing screen", status: "Planned", prio: "P0", cx: "S",
+    desc: "Short-code entry inside the installed app; stores the device credential.",
+    accept: "Pairs in under a minute; wrong code shows a clear error.", deps: "2.3, 4.2" },
+  { id: "4.4", phase: "4", title: "Status view and controls", status: "Planned", prio: "P0", cx: "M",
+    desc: "Live state, pause/resume, reset, snooze, break.",
+    accept: "Matches the PC overlay within a second over a direct path.", deps: "3.2, 4.3" },
+  { id: "4.5", phase: "4", title: "Enable notifications and subscription upkeep", status: "Planned", prio: "P0", cx: "M",
+    desc: "Button-triggered permission; send the subscription; re-check getSubscription() on every open.",
+    accept: "No silent pushes ever; a lost subscription is re-registered on next open.", deps: "4.3, 1.3" },
+  { id: "4.6", phase: "4", title: "Remote settings editor", status: "Planned", prio: "P1", cx: "M",
+    desc: "Whitelisted settings with conflict handling (409 → reload and show).",
+    accept: "Edits on either side show up on the other.", deps: "2.6, 4.4" },
+  { id: "4.7", phase: "4", title: "Offline and reconnection", status: "Planned", prio: "P1", cx: "M",
+    desc: "Cached shell, 'last updated', backoff reconnect on visibility/online, controls disabled offline.",
+    accept: "Airplane-mode open works; reconnects within 30 s of coming back.", deps: "4.4" },
+  { id: "4.8", phase: "4", title: "Accessibility and dark mode", status: "Planned", prio: "P2", cx: "S",
+    desc: "VoiceOver labels, Dynamic Type, light/dark from the theme palette.",
+    accept: "All controls usable with VoiceOver.", deps: "4.4" },
+
+  // ---- Phase 5 ----
+  { id: "5.1", phase: "5", title: "Device revocation", status: "Planned", prio: "P0", cx: "S",
+    desc: "Revoke from the PC; immediate 401; push subscription removed.",
+    accept: "A revoked phone can't read state or send commands.", tests: "E2E.", deps: "3.5" },
+  { id: "5.2", phase: "5", title: "Tailscale identity binding", status: "Planned", prio: "P1", cx: "S",
+    desc: "Require Tailscale-User-Login to match the owner saved at pairing.",
+    accept: "Requests without, or with a different, login are rejected.", deps: "3.1, D2" },
+  { id: "5.3", phase: "5", title: "Rate limits and local audit log", status: "Planned", prio: "P1", cx: "S",
+    desc: "Per-device rate limits; log of pair/revoke/command changes without secrets.", deps: "3.1" },
+  { id: "5.4", phase: "5", title: "VAPID key protection (DPAPI)", status: "Planned", prio: "P0", cx: "S",
+    desc: "Generate on first enable; store encrypted for the current user.",
+    accept: "Key never written in plain text.", tests: "Host round-trip test.", deps: "2.4" },
+  { id: "5.5", phase: "5", title: "Threat model and security review", status: "Planned", prio: "P0", cx: "M",
+    desc: "Written threat model; review of all new code paths.", deps: "3.x, 4.x" },
+  { id: "5.6", phase: "5", title: "Update SECURITY.md, ARCHITECTURE.md, distribution doc", status: "Planned", prio: "P0", cx: "S",
+    desc: "Replace 'no network' statements with the exact, opt-in network behaviour.", deps: "5.5" },
+
+  // ---- Phase 6 ----
+  { id: "6.1", phase: "6", title: "End-to-end tests in test_app.ps1", status: "Planned", prio: "P0", cx: "M",
+    desc: "Pair, command, alert→push capture, revoke, feature-off-no-socket.", deps: "3.4, 5.1" },
+  { id: "6.2", phase: "6", title: "Measure budgets before and after", status: "Planned", prio: "P1", cx: "S",
+    desc: "scripts/measure.ps1 on baseline vs companion build, feature off and on.",
+    accept: "All budgets met or explained.", deps: "B.9, 6.1" },
+  { id: "6.3", phase: "6", title: "iPhone battery observation", status: "Planned", prio: "P2", cx: "S",
+    desc: "A few days of normal use; check Settings → Battery for Safari/web app and Tailscale.", deps: "4.x" },
+  { id: "6.4", phase: "6", title: "Antivirus re-check with the listener on", status: "Planned", prio: "P1", cx: "S",
+    desc: "Repeat the Bitdefender checks in docs/windows-distribution.md with the companion on and off.", deps: "6.1" },
+  { id: "6.5", phase: "6", title: "User docs: phone setup guide", status: "Planned", prio: "P2", cx: "S",
+    desc: "README section + step-by-step Tailscale and install guide.", deps: "4.x" },
+  { id: "6.6", phase: "6", title: "Human readiness review", status: "Planned", prio: "P1", cx: "S",
+    desc: "Your hands-on sign-off. A passing build alone doesn't count.", deps: "6.1–6.5" }
+];
+
+const APPLE = [
+  ["Web Push on iPhone", "Home Screen web apps on iOS/iPadOS 16.4 or later.", "fact", "Apple doc; WebKit 16.4 post"],
+  ["Apple Developer account", "Not needed to send web push.", "fact", "Apple doc"],
+  ["Permission prompt", "Must come from a user gesture (tap); call subscribe right away in that handler.", "fact", "Apple doc; WebKit"],
+  ["Silent push", "Not supported. Not showing a push makes Safari revoke permission; reports say after about 3 misses.", "fact", "Apple doc; Progressier (count is secondary)"],
+  ["Declarative Web Push", "iOS 18.4+: push can display without a service worker; JSON with web_push: 8030; no penalty if optional JS fails.", "fact", "WebKit"],
+  ["Payload & headers", "≤ 4 KB; TTL required (stored up to 30 days); Urgency very-low…high; Topic ≤ 32 chars coalesces; VAPID JWT exp ≤ 1 day, don't refresh more than hourly.", "fact", "Apple doc"],
+  ["Server network", "PC must reach https://*.push.apple.com with TLS SNI; HTTP/1.1 or HTTP/2.", "fact", "Apple doc"],
+  ["Delivery time", "No published guarantee or delay bound found. Urgency high asks for immediate delivery.", "unk", "Apple doc (no bound stated)"],
+  ["Focus modes", "Web app notifications follow Focus.", "fact", "WebKit 16.4 post"],
+  ["Badging", "setAppBadge / clearAppBadge supported in Home Screen web apps.", "fact", "WebKit; Apple doc"],
+  ["Home Screen install", "Needs manifest display standalone/fullscreen (before iOS 26). iOS 26 opens any added site as a web app by default.", "fact", "WebKit; heise (iOS 26 detail is secondary)"],
+  ["Storage", "Home Screen app storage is separate from Safari by design, so pairing must finish inside the installed app.", "assume", "WebKit bug 181849; developer reports"],
+  ["Background execution", "No Background Sync or Periodic Background Sync in Safari/iOS.", "assume", "web.dev; MDN data"],
+  ["Subscription reliability", "Reports of subscriptions going invalid; pushsubscriptionchange not supported. Phase 1: no subscription lost over 18 pushes.", "assume", "WebKit bug 273063; Phase 1 run"],
+  ["Declarative push + service worker (iOS 18.7)", "Declarative pushes displayed without the service worker reporting them; plain-JSON pushes reached the service worker. Cause not confirmed.", "fact", "Phase 1 run, 2026-10-10 (observed on one device)"],
+  ["HTTPS / certificate", "Service workers and push need a secure origin. A trusted public cert (Tailscale's ts.net) is the approved path. Whether a user-installed root CA would also work stays unconfirmed; not needed after D3.", "unk", "No primary source found; test dropped (D3)"],
+  ["EU", "Apple reversed its 2024 plan and kept Home Screen web apps in the EU.", "assume", "9to5Mac and others, March 2024"],
+  ["Native: free Apple ID", "Profiles expire in 7 days; 3 apps per device; 10 App IDs per 7 days; no push capability.", "fact", "Apple compare memberships; Apple forums"],
+  ["Native: paid program", "$99/yr; ad hoc to 100 devices per family per year; builds last about a year.", "fact", "Apple devices overview (expiry wording is secondary)"],
+  ["Tailscale HTTPS", "Let's Encrypt cert for machine.tailnet.ts.net; key stays local; machine name published in CT logs.", "fact", "Tailscale HTTPS doc"],
+  ["Tailscale Serve", "Tailnet-only; adds Tailscale-User-Login headers and strips spoofed ones; recommends binding the backend to localhost.", "fact", "Tailscale Serve doc"],
+  ["Same-Wi-Fi path", "Tailscale tries direct connections using LAN addresses, with DERP relay as fallback; same-LAN direct not guaranteed.", "assume", "Tailscale connection types; forum"],
+  ["Tailscale plan", "Free Personal plan; recent reports say 6 users, unlimited personal devices. Check the pricing page.", "assume", "Secondary 2026 reports"]
+];
+
+const RISKS = [
+  ["R1", "Safari revokes push after unshown notifications", "M / H", "Declarative push where available; service worker always shows inside waitUntil; any suppression happens on the PC.", "Apple doc"],
+  ["R2", "Push delayed or dropped; no Apple guarantee", "M / M", "Measure in Phase 1; Urgency high; short TTL; Topic coalescing; Windows alert stays primary.", "Apple doc"],
+  ["R3", "Subscription silently goes invalid", "M / M", "Re-check getSubscription() on each open; re-register; show 'notifications off' on the PC.", "WebKit bug 273063"],
+  ["R4", "Dependence on Tailscale (outage, pricing, policy)", "L / M", "Only the companion is affected; Windows app unchanged; document an own-domain fallback (D3).", "Assessment"],
+  ["R5", "Machine name exposed in public CT logs", "H / L", "Rename the Tailscale machine before enabling HTTPS.", "Tailscale doc"],
+  ["R6", "Network listener raises antivirus suspicion", "M / M", "Loopback only, off by default, signed release, re-test (6.4).", "docs/windows-distribution.md history"],
+  ["R7", "Bugs in request parsing", "M / H", "Loopback only + Tailscale; strict limits; fuzzing; small whitelisted API.", "Assessment"],
+  ["R8", "Thread-safety bugs with the Win32 App", "M / H", "Single message bridge; server never holds App state.", "src/win/app.rs design"],
+  ["R9", "iOS clears the web app's stored credential", "L / M", "Easy re-pair; device list shows last seen. Eviction rules for Home Screen apps: Unknown, check in 1.4.", "Unknown"],
+  ["R10", "Phone and settings window overwrite each other", "M / L", "Revision numbers and 409 conflicts (2.6).", "src/win/app.rs:490"],
+  ["R11", "Duplicate alerts annoy the user (all reminders mirrored by default, D4)", "H / L", "Optional idle-only mode; Topic header so a newer reminder replaces an undelivered one.", "Assessment"],
+  ["R12", "Apple changes web app policy (e.g. EU 2024)", "L / H", "Keep the Windows app fully standalone; monitor WebKit release notes.", "2024 EU episode"],
+  ["R13", "Scope creep into the in-progress Windows fixes", "M / M", "Companion work on its own branch after the current uncommitted work lands.", "git status"]
+];
+
+const DECISIONS = [
+  ["D1", "Architecture", "PWA on Home Screen, served by Unseat on 127.0.0.1, published by Tailscale Serve, reminders via Apple Web Push sent from the PC."],
+  ["D2", "Require Tailscale on PC and iPhone; bind access to your Tailscale login", "Yes. Accept Tailscale as a dependency and CT-log exposure of the machine name."],
+  ["D3", "Same-Wi-Fi without Tailscale", "Not in v1. Tailscale already prefers a direct LAN path. Alternative if wanted later: your own domain with a DNS-01 certificate. The LAN-only certificate test (old task 1.5) is dropped."],
+  ["D4", "When should the phone alert?", "Modified by you: mirror ALL Unseat reminders (time-up, break-over, repeat reminders) to the iPhone by default. Optional idle-only mode sends pushes only while the PC is idle or locked. (Original recommendation was idle-only by default.)"],
+  ["D5", "New dependencies", "Small pure-Rust crypto crates (p256, aes-gcm, hkdf, sha2) in the library for testability, plus a tiny QR crate. WinHTTP and DPAPI through the existing windows crate. Hand-written minimal HTTP server with strict limits. The alternative is Windows CNG only: fewer crates, but not testable off Windows."],
+  ["D6", "Which settings the phone can edit", "Timer and alert settings only; not autostart, hotkeys, window, dock or theme."],
+  ["D7", "Off by default, opt-in, with docs updated", "Yes. No socket or outbound traffic until turned on."],
+  ["D8", "Who configures Tailscale Serve", "Unseat shows the exact command and checks the result; it doesn't change Tailscale settings itself."],
+  ["D9", "Settings schema version 3", "Yes, with a migration test; v2 files load with the companion off."]
+];
+
+const STATUSES = ["Completed", "In Progress", "Planned", "Blocked", "Unknown"];
+const STATUS_VAR = { "Completed": "--done", "In Progress": "--prog", "Planned": "--plan", "Blocked": "--block", "Unknown": "--unk" };
+const cls = s => "st-" + s.replace(/\s/g, "");
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const statusPill = s => `<span class="status ${cls(s)}">${esc(s)}</span>`;
+const pct = (n, d) => d ? Math.round(100 * n / d) : 0;
+
+function counts(list) {
+  const c = Object.fromEntries(STATUSES.map(s => [s, 0]));
+  list.forEach(t => c[t.status]++);
+  return c;
+}
+
+function renderDashboard() {
+  const c = counts(TASKS);
+  const known = TASKS.length - c.Unknown;
+  const companion = TASKS.filter(t => t.phase !== "B");
+  const cc = counts(companion);
+  const cKnown = companion.length - cc.Unknown;
+  document.getElementById("kpis").innerHTML = [
+    [pct(c.Completed, known) + "%", `Overall complete (${c.Completed} of ${known} known tasks)`],
+    [pct(cc.Completed, cKnown) + "%", `Companion complete (${cc.Completed} of ${cKnown}; audit only)`],
+    [cc.Planned, "Companion tasks Planned"],
+    [c.Unknown, "Unknown (excluded from %)"]
+  ].map(([n, l]) => `<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+  document.getElementById("pctNote").textContent = `${TASKS.length} tasks · ${c.Unknown} Unknown not counted in %`;
+  document.getElementById("statusBar").innerHTML = STATUSES.filter(s => c[s]).map(s =>
+    `<span title="${s}: ${c[s]}" style="width:${100 * c[s] / TASKS.length}%;background:var(${STATUS_VAR[s]})"></span>`).join("");
+  document.getElementById("statusLegend").innerHTML = STATUSES.map(s =>
+    `<span><span class="dot" style="background:var(${STATUS_VAR[s]})"></span>${s} ${c[s]}</span>`).join("");
+  document.getElementById("phaseBars").innerHTML = PHASES.map(p => {
+    const list = TASKS.filter(t => t.phase === p.id), pc = counts(list), k = list.length - pc.Unknown;
+    const segs = STATUSES.filter(s => pc[s]).map(s =>
+      `<span style="width:${100 * pc[s] / list.length}%;background:var(${STATUS_VAR[s]})"></span>`).join("");
+    return `<div class="phase-row"><span>${esc(p.name)}</span><div class="bar">${segs}</div>
+      <span class="pct">${pc.Completed}/${k} · ${pct(pc.Completed, k)}%${pc.Unknown ? ` · ${pc.Unknown} unk.` : ""}</span></div>`;
+  }).join("");
+  const open = TASKS.filter(t => ["Planned", "In Progress", "Blocked"].includes(t.status));
+  const maxP = Math.max(...["P0", "P1", "P2", "P3"].map(p => open.filter(t => t.prio === p).length), 1);
+  document.getElementById("prioBars").innerHTML = ["P0", "P1", "P2", "P3"].map(p => {
+    const n = open.filter(t => t.prio === p).length;
+    return `<div class="phase-row" style="grid-template-columns:3em minmax(0,1fr) 3em"><span class="prio ${p.toLowerCase()}">${p}</span>
+      <div class="bar"><span style="width:${100 * n / maxP}%;background:var(--accent)"></span></div><span class="pct" style="min-width:0">${n}</span></div>`;
+  }).join("");
+}
+
+const activeStatus = new Set();
+function renderFilters() {
+  const sel = document.getElementById("fPhase");
+  PHASES.forEach(p => sel.insertAdjacentHTML("beforeend", `<option value="${p.id}">${esc(p.name)}</option>`));
+  const box = document.getElementById("fStatus");
+  box.innerHTML = STATUSES.map(s => `<button type="button" class="chip" aria-pressed="false" data-s="${s}">${s}</button>`).join("");
+  box.addEventListener("click", e => {
+    const b = e.target.closest(".chip"); if (!b) return;
+    const s = b.dataset.s;
+    activeStatus.has(s) ? activeStatus.delete(s) : activeStatus.add(s);
+    b.setAttribute("aria-pressed", activeStatus.has(s));
+    renderTasks();
+  });
+  ["q", "fPhase", "fPrio"].forEach(id => document.getElementById(id).addEventListener("input", renderTasks));
+}
+
+function taskHtml(t) {
+  const rows = [
+    ["Description", t.desc], ["Acceptance", t.accept], ["Tests", t.tests], ["Depends on", t.deps],
+    ["Complexity", t.cx === "—" ? "—" : `${t.cx} (estimate)`], ["Effort", "Unknown"], ["Evidence", t.evidence || (t.status === "Planned" ? "None yet — not implemented" : "")]
+  ].filter(([, v]) => v);
+  return `<details class="task"><summary><span class="tid">${esc(t.id)}</span><span class="tt">${esc(t.title)}</span>
+    <span class="prio ${t.prio.toLowerCase()}">${t.prio}</span>${statusPill(t.status)}</summary>
+    <div class="task-body"><dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl></div></details>`;
+}
+
+function renderTasks() {
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const ph = document.getElementById("fPhase").value;
+  const pr = document.getElementById("fPrio").value;
+  const match = t => (!ph || t.phase === ph) && (!pr || t.prio === pr) &&
+    (!activeStatus.size || activeStatus.has(t.status)) &&
+    (!q || [t.id, t.title, t.desc, t.accept, t.tests, t.deps, t.evidence, t.status, t.prio].join(" ").toLowerCase().includes(q));
+  const shown = TASKS.filter(match);
+  document.getElementById("taskCount").textContent = `${shown.length} of ${TASKS.length} tasks`;
+  const html = PHASES.map(p => {
+    const list = shown.filter(t => t.phase === p.id);
+    if (!list.length) return "";
+    return `<div class="phase-group"><h3>${esc(p.name)} <small>${esc(p.note)}</small></h3>${list.map(taskHtml).join("")}</div>`;
+  }).join("");
+  document.getElementById("taskList").innerHTML = html || `<div class="empty">No tasks match these filters.</div>`;
+}
+
+function renderTables() {
+  const lvl = { fact: '<span class="tag t-fact">Verified</span>', assume: '<span class="tag t-assume">Secondary</span>', unk: '<span class="tag t-unk">Unknown</span>' };
+  document.getElementById("appleRows").innerHTML = APPLE.map(([a, b, l, s]) =>
+    `<tr><td><b>${esc(a)}</b></td><td>${esc(b)}</td><td>${lvl[l]}</td><td class="note">${esc(s)}</td></tr>`).join("");
+  document.getElementById("riskRows").innerHTML = RISKS.map(([id, r, li, m, b]) =>
+    `<tr><td class="mono">${id}</td><td>${esc(r)}</td><td class="mono">${li}</td><td>${esc(m)}</td><td class="note">${esc(b)}</td></tr>`).join("");
+  document.getElementById("decRows").innerHTML = DECISIONS.map(([id, d, r]) =>
+    `<tr><td class="mono">${id}</td><td><b>${esc(d)}</b></td><td>${esc(r)}</td><td>${statusPill("Completed")}<div class="note">approved${id === "D4" ? " with change" : ""}</div></td></tr>`).join("");
+}
+
+(function theme() {
+  const btn = document.getElementById("themeBtn"), root = document.documentElement;
+  let saved = null;
+  try { saved = localStorage.getItem("unseat-roadmap-theme"); } catch (e) {}
+  if (saved) root.dataset.theme = saved;
+  const label = () => { btn.textContent = (root.dataset.theme || "auto") === "dark" ? "Dark" : (root.dataset.theme === "light" ? "Light" : "Auto"); };
+  label();
+  btn.addEventListener("click", () => {
+    const next = { undefined: "light", light: "dark", dark: undefined }[root.dataset.theme];
+    if (next) root.dataset.theme = next; else delete root.dataset.theme;
+    try { next ? localStorage.setItem("unseat-roadmap-theme", next) : localStorage.removeItem("unseat-roadmap-theme"); } catch (e) {}
+    label();
+  });
+})();
+
+renderDashboard();
+renderFilters();
+renderTasks();
+renderTables();
+</script>
+</body>
+</html>
