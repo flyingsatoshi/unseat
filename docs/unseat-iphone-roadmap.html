@@ -672,6 +672,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
     <div class="table-wrap"><table>
       <thead><tr><th>Check</th><th>Result</th><th>Evidence</th></tr></thead>
       <tbody>
+        <tr><td>Real reminder end to end: your 5-minute limit on the real clock, default (declarative) format, your settings copied</td><td class="yes">Pass</td><td>Timer reached 00:00 → push accepted by Apple (201) 1.9 s later → you confirmed the notification on the iPhone. Run as a separate, visible TEST copy because the installed <code>dist&#92;unseat.exe</code> has no iPhone code yet</td></tr>
         <tr><td>Pair the iPhone via the PC page and QR code</td><td class="yes">Pass</td><td>Installed, paired, subscribed; Apple 201 on the first test</td></tr>
         <tr><td>20-push batch, 3 s apart (plain-JSON format)</td><td class="yes">Pass</td><td>Apple accepted 20/20; phone confirmed 20/20; reminder fired → phone confirmation p50 584 ms, p95 655 ms, max 683 ms (PC clock)</td></tr>
         <tr><td>Real reminders: time up, repeat (sound-only on Windows), break over</td><td class="yes">Pass</td><td>Sent and confirmed by the phone in 0.5–2.6 s</td></tr>
@@ -723,6 +724,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
     <ul>
       <li><span class="tag t-rec">Decision D10</span> Push format: declarative (default today; shown by iOS itself, no confirmations) or plain JSON (confirmations and measured 20/20, but relies on the service worker showing every push).</li>
       <li>Not run on the phone: Tailscale off, network switch, phone restart, the three revocation paths.</li>
+      <li>Your installed <code>dist&#92;unseat.exe</code> is built from the main tree and has no iPhone code. To use the feature: install this build, run <code>tailscale serve --bg 8790</code>, turn iPhone reminders on, and pair again from a new Home Screen app at the port-443 address (the current one is tied to the test address).</li>
       <li>The branch has no Gitea remote; <code>origin</code> is GitHub, whose Actions workflow runs on <code>windows-latest</code>. Pushing needs your go-ahead.</li>
     </ul>
   </div>
@@ -1166,7 +1168,7 @@ const TASKS = [
   { id: "6.7", phase: "6", title: "On-device check of this build (real Apple push from Unseat)", status: "Blocked", prio: "P0", cx: "S",
     desc: "Install this build, run tailscale serve, pair the iPhone, and repeat Phase 1's checks: locked phone, a full 20-push batch, network interruptions, revoke.",
     accept: "Same criteria as Phase 1; pushes sent by Unseat (WinHTTP + Rust crypto) arrive on iOS 18.7.", deps: "Your iPhone",
-    evidence: "Partly done 2026-10-11 with real Apple push (see Phase 3): batch, reminders, idle-only, formats, tap, counters, one offline case pass; late delivery and Topic collapse fail (fixed by showing fired-at time); network switch, restart and revocation not run, stopped by you." },
+    evidence: "Partly done 2026-10-11 with real Apple push (see Phase 3). Real reminder end to end on the real clock with the default format: passed (you confirmed it on the iPhone). Also: batch, reminders, idle-only, formats, tap, counters, one offline case pass; late delivery and Topic collapse fail (fixed by showing fired-at time); network switch, restart and revocation not run, stopped by you." },
   { id: "6.8", phase: "6", title: "Push the branch and open a PR", status: "Blocked", prio: "P1", cx: "S",
     desc: "feature/iphone-companion is committed locally and ready.", accept: "PR open; CI green.",
     evidence: "Not pushed. The only remote is GitHub (origin); there is no Gitea remote for Unseat. Waiting for your go-ahead and a free runner." },
