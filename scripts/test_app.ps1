@@ -245,7 +245,8 @@ Scenario "older settings migrate without losing preferences" {
     Check ((Get-State $i).state -eq "Sitting") "migrated file keeps running while idle"
     Send-Command $i $ID_PAUSE
     $f = Get-Settings $i
-    Check ($f.settings_version -eq 2) "version stamped"
+    Check ($f.settings_version -eq 3) "version stamped (3 added iPhone reminders, off by default)"
+    Check ($f.phone_enabled -eq $false) "migrated file keeps iPhone reminders off"
     Check ($f.inactivity_behavior -eq "continue") "old pause default migrated"
     Check ($f.widget_size -eq "large" -and $f.sitting_limit_secs -eq 900 -and $f.step -eq 5) "preferences kept"
     Check ($f.alert_sound -eq "glass" -and $f.alert_volume -eq 75) "sound kept, volume defaulted"

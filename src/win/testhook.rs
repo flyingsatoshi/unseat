@@ -23,6 +23,8 @@ pub const MSG_DUMP: u32 = WM_APP + 0x42;
 pub const MSG_SNAPSHOT: u32 = WM_APP + 0x43;
 /// wParam 1/0: the pointer rests on / leaves a docked overlay.
 pub const MSG_DOCK_HOVER: u32 = WM_APP + 0x44;
+/// Start the iPhone page's listener without opening a browser; logs `phone admin <url>`.
+pub const MSG_PHONE_ADMIN: u32 = WM_APP + 0x45;
 
 const NO_OVERRIDE: u64 = u64::MAX;
 static IDLE_OVERRIDE_SECS: AtomicU64 = AtomicU64::new(NO_OVERRIDE);

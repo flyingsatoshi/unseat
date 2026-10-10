@@ -9,6 +9,7 @@ mod icon;
 mod idle;
 mod install;
 mod paint;
+mod phone;
 mod session;
 mod settings_dlg;
 mod sound;
@@ -17,5 +18,6 @@ mod theme;
 mod tray;
 mod tray_panel;
 mod widget;
+mod winhttp;
 
 pub use app::run;

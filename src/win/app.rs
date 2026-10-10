@@ -1,13 +1,13 @@
 use crate::win::{
     alert_card, tray_panel,
-    autostart, flyout, hotkeys, idle, install, paint, session, settings_dlg, sound, testhook,
+    autostart, flyout, hotkeys, idle, install, paint, phone, session, settings_dlg, sound, testhook,
     theme, tray, widget,
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use unseat::{
     alert_actions, clamp_clock, format_today, next_tick_delay, restored_today_sitting,
-    status_line, timer_render_key, Beep, CivilDate, Command, EngineConfig, Input, Settings,
+    status_line, timer_render_key, Beep, CivilDate, Command, EngineConfig, Input, PhoneAlerts, Settings,
     SittingEngine, ThemePreference, TimerRenderKey, WidgetSize, WIDGET_H, WIDGET_W,
 };
 use windows::core::w;
@@ -61,6 +61,8 @@ pub struct App {
     pub dock: Option<unseat::DockController>,
     pub dock_frame: Option<unseat::DockFrame>,
     pub dock_suppressed: bool,
+    /// iPhone reminders; inert until turned on or opened from the tray.
+    pub phone: phone::Phone,
 }
 
 pub fn run() -> windows::core::Result<()> {
@@ -87,6 +89,7 @@ pub fn run() -> windows::core::Result<()> {
         register_hidden()?;
 
         let path = settings_file();
+        let data_dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let mut settings = Settings::load_from(&path);
         let today = local_date();
         let saved_date = CivilDate::parse_ymd(&settings.today_date).unwrap_or(today);
@@ -150,6 +153,7 @@ pub fn run() -> windows::core::Result<()> {
             dock: None,
             dock_frame: None,
             dock_suppressed: false,
+            phone: phone::Phone::new(&data_dir),
         });
         let ptr = Box::into_raw(app);
 
@@ -168,6 +172,7 @@ pub fn run() -> windows::core::Result<()> {
             Some(ptr as *const std::ffi::c_void),
         )?;
         (*ptr).hidden = hidden;
+        (*ptr).phone.set_hidden(hidden);
         session::register(hidden);
         if SetTimer(hidden, TICK_ID, 1000, None) == 0 {
             let error = windows::core::Error::from_win32();
@@ -179,6 +184,7 @@ pub fn run() -> windows::core::Result<()> {
         }
         (*ptr).add_tray();
         (*ptr).sync_hotkeys();
+        (*ptr).phone.sync(&(*ptr).settings);
         if (*ptr).settings.launch_with_windows {
             autostart::repair();
         }
@@ -201,6 +207,7 @@ pub fn run() -> windows::core::Result<()> {
             DispatchMessageW(&msg);
         }
         (*ptr).persist_today();
+        (*ptr).phone.shutdown();
         sound::stop();
         hotkeys::unregister(hidden);
         session::unregister(hidden);
@@ -244,6 +251,7 @@ impl App {
             return;
         }
         testhook::log(&format!("alert {beep:?}"));
+        self.mirror_to_phone(beep);
         let actions = alert_actions(beep, &self.settings, self.engine.snapshot().sitting_elapsed);
         if actions.play_sound {
             self.play_alert_sound();
@@ -298,6 +306,7 @@ impl App {
         let input = self.current_input();
         let result = self.engine.apply_at(command, now, local_date(), input);
         testhook::log(&format!("command {command:?}"));
+        self.phone.on_command(command);
         match command {
             Command::Reset | Command::Snooze(_) | Command::StartBreak => {
                 self.stop_alert_sound();
@@ -339,6 +348,7 @@ impl App {
             ));
         }
         self.handle_beep(result.beep);
+        self.phone.update_view(&status_line(result.snapshot), &format_today(result.snapshot.today_sitting));
         if now.saturating_sub(self.last_save_at) >= SAVE_EVERY {
             self.persist_today();
             self.last_save_at = now;
@@ -494,6 +504,10 @@ impl App {
         merged.today_sitting_secs = self.settings.today_sitting_secs;
         merged.timer_checkpoint = self.settings.timer_checkpoint;
         merged.history = std::mem::take(&mut self.settings.history);
+        // The settings window doesn't edit the phone choices; the iPhone page may have changed
+        // them while it was open.
+        merged.phone_enabled = self.settings.phone_enabled;
+        merged.phone_alerts = self.settings.phone_alerts;
         merged.clamp();
         self.settings = merged;
         self.engine
@@ -687,12 +701,33 @@ impl App {
             tray::ID_SNOOZE_CUSTOM => self.snooze_default(),
             tray::ID_SETTINGS => settings_dlg::open(self as *mut App),
             tray::ID_HIDE => self.toggle_widget(),
+            tray::ID_PHONE => self.phone.open_admin(),
             tray::ID_QUIT => unsafe {
                 self.persist_today();
                 PostQuitMessage(0);
             },
             _ => {}
         }
+    }
+
+    /// Mirror an engine reminder to paired iPhones (all reminders, or only while away).
+    fn mirror_to_phone(&mut self, beep: Beep) {
+        let input = self.current_input();
+        let presence = unseat::companion::reminder::Presence {
+            idle_for: input.last_input_age,
+            locked: input.session_locked,
+        };
+        let sitting = self.engine.snapshot().sitting_elapsed;
+        self.phone.on_beep(beep, &self.settings, sitting, presence);
+    }
+
+    /// The iPhone page turned reminders on/off or changed when they are sent.
+    pub fn apply_phone_settings(&mut self, enabled: bool, alerts: PhoneAlerts) {
+        self.settings.phone_enabled = enabled;
+        self.settings.phone_alerts = alerts;
+        self.save_settings();
+        self.phone.sync(&self.settings);
+        testhook::log(&format!("phone settings enabled={enabled} alerts={}", alerts.key()));
     }
 
     /// The system theme changed (WM_SETTINGCHANGE "ImmersiveColorSet").
@@ -813,6 +848,11 @@ unsafe extern "system" fn hidden_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                     (*app).last_tray_select = Some(now);
                 }
             }
+            LRESULT(0)
+        }
+        phone::MSG_PHONE_SETTINGS => {
+            let alerts = if wp.0 & 2 != 0 { PhoneAlerts::IdleOnly } else { PhoneAlerts::All };
+            (*app).apply_phone_settings(wp.0 & 1 != 0, alerts);
             LRESULT(0)
         }
         WM_WTSSESSION_CHANGE => {
