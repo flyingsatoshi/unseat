@@ -355,13 +355,44 @@ fn enqueue(shared: &Arc<Shared>, r: &reminder::Reminder, only: Option<&str>) {
     let now = wall_ms();
     let (event, notes) = {
         let mut ob = shared.outbox.lock().unwrap();
-        let payload = reminder::message(r, &navigate, ob.next_event());
+        let mut payload = reminder::message(r, &navigate, ob.next_event());
+        if testhook::enabled() {
+            payload = test_payload_variant(shared, payload);
+        }
         ob.enqueue(r.kind, payload, r.ttl_secs, &devices, now)
     };
     shared.companion.lock().unwrap().note_sent(event, now);
     testhook::log(&format!("phone queued {} event={event} devices={}", r.kind.key(), devices.len()));
     record(shared, &notes);
     shared.wake.notify_all();
+}
+
+/// Test runs only: rewrite the push body into another format named in `push-format.txt` next
+/// to the store, to compare on a real phone which formats iOS shows and hands to the worker.
+fn test_payload_variant(shared: &Shared, payload: Vec<u8>) -> Vec<u8> {
+    let Some(dir) = shared.store_path.parent() else { return payload };
+    let Ok(variant) = std::fs::read_to_string(dir.join("push-format.txt")) else { return payload };
+    let variant = variant.trim().to_string();
+    let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&payload) else { return payload };
+    if let Some(body) = v["notification"]["body"].as_str().map(|b| format!("{b} [{variant}]")) {
+        v["notification"]["body"] = body.into();
+        v["notification"]["tag"] = format!("unseat-test-{variant}").into();
+    }
+    let out = match variant.as_str() {
+        "plain" => {
+            v.as_object_mut().map(|o| o.remove("mutable"));
+            v
+        }
+        "mutable-in" => {
+            v.as_object_mut().map(|o| o.remove("mutable"));
+            v["notification"]["mutable"] = true.into();
+            v
+        }
+        "legacy" => v["notification"].clone(),
+        _ => v,
+    };
+    testhook::log(&format!("phone test format {variant}"));
+    out.to_string().into_bytes()
 }
 
 // ---------------------------------------------------------------- sender
@@ -562,6 +593,9 @@ fn serve(shared: &Arc<Shared>, mut stream: TcpStream, admin: bool) {
     };
     let _ = stream.write_all(&response.to_bytes());
     let _ = stream.shutdown(Shutdown::Both);
+    if !admin && testhook::enabled() {
+        testhook::log(&format!("phone http {} {} {}", request.method, request.path, response.status));
+    }
     if !admin && response.status == 421 {
         // Probably this PC's tailnet name isn't known yet (or changed): look it up again.
         refresh_tailscale(shared, 10_000);
