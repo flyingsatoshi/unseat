@@ -8,7 +8,7 @@ Thanks for helping with Unseat.
    Colors come from `src/theme.rs`; settings rows from `sections()` in `src/win/settings_dlg.rs`.
 4. Persist new options through `Settings` with `serde(default)` and `clamp()`.
 5. Run `cargo test --no-default-features` before a PR, and `scripts/test_app.ps1` for host changes.
-6. GUI work needs MSVC and `cargo build --release --features gui`.
+6. GUI work needs MSVC and `cargo build --release --features gui`. Run `scripts/install.ps1` to replace your everyday copy in `dist\` with the new build.
 7. Alert WAVs are original CC0 tones. Regenerate with `python scripts/gen_sounds.py` rather than adding an audio crate.
 
 By submitting a pull request you agree that your contribution is licensed under Apache-2.0, the same license as the rest of this repository. Sound files in `assets/sounds/` stay CC0.

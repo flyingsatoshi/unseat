@@ -1,7 +1,7 @@
 use std::time::Duration;
 use unseat::{
-    face_digits, format_elapsed, format_limit, format_today, hit_control, installed_exe,
-    is_dev_build, progress, timer_digit_px, timer_face_digits,
+    face_digits, format_elapsed, format_limit, format_today, hit_control, is_dev_build,
+    newer_build_takes_over, progress, timer_digit_px, timer_face_digits,
     timer_render_key, widget_layout, widget_pixel_size, Hit, Snapshot, TimerDisplayMode,
     TimerShape, VisibleState, WidgetSize,
 };
@@ -266,11 +266,23 @@ fn downloads_exe_is_not_a_dev_build() {
 }
 
 #[test]
-fn installed_exe_lives_under_localappdata_unseat() {
-    assert_eq!(
-        installed_exe(std::path::Path::new(r"C:\Users\me\AppData\Local")),
-        std::path::Path::new(r"C:\Users\me\AppData\Local\Unseat\unseat.exe")
-    );
+fn only_a_different_newer_build_takes_over() {
+    let old = std::path::Path::new(r"D:\Projects\unseat\target\debug\unseat.exe");
+    let app = std::path::Path::new(r"D:\Projects\unseat\dist\unseat.exe");
+    let earlier = Some(std::time::UNIX_EPOCH + Duration::from_secs(1_000));
+    let later = Some(std::time::UNIX_EPOCH + Duration::from_secs(2_000));
+    assert!(newer_build_takes_over(old, earlier, app, later));
+    assert!(!newer_build_takes_over(app, later, old, earlier));
+    assert!(!newer_build_takes_over(app, earlier, app, later));
+    assert!(!newer_build_takes_over(
+        app,
+        earlier,
+        std::path::Path::new(r"d:\projects\UNSEAT\dist\unseat.exe"),
+        later
+    ));
+    assert!(!newer_build_takes_over(old, later, app, later));
+    assert!(newer_build_takes_over(old, None, app, later));
+    assert!(!newer_build_takes_over(old, earlier, app, None));
 }
 
 #[test]

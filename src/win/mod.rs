@@ -4,6 +4,7 @@ mod autostart;
 mod docking;
 mod flyout;
 mod gfx;
+mod handoff;
 mod hotkeys;
 mod icon;
 mod idle;

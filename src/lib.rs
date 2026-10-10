@@ -21,7 +21,7 @@ pub use engine::{
     clamp_clock, next_tick_delay, restored_today_sitting, Beep, Command, EngineConfig, Input, SittingEngine,
     Snapshot, TickResult, VisibleState,
 };
-pub use place::{installed_exe, is_dev_build};
+pub use place::{is_dev_build, newer_build_takes_over};
 pub use settings::{
     AlertSound, DayTotal, InactivityBehavior, PhoneAlerts, Settings, ThemePreference, TimerCheckpoint,
     TimerDisplayMode, TimerShape, WidgetSize, ALERT_DURATION_PRESETS_SECS, DEFAULT_ALERT_VOLUME,

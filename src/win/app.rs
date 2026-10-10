@@ -1,7 +1,7 @@
 use crate::win::{
     alert_card, tray_panel,
-    autostart, flyout, hotkeys, idle, install, paint, phone, session, settings_dlg, sound, testhook,
-    theme, tray, widget,
+    autostart, flyout, handoff, hotkeys, idle, install, paint, phone, session, settings_dlg, sound,
+    testhook, theme, tray, widget,
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -71,14 +71,19 @@ pub fn run() -> windows::core::Result<()> {
         install::set_aumid();
         let mutex = CreateMutexW(None, true, &testhook::singleton())?;
         if GetLastError() == ERROR_ALREADY_EXISTS {
-            // A second launch just brings the running overlay forward.
-            if let Ok(existing) = FindWindowW(widget::CLASS, &testhook::title("Unseat")) {
-                let _ = ShowWindow(existing, SW_SHOWNOACTIVATE);
-                let _ = SetForegroundWindow(existing);
+            let existing = FindWindowW(widget::CLASS, &testhook::title("Unseat")).ok();
+            // A newer build replaces the running one; anything else just brings it forward.
+            let replaced = existing
+                .is_some_and(|w| handoff::should_replace(w) && handoff::take_over(w, mutex));
+            if !replaced {
+                if let Some(existing) = existing {
+                    let _ = ShowWindow(existing, SW_SHOWNOACTIVATE);
+                    let _ = SetForegroundWindow(existing);
+                }
+                let _ = ReleaseMutex(mutex);
+                let _ = CloseHandle(mutex);
+                return Ok(());
             }
-            let _ = ReleaseMutex(mutex);
-            let _ = CloseHandle(mutex);
-            return Ok(());
         }
 
         widget::register()?;

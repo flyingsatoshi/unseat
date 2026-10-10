@@ -132,7 +132,13 @@ cargo test --locked --all-targets
 cargo build --locked --release --features gui
 ```
 
-The binary is `target\release\unseat.exe`.
+The binary is `target\release\unseat.exe`. To run it day to day, install it instead:
+
+```bat
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+That builds, closes the running Unseat, copies the build to `dist\unseat.exe`, points **Launch with Windows** there and starts it. Rerun it after every change. If Smart App Control blocks local builds (`os error 4551`), add `-Docker` to cross-build in a Rust Linux container instead. Builds under `target\` never register themselves to start with Windows, and opening a newer build while an older one runs replaces the older one.
 
 End-to-end tests drive the real executable (idle, lock, sleep/resume, minimize, restart, migration, sizes, monitors, tray, startup entry, shortcuts). They run an isolated test instance beside any Unseat you already have open, with its own settings folder and startup value:
 
