@@ -259,9 +259,9 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
     <span class="pill">Audit date <b>2026-10-10</b></span>
     <span class="pill">Baseline commit <b class="mono">379aa3e</b> (Unseat 0.2.0)</span>
     <span class="pill">Working tree <b>has uncommitted Windows changes</b> (left as they are)</span>
-    <span class="pill">Document status <b>Phase 1 partly verified · Phase 2 in progress</b></span>
+    <span class="pill">Document status <b>Phase 2 built locally · awaiting device check and push</b></span>
   </div>
-  <div class="banner"><b>Decisions D1–D9 approved on 2026-10-10</b> (D4 changed: mirror all reminders by default). <b>Phase 1</b>, an isolated iPhone notification test outside the Unseat code, ran on your iPhone (iOS 18.7): HTTPS over the tailnet, install, pairing and a locked-screen notification worked; the latency batch and network tests are incomplete. On your instruction, Phase 2 has started on branch <code>feature/iphone-companion</code>, local only. No companion code is in Unseat. The full companion stays on hold until Phase 1 passes and you approve the results.</div>
+  <div class="banner"><b>Decisions D1–D9 approved on 2026-10-10</b> (D4 changed: mirror all reminders by default). <b>Phase 1</b>, an isolated iPhone notification test outside the Unseat code, ran on your iPhone (iOS 18.7): HTTPS over the tailnet, install, pairing and a locked-screen notification worked; the latency batch and network tests are incomplete. <b>Phase 2</b> (iPhone reminders in Unseat) is built and tested locally on branch <code>feature/iphone-companion</code> (205/205 Rust tests on Windows, 11/11 phone and 23/23 app end-to-end). It hasn't been tried on the iPhone yet. The branch is ready to push once Gitea is free. Remote controls and remote settings are not built yet.</div>
 </header>
 
 <nav class="toc" aria-label="Sections">
@@ -273,6 +273,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
   <a href="#design">Design</a>
   <a href="#features">Existing vs planned</a>
   <a href="#phase1">Phase 1 test</a>
+  <a href="#phase2">Phase 2</a>
   <a href="#tasks">Phases &amp; tasks</a>
   <a href="#quality">Tests &amp; budgets</a>
   <a href="#security">Security</a>
@@ -337,7 +338,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
       <li>The phone gets reminders only while the PC is awake, running Unseat and online. The timer runs on the PC.</li>
       <li>Apple publishes no delivery-time guarantee for web push. Real-world delay has to be measured on your phone (Phase 1).</li>
       <li>Same-Wi-Fi use without Tailscale is <b>not recommended</b>: a LAN IP address can't get a publicly trusted certificate. See decision D3.</li>
-      <li>Turning this on adds a network listener (loopback only, off by default) to an app whose <code>SECURITY.md</code> and <code>ARCHITECTURE.md</code> currently say "no network". Both docs need updating when it ships.</li>
+      <li>Turning this on adds a network listener (loopback only, off by default). <code>SECURITY.md</code> and <code>ARCHITECTURE.md</code> now describe this on the Phase 2 branch.</li>
     </ul>
   </div>
 </details>
@@ -618,6 +619,49 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
 </details>
 </section>
 
+<!-- ============ PHASE 2 ============ -->
+<section class="block" id="phase2">
+<details class="sec" open>
+  <summary><h2>Phase 2 — iPhone reminders in Unseat (local branch)</h2><span class="hint">Built and tested locally; not pushed</span></summary>
+  <div class="sec-body">
+    <p>Branch <code>feature/iphone-companion</code> in worktree <code>D:\Projects\unseat-iphone</code>, based on <code>379aa3e</code>. Your uncommitted work in <code>D:\Projects\unseat</code> was left as it was. Nothing pushed; no PR; no CI.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Commit</th><th>What</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">bd3f641</td><td>Roadmap + Phase 1 test (spike) and its results</td></tr>
+        <tr><td class="mono">b5acd4b</td><td>Settings version 3: iPhone reminders off by default, all reminders or idle-only</td></tr>
+        <tr><td class="mono">04130ec</td><td>Library core: Web Push, delivery queue, pairing, device store, API, embedded phone app and PC page</td></tr>
+        <tr><td class="mono">d05f851</td><td>Windows host: loopback listeners, push sender (WinHTTP), DPAPI key, tray entry; end-to-end tests</td></tr>
+        <tr><td>(next)</td><td>Docs (SECURITY, ARCHITECTURE, distribution, iPhone guide) and this roadmap</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Test results (2026-10-11)</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Suite</th><th>Result</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td>All Rust tests, Windows-native (library, Windows host, settings window)</td><td class="yes">205 / 205</td><td>Cross-built x86_64-pc-windows-gnu, run on this PC</td></tr>
+        <tr><td>Library tests on Linux</td><td class="mid">all pass except 2 pre-existing path tests</td><td><code>downloads_exe_is_not_a_dev_build</code> and <code>installed_exe_lives_under_localappdata_unseat</code> use Windows paths; same on 379aa3e; pass on Windows</td></tr>
+        <tr><td>New tests</td><td class="yes">57 + 11 E2E</td><td>phone_settings 5, phone_webpush 9, phone_delivery 19, phone_api 23, unit 1; scripts/test_phone.ps1 11</td></tr>
+        <tr><td>Existing end-to-end (regression)</td><td class="yes">23 / 23</td><td>scripts/test_app.ps1 against this build (one check updated for settings version 3)</td></tr>
+        <tr><td>iPhone with this build</td><td class="no">not run</td><td>Task 6.7; needs you</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Changes from the roadmap</h3>
+    <ul>
+      <li><span class="tag t-rec">Changed</span> The PC side is a local browser page opened from the tray, not a new settings-window tab. It is quicker to build, carries no extra Direct2D UI, and is guarded by a per-run key.</li>
+      <li><span class="tag t-rec">Changed</span> Pushes are declarative messages and delivery is tracked from Apple's responses, not phone receipts (Phase 1 finding).</li>
+      <li><span class="tag t-fact">Not in this phase</span> Remote controls and remote settings (2.1, 2.6, 4.4, 4.6), the local audit log (5.3), and the battery and antivirus checks (6.3, 6.4).</li>
+    </ul>
+    <h3>Known limits</h3>
+    <ul>
+      <li>Queued reminders are kept in memory. If Unseat restarts while a phone is unreachable, those (short-lived) reminders are dropped instead of counted as missed.</li>
+      <li>Each listener handles one request at a time, with 5 s timeouts. That's fine for your own devices on a tailnet, but one slow client can delay others.</li>
+      <li>Merging with your uncommitted work will touch <code>src/win/app.rs</code>, <code>src/win/mod.rs</code> and <code>src/lib.rs</code>, which both sides changed. The edits are small and in different functions.</li>
+    </ul>
+  </div>
+</details>
+</section>
+
 <!-- ============ TASKS ============ -->
 <section class="block" id="tasks">
 <details class="sec" open>
@@ -662,7 +706,8 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
       <li><span class="tag t-fact">Fact</span> <code>cargo test --locked --no-default-features</code> on the <b>current working tree</b>, in a Linux Docker copy (<code>rust:1.98-bookworm</code>): 134 passed, 1 failed. The failure is <code>downloads_exe_is_not_a_dev_build</code> (<code>tests/view.rs:259</code>). It uses Windows <code>C:\…</code> paths, which Linux reads as a single path part. The test is unchanged by the uncommitted work and passes on Windows CI, so it looks Linux-only, not a regression. <span class="tag t-assume">Assessment</span></li>
       <li><span class="tag t-fact">Fact</span> Phase 1 spike: <code>node --test test/*.test.mjs</code> in <code>spikes/iphone-push</code>, 35/35 passed on 2026-10-10 (Node 24.20.0).</li>
       <li><span class="tag t-unk">Unknown</span> Windows host tests and <code>scripts/test_app.ps1</code> on the current uncommitted tree weren't run in this session.</li>
-      <li><span class="tag t-unk">Unknown</span> No baseline idle CPU, memory or exe-size numbers are recorded; <code>scripts/measure.ps1</code> exists but wasn't run.</li>
+      <li><span class="tag t-fact">Fact</span> Baseline (379aa3e) measured on 2026-10-11; see the budgets below.</li>
+      <li><span class="tag t-fact">Fact</span> Phase 2 branch: 205/205 Rust tests run natively on Windows; scripts/test_phone.ps1 11/11; scripts/test_app.ps1 23/23 (2026-10-11).</li>
     </ul>
     <h3>Planned tests</h3>
     <div class="table-wrap">
@@ -682,14 +727,14 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
     <table>
       <thead><tr><th>Budget</th><th>Target</th><th>Measured</th></tr></thead>
       <tbody>
-        <tr><td>Feature off: threads, sockets, CPU, memory</td><td>No change from baseline (within measurement noise)</td><td>Unknown (baseline not recorded)</td></tr>
-        <tr><td>Feature on, idle: added private memory</td><td>≤ 2 MB</td><td>Unknown</td></tr>
-        <tr><td>Feature on, idle: added CPU</td><td>No periodic wakeups (thread blocked on accept)</td><td>Unknown</td></tr>
-        <tr><td>Phone → PC command round trip (direct tailnet path)</td><td>p95 ≤ 500 ms</td><td>Unknown</td></tr>
-        <tr><td>Alert event → push request sent</td><td>≤ 1 s</td><td>Unknown</td></tr>
-        <tr><td>Push delivery delay</td><td>No target; Apple gives no guarantee. Measure and report p50/p95.</td><td>Unknown</td></tr>
-        <tr><td>PWA shell size</td><td>≤ 100 KB uncompressed, no framework</td><td>Unknown</td></tr>
-        <tr><td>Exe size growth</td><td>≤ 1 MB</td><td>Unknown (baseline not recorded)</td></tr>
+        <tr><td>Feature off: threads, sockets, CPU, memory</td><td>No change from baseline (within measurement noise)</td><td class="yes">No socket or thread (E2E); CPU 78.1 → 78.2 ms/min; private +0.33 MB; handles +10 (WinHTTP/crypto DLLs load at start)</td></tr>
+        <tr><td>Feature on, idle: added private memory</td><td>≤ 2 MB</td><td class="yes">+0.07 MB (working set +0.66 MB)</td></tr>
+        <tr><td>Feature on, idle: added CPU</td><td>No periodic wakeups (thread blocked on accept)</td><td class="mid">3 threads, all blocked; one 60 s sample showed +32 ms/min, inside baseline run-to-run spread (62–94)</td></tr>
+        <tr><td>Phone → PC command round trip (direct tailnet path)</td><td>p95 ≤ 500 ms</td><td class="mid">Loopback only: p50 3.9 / p95 4.2 ms (n=50). Over the tailnet: Unknown</td></tr>
+        <tr><td>Alert event → push request sent</td><td>≤ 1 s</td><td class="yes">p50 21 / p95 23 ms to a local push service (n=10)</td></tr>
+        <tr><td>Push delivery delay</td><td>No target; Apple gives no guarantee. Measure and report p50/p95.</td><td class="mid">Phase 1 service-worker path: p50 3.0 / max 3.7 s (n=3). Unseat build: Unknown</td></tr>
+        <tr><td>PWA shell size</td><td>≤ 100 KB uncompressed, no framework</td><td class="yes">15.8 KB</td></tr>
+        <tr><td>Exe size growth</td><td>≤ 1 MB</td><td class="yes">+0.65 MB (1,731,584 → 2,414,080 bytes)</td></tr>
       </tbody>
     </table>
     </div>
@@ -750,7 +795,8 @@ footer { margin-top: 28px; color: var(--muted); font-size: .85rem; }
     </div>
     <h3>Blockers</h3>
     <ul>
-      <li><span class="status st-Blocked">Blocked</span> <b>Remaining on-device checks need you and the phone:</b> full latency batch (1.8), network interruptions (1.9), revoke (1.11).</li>
+      <li><span class="status st-Blocked">Blocked</span> <b>On-device checks need you and the phone:</b> this build end to end (6.7), and from Phase 1 the full latency batch (1.8), network interruptions (1.9) and revoke (1.11).</li>
+      <li><span class="status st-Blocked">Blocked</span> <b>Push and PR</b> wait for Gitea to be free (6.8).</li>
     </ul>
     <h3>Open questions</h3>
     <ol>
@@ -847,13 +893,13 @@ const TASKS = [
     evidence: "src/win/testhook.rs; scripts/test_app.ps1; commit 8c5032b." },
   { id: "B.7", phase: "B", title: "Latest end-to-end script result", status: "Unknown", prio: "P2", cx: "—",
     desc: "Whether scripts/test_app.ps1 passes on the current tree.",
-    evidence: "Not run in this session; no stored result found." },
+    evidence: "Unknown for your main working tree (uncommitted changes, not run). On feature/iphone-companion (based on 379aa3e): test_app.ps1 23/23, 2026-10-11." },
   { id: "B.8", phase: "B", title: "Windows host tests on the uncommitted tree", status: "Unknown", prio: "P1", cx: "—",
     desc: "cargo test --all-targets with the current uncommitted changes.",
     evidence: "Not run in this session. CI covers only committed 379aa3e." },
-  { id: "B.9", phase: "B", title: "Baseline CPU / memory / exe size", status: "Unknown", prio: "P2", cx: "—",
+  { id: "B.9", phase: "B", title: "Baseline CPU / memory / exe size", status: "Completed", prio: "P2", cx: "—",
     desc: "Numbers to compare companion budgets against.",
-    evidence: "scripts/measure.ps1 exists; no recorded results found." },
+    evidence: "Measured 2026-10-11 on 379aa3e (cross-built): startup 72-1122 ms, CPU 62-94 ms/min, private 38.5-38.7 MB, 247 handles, exe 1,731,584 bytes." },
   { id: "B.10", phase: "B", title: "Newer-build handoff, dev-build autostart skip, install script", status: "In Progress", prio: "P1", cx: "—",
     desc: "Ongoing Windows work. Out of companion scope; must stay untouched.",
     evidence: "Uncommitted: src/win/handoff.rs, src/place.rs, src/win/autostart.rs, src/win/app.rs, tests/view.rs, scripts/install.ps1, scripts/cross_build.sh." },
@@ -918,108 +964,145 @@ const TASKS = [
     evidence: "On 2026-10-10 you directed Phase 2 to start with these partial results. Open items carried forward: full latency batch (1.8), network interruptions (1.9), revoke (1.11). Not marked passed." },
 
   // ---- Phase 2 ----
-  { id: "2.1", phase: "2", title: "Companion protocol types and command mapping", status: "Planned", prio: "P0", cx: "S",
+  { id: "2.1", phase: "2", title: "Companion protocol types and command mapping", status: "In Progress", prio: "P0", cx: "S",
     desc: "StateView from Snapshot; RemoteCommand → Command; settings subset with clamping.",
     accept: "Every remote command maps to an existing Command; out-of-range values clamp the same way as the settings window.",
-    tests: "Unit tests in tests/companion.rs.", deps: "0.4, 1.10" },
-  { id: "2.2", phase: "2", title: "Settings v3: companion fields and device registry", status: "Planned", prio: "P0", cx: "M",
+    tests: "Unit tests in tests/companion.rs.", deps: "0.4, 1.10",
+    evidence: "Status view done (timer line, today, delivery counts in /api/status, 04130ec). Remote commands (pause, reset, snooze, break from the phone) not built: not part of this phase's request." },
+  { id: "2.2", phase: "2", title: "Settings v3: companion fields and device registry", status: "Completed", prio: "P0", cx: "M",
     desc: "companion_enabled (default off), devices [id, name, token hash, created, last seen, push subscription], settings revision.",
     accept: "v2 files load unchanged with companion off; round-trip and migration tests pass.",
-    tests: "tests/settings.rs additions.", deps: "2.1" },
-  { id: "2.3", phase: "2", title: "Pairing state machine", status: "Planned", prio: "P0", cx: "M",
+    tests: "tests/settings.rs additions.", deps: "2.1",
+    evidence: "Settings v3: phone_enabled (off) + phone_alerts (all / idle-only), b5acd4b; device store in companion.json, apart from settings, 04130ec. tests/phone_settings.rs 5/5; test_app.ps1 migration scenario updated and passing." },
+  { id: "2.3", phase: "2", title: "Pairing state machine", status: "Completed", prio: "P0", cx: "M",
     desc: "One-time code (128-bit), 5-minute expiry, single use, 5 tries, local confirmation step.",
     accept: "Expired, reused, wrong and over-limit codes all rejected; success issues a 256-bit secret, hash stored.",
-    tests: "Unit tests with an injected clock and RNG.", deps: "2.2" },
-  { id: "2.4", phase: "2", title: "Web Push crypto: VAPID JWT and RFC 8291 encryption", status: "Planned", prio: "P0", cx: "L",
+    tests: "Unit tests with an injected clock and RNG.", deps: "2.2",
+    evidence: "04130ec: 8-char code, 5 min, single use, 5 tries, PC approval, 256-bit secret stored as SHA-256. tests/phone_api.rs (pairing cases) pass; E2E pairing in every phone scenario." },
+  { id: "2.4", phase: "2", title: "Web Push crypto: VAPID JWT and RFC 8291 encryption", status: "Completed", prio: "P0", cx: "L",
     desc: "ES256 JWT (aud = push origin, exp ≤ 24 h, reuse ≥ 1 h) and aes128gcm payload encryption.",
     accept: "Matches the RFC 8291 example vector; JWT verifies; meets Apple's documented header rules.",
-    tests: "Known-answer tests.", deps: "D5" },
-  { id: "2.5", phase: "2", title: "Push payload builder", status: "Planned", prio: "P1", cx: "S",
+    tests: "Known-answer tests.", deps: "D5",
+    evidence: "04130ec src/companion/webpush.rs: RFC 8291 example reproduced byte for byte; ES256 JWT verified; Apple's exp and 4 KB rules. tests/phone_webpush.rs 9/9." },
+  { id: "2.5", phase: "2", title: "Push payload builder", status: "Completed", prio: "P1", cx: "S",
     desc: "Declarative JSON (web_push 8030, title, body, navigate) from Notice; Topic, TTL and Urgency values.",
-    accept: "Payload ≤ 4 KB; text matches the Windows notification.", tests: "Unit tests.", deps: "2.4" },
+    accept: "Payload ≤ 4 KB; text matches the Windows notification.", tests: "Unit tests.", deps: "2.4",
+    evidence: "04130ec reminder.rs: declarative message (web_push 8030, title, body, navigate, tag); Topic per kind; TTL = time to the next repeat (max 15 min), break-over 10 min. tests/phone_delivery.rs." },
   { id: "2.6", phase: "2", title: "Settings revision and conflict rules", status: "Planned", prio: "P1", cx: "M",
     desc: "PC is the source of truth; If-Match revision; 409 with the current values.",
-    accept: "A stale write is rejected; settings window and phone can't silently overwrite each other.", tests: "Unit tests.", deps: "2.2" },
+    accept: "A stale write is rejected; settings window and phone can't silently overwrite each other.", tests: "Unit tests.", deps: "2.2",
+    evidence: "Not built. Interim: the settings window keeps the phone choices it doesn't show, so it can't overwrite a change made on the iPhone page (d05f851). A general revision/409 scheme waits for remote settings." },
 
   // ---- Phase 3 ----
-  { id: "3.1", phase: "3", title: "Loopback HTTP server thread", status: "Planned", prio: "P0", cx: "L",
+  { id: "3.1", phase: "3", title: "Loopback HTTP server thread", status: "Completed", prio: "P0", cx: "L",
     desc: "Binds 127.0.0.1 only; request size, header timeout and connection limits; serves embedded PWA files and the API.",
     accept: "Never listens on another interface; malformed input never panics; no socket when the feature is off.",
-    tests: "Host tests + fuzz target.", deps: "2.1, D5" },
-  { id: "3.2", phase: "3", title: "Thread bridge to the UI thread", status: "Planned", prio: "P0", cx: "M",
+    tests: "Host tests + fuzz target.", deps: "2.1, D5",
+    evidence: "d05f851 phone.rs + companion/http.rs: binds 127.0.0.1 only (checked with netstat in E2E), 8 KB head / 16 KB body, 5 s timeouts, chunked and duplicate Host/Content-Length refused, 20,000 random inputs never panic. One request at a time per listener." },
+  { id: "3.2", phase: "3", title: "Thread bridge to the UI thread", status: "Completed", prio: "P0", cx: "M",
     desc: "Requests become window messages to the hidden window; replies come back over a channel.",
-    accept: "App is only touched on the UI thread; commands take effect exactly like the tray menu.", tests: "Host + E2E.", deps: "3.1" },
-  { id: "3.3", phase: "3", title: "Outbound push sender (WinHTTP)", status: "Planned", prio: "P0", cx: "M",
+    accept: "App is only touched on the UI thread; commands take effect exactly like the tray menu.", tests: "Host + E2E.", deps: "3.1",
+    evidence: "d05f851: listener and sender threads never touch App; settings changes reach the UI thread as MSG_PHONE_SETTINGS. Phone-side commands not built yet (see 2.1)." },
+  { id: "3.3", phase: "3", title: "Outbound push sender (WinHTTP)", status: "Completed", prio: "P0", cx: "M",
     desc: "Worker thread with retry and backoff until the TTL ends; removes subscription on 404/410.",
-    accept: "No UI-thread blocking; error reasons logged without secrets.", tests: "Fake endpoint via test hooks.", deps: "2.4" },
-  { id: "3.4", phase: "3", title: "Hook alerts into push", status: "Planned", prio: "P0", cx: "S",
+    accept: "No UI-thread blocking; error reasons logged without secrets.", tests: "Fake endpoint via test hooks.", deps: "2.4",
+    evidence: "d05f851 winhttp.rs + sender thread: Windows TLS/proxy, retry 2 s doubling to 60 s until expiry, 404/410 -> reconnect flag. Verified end to end against a local fake push service (scripts/test_phone.ps1 11/11 (run twice)); not yet against Apple from Unseat itself (see 6.7)." },
+  { id: "3.4", phase: "3", title: "Hook alerts into push", status: "Completed", prio: "P0", cx: "S",
     desc: "In handle_beep, next to tray::notify: send every reminder (time-up, break-over, repeat) to each enabled device, following notify_enabled; optional idle-only mode (D4).",
-    accept: "Windows alert behaviour unchanged; push sent ≤ 1 s after the alert event.", tests: "E2E with captured pushes.", deps: "3.3, D4" },
-  { id: "3.5", phase: "3", title: "Settings → Phone tab", status: "Planned", prio: "P1", cx: "L",
+    accept: "Windows alert behaviour unchanged; push sent ≤ 1 s after the alert event.", tests: "E2E with captured pushes.", deps: "3.3, D4",
+    evidence: "d05f851: every engine reminder offered to the phone (time up, repeat incl. sound-only, break over), independent of Windows sound/toast switches; idle-only uses the inactivity threshold, lock or sleep. E2E: 'every reminder is mirrored', 'idle-only waits'. Reminder -> push request p50 21 ms." },
+  { id: "3.5", phase: "3", title: "iPhone page (PC side)", status: "Completed", prio: "P1", cx: "L",
     desc: "Turn on/off, Tailscale status and address, Pair iPhone, device list with last seen, Revoke.",
-    accept: "Keyboard operable like other tabs; layout/focus tests extended.", tests: "settings_dlg tests.", deps: "3.1" },
-  { id: "3.6", phase: "3", title: "QR code drawing", status: "Planned", prio: "P1", cx: "S",
+    accept: "Keyboard operable like other tabs; layout/focus tests extended.", tests: "settings_dlg tests.", deps: "3.1",
+    evidence: "Done as a local browser page (tray menu -> iPhone reminders, 127.0.0.1, per-run key) instead of a settings-window tab: switch, mode, Tailscale status and command, pairing, approvals, devices, test, remove (d05f851)." },
+  { id: "3.6", phase: "3", title: "QR code drawing", status: "Completed", prio: "P1", cx: "S",
     desc: "Generate the QR matrix (dependency per D5) and draw it with Direct2D.",
-    accept: "An iPhone camera scans it from the screen at default size.", tests: "Matrix unit test + manual scan.", deps: "3.5, D5" },
-  { id: "3.7", phase: "3", title: "Tailscale detection and setup guidance", status: "Planned", prio: "P2", cx: "M",
+    accept: "An iPhone camera scans it from the screen at default size.", tests: "Matrix unit test + manual scan.", deps: "3.5, D5",
+    evidence: "QR as SVG from the qrcodegen crate, served only with the page key (04130ec). Not yet scanned on the phone with this build." },
+  { id: "3.7", phase: "3", title: "Tailscale detection and setup guidance", status: "Completed", prio: "P2", cx: "M",
     desc: "Detect the Tailscale CLI and Serve config; show the exact command. Only change Tailscale config with consent (D8).",
-    accept: "Clear message when Tailscale is missing, logged out, or Funnel is on.", deps: "D8" },
+    accept: "Clear message when Tailscale is missing, logged out, or Funnel is on.", deps: "D8",
+    evidence: "Read-only: tailscale status / serve status / funnel status shown on the page with the exact serve command and a Funnel warning. Unseat never changes Tailscale (D8) (d05f851)." },
 
   // ---- Phase 4 ----
-  { id: "4.1", phase: "4", title: "App shell, manifest, icons", status: "Planned", prio: "P0", cx: "M",
+  { id: "4.1", phase: "4", title: "App shell, manifest, icons", status: "Completed", prio: "P0", cx: "M",
     desc: "Plain HTML/JS/CSS embedded in the exe; reuses Unseat icon and theme palette.",
-    accept: "≤ 100 KB; opens standalone from the Home Screen; strict CSP.", deps: "3.1; reuse proven pieces of spikes/iphone-push" },
-  { id: "4.2", phase: "4", title: "Install guidance", status: "Planned", prio: "P0", cx: "S",
+    accept: "≤ 100 KB; opens standalone from the Home Screen; strict CSP.", deps: "3.1; reuse proven pieces of spikes/iphone-push",
+    evidence: "Embedded in the exe (04130ec): app shell + service worker + manifest = 15.8 KB (budget 100 KB); strict CSP on every response." },
+  { id: "4.2", phase: "4", title: "Install guidance", status: "Completed", prio: "P0", cx: "S",
     desc: "Detects Safari vs standalone and explains Add to Home Screen before pairing.",
-    accept: "A first-time user reaches the installed app without help.", deps: "4.1" },
-  { id: "4.3", phase: "4", title: "Pairing screen", status: "Planned", prio: "P0", cx: "S",
+    accept: "A first-time user reaches the installed app without help.", deps: "4.1",
+    evidence: "Safari vs Home Screen detection with install steps (04130ec); same flow as the Phase 1 test that worked on iOS 18.7. Not yet re-run on the phone with this build." },
+  { id: "4.3", phase: "4", title: "Pairing screen", status: "Completed", prio: "P0", cx: "S",
     desc: "Short-code entry inside the installed app; stores the device credential.",
-    accept: "Pairs in under a minute; wrong code shows a clear error.", deps: "2.3, 4.2" },
-  { id: "4.4", phase: "4", title: "Status view and controls", status: "Planned", prio: "P0", cx: "M",
+    accept: "Pairs in under a minute; wrong code shows a clear error.", deps: "2.3, 4.2",
+    evidence: "Code entry in the installed app, polling for approval (04130ec); E2E via HTTP." },
+  { id: "4.4", phase: "4", title: "Status view and controls", status: "In Progress", prio: "P0", cx: "M",
     desc: "Live state, pause/resume, reset, snooze, break.",
-    accept: "Matches the PC overlay within a second over a direct path.", deps: "3.2, 4.3" },
-  { id: "4.5", phase: "4", title: "Enable notifications and subscription upkeep", status: "Planned", prio: "P0", cx: "M",
+    accept: "Matches the PC overlay within a second over a direct path.", deps: "3.2, 4.3",
+    evidence: "Status view done (timer line, today, connection, delivery and missed counts). Controls (pause, reset, snooze, break) not built." },
+  { id: "4.5", phase: "4", title: "Enable notifications and subscription upkeep", status: "Completed", prio: "P0", cx: "M",
     desc: "Button-triggered permission; send the subscription; re-check getSubscription() on every open.",
-    accept: "No silent pushes ever; a lost subscription is re-registered on next open.", deps: "4.3, 1.3" },
+    accept: "No silent pushes ever; a lost subscription is re-registered on next open.", deps: "4.3, 1.3",
+    evidence: "Subscribe straight from the tap; on every open: re-send a subscription the PC lost, and clear one Apple dropped so the next tap makes a fresh one; test button (rate-limited) (04130ec). E2E: 'a subscription Apple drops is flagged and recovers'." },
   { id: "4.6", phase: "4", title: "Remote settings editor", status: "Planned", prio: "P1", cx: "M",
     desc: "Whitelisted settings with conflict handling (409 → reload and show).",
-    accept: "Edits on either side show up on the other.", deps: "2.6, 4.4" },
-  { id: "4.7", phase: "4", title: "Offline and reconnection", status: "Planned", prio: "P1", cx: "M",
+    accept: "Edits on either side show up on the other.", deps: "2.6, 4.4",
+    evidence: "Not built (remote settings)." },
+  { id: "4.7", phase: "4", title: "Offline and reconnection", status: "Completed", prio: "P1", cx: "M",
     desc: "Cached shell, 'last updated', backoff reconnect on visibility/online, controls disabled offline.",
-    accept: "Airplane-mode open works; reconnects within 30 s of coming back.", deps: "4.4" },
-  { id: "4.8", phase: "4", title: "Accessibility and dark mode", status: "Planned", prio: "P2", cx: "S",
+    accept: "Airplane-mode open works; reconnects within 30 s of coming back.", deps: "4.4",
+    evidence: "Shell opens offline from the service worker cache; reconnect on open/online with 1 s doubling to 30 s plus jitter; nothing queued on the phone (04130ec). Not yet tested on the phone with this build." },
+  { id: "4.8", phase: "4", title: "Accessibility and dark mode", status: "In Progress", prio: "P2", cx: "S",
     desc: "VoiceOver labels, Dynamic Type, light/dark from the theme palette.",
-    accept: "All controls usable with VoiceOver.", deps: "4.4" },
+    accept: "All controls usable with VoiceOver.", deps: "4.4",
+    evidence: "Light/dark and labelled controls done; VoiceOver and Dynamic Type not tested." },
 
   // ---- Phase 5 ----
-  { id: "5.1", phase: "5", title: "Device revocation", status: "Planned", prio: "P0", cx: "S",
+  { id: "5.1", phase: "5", title: "Device revocation", status: "Completed", prio: "P0", cx: "S",
     desc: "Revoke from the PC; immediate 401; push subscription removed.",
-    accept: "A revoked phone can't read state or send commands.", tests: "E2E.", deps: "3.5" },
-  { id: "5.2", phase: "5", title: "Tailscale identity binding", status: "Planned", prio: "P1", cx: "S",
+    accept: "A revoked phone can't read state or send commands.", tests: "E2E.", deps: "3.5",
+    evidence: "Remove on the PC page: immediate 401, queue dropped, nothing sent afterwards (d05f851; E2E 'removing a phone')." },
+  { id: "5.2", phase: "5", title: "Tailscale identity binding", status: "Completed", prio: "P1", cx: "S",
     desc: "Require Tailscale-User-Login to match the owner saved at pairing.",
-    accept: "Requests without, or with a different, login are rejected.", deps: "3.1, D2" },
-  { id: "5.3", phase: "5", title: "Rate limits and local audit log", status: "Planned", prio: "P1", cx: "S",
-    desc: "Per-device rate limits; log of pair/revoke/command changes without secrets.", deps: "3.1" },
-  { id: "5.4", phase: "5", title: "VAPID key protection (DPAPI)", status: "Planned", prio: "P0", cx: "S",
+    accept: "Requests without, or with a different, login are rejected.", deps: "3.1, D2",
+    evidence: "Phone requests need Tailscale-User-Login (Funnel traffic never has it) and must match the login seen at pairing; the PC page refuses requests carrying it (04130ec; tests + E2E)." },
+  { id: "5.3", phase: "5", title: "Rate limits and local audit log", status: "In Progress", prio: "P1", cx: "S",
+    desc: "Per-device rate limits; log of pair/revoke/command changes without secrets.", deps: "3.1",
+    evidence: "Rate limits done (pairing 10/min, 5 waiting approvals, test push 1 per 10 s per phone). Local audit log not built (only the test-hook log)." },
+  { id: "5.4", phase: "5", title: "VAPID key protection (DPAPI)", status: "Completed", prio: "P0", cx: "S",
     desc: "Generate on first enable; store encrypted for the current user.",
-    accept: "Key never written in plain text.", tests: "Host round-trip test.", deps: "2.4" },
-  { id: "5.5", phase: "5", title: "Threat model and security review", status: "Planned", prio: "P0", cx: "M",
-    desc: "Written threat model; review of all new code paths.", deps: "3.x, 4.x" },
-  { id: "5.6", phase: "5", title: "Update SECURITY.md, ARCHITECTURE.md, distribution doc", status: "Planned", prio: "P0", cx: "S",
-    desc: "Replace 'no network' statements with the exact, opt-in network behaviour.", deps: "5.5" },
+    accept: "Key never written in plain text.", tests: "Host round-trip test.", deps: "2.4",
+    evidence: "VAPID key generated on first use, stored DPAPI-encrypted in companion.json; same key after restart (E2E 'device store survives a restart')." },
+  { id: "5.5", phase: "5", title: "Threat model and security review", status: "In Progress", prio: "P0", cx: "M",
+    desc: "Written threat model; review of all new code paths.", deps: "3.x, 4.x",
+    evidence: "Self-review of the new code against the security list (2026-10-11): loopback bind, tailnet header, host checks, admin key, no CORS, JSON-only, SSRF allowlist, hashed tokens, bounded queues. Independent review not done." },
+  { id: "5.6", phase: "5", title: "Update SECURITY.md, ARCHITECTURE.md, distribution doc", status: "Completed", prio: "P0", cx: "S",
+    desc: "Replace 'no network' statements with the exact, opt-in network behaviour.", deps: "5.5",
+    evidence: "SECURITY.md, ARCHITECTURE.md and docs/windows-distribution.md now describe the opt-in network behaviour; docs/iphone.md setup guide (Phase 2 docs commit)." },
 
   // ---- Phase 6 ----
-  { id: "6.1", phase: "6", title: "End-to-end tests in test_app.ps1", status: "Planned", prio: "P0", cx: "M",
-    desc: "Pair, command, alert→push capture, revoke, feature-off-no-socket.", deps: "3.4, 5.1" },
-  { id: "6.2", phase: "6", title: "Measure budgets before and after", status: "Planned", prio: "P1", cx: "S",
+  { id: "6.1", phase: "6", title: "End-to-end tests in test_app.ps1", status: "Completed", prio: "P0", cx: "M",
+    desc: "Pair, command, alert→push capture, revoke, feature-off-no-socket.", deps: "3.4, 5.1",
+    evidence: "scripts/test_phone.ps1 11/11 (run twice): off by default, loopback + tailnet header, mirror all, idle-only, 410 recovery, retry/expiry, cancel on PC action, test push, remove, switch off, restart. Regression: test_app.ps1 23/23." },
+  { id: "6.2", phase: "6", title: "Measure budgets before and after", status: "Completed", prio: "P1", cx: "S",
     desc: "scripts/measure.ps1 on baseline vs companion build, feature off and on.",
-    accept: "All budgets met or explained.", deps: "B.9, 6.1" },
+    accept: "All budgets met or explained.", deps: "B.9, 6.1",
+    evidence: "scripts/measure.ps1, 2 x 60 s, baseline 379aa3e vs this build with reminders off: CPU 78.1 vs 78.2 ms/min, private 38.58 vs 38.91 MB, handles 247 vs 257, startup within noise. Reminders on (paired, idle, 1 x 60 s): +3 blocked threads, private +0.07 MB, CPU 109 -> 141 ms/min (one sample; baseline rounds varied 62-94). Exe 1,731,584 -> 2,414,080 bytes." },
   { id: "6.3", phase: "6", title: "iPhone battery observation", status: "Planned", prio: "P2", cx: "S",
     desc: "A few days of normal use; check Settings → Battery for Safari/web app and Tailscale.", deps: "4.x" },
   { id: "6.4", phase: "6", title: "Antivirus re-check with the listener on", status: "Planned", prio: "P1", cx: "S",
     desc: "Repeat the Bitdefender checks in docs/windows-distribution.md with the companion on and off.", deps: "6.1" },
-  { id: "6.5", phase: "6", title: "User docs: phone setup guide", status: "Planned", prio: "P2", cx: "S",
-    desc: "README section + step-by-step Tailscale and install guide.", deps: "4.x" },
+  { id: "6.5", phase: "6", title: "User docs: phone setup guide", status: "Completed", prio: "P2", cx: "S",
+    desc: "README section + step-by-step Tailscale and install guide.", deps: "4.x",
+    evidence: "docs/iphone.md (setup, choices, behaviour, privacy)." },
+  { id: "6.7", phase: "6", title: "On-device check of this build (real Apple push from Unseat)", status: "Blocked", prio: "P0", cx: "S",
+    desc: "Install this build, run tailscale serve, pair the iPhone, and repeat Phase 1's checks: locked phone, a full 20-push batch, network interruptions, revoke.",
+    accept: "Same criteria as Phase 1; pushes sent by Unseat (WinHTTP + Rust crypto) arrive on iOS 18.7.", deps: "Your iPhone",
+    evidence: "Needs you and the phone. Everything so far ran against a local fake push service." },
+  { id: "6.8", phase: "6", title: "Push the branch and open a PR", status: "Blocked", prio: "P1", cx: "S",
+    desc: "feature/iphone-companion is committed locally and ready.", accept: "PR open; CI green.",
+    evidence: "On hold by your instruction while Gitea is busy: no push, PR or CI from this session." },
   { id: "6.6", phase: "6", title: "Human readiness review", status: "Planned", prio: "P1", cx: "S",
     desc: "Your hands-on sign-off. A passing build alone doesn't count.", deps: "6.1–6.5" }
 ];
@@ -1099,7 +1182,7 @@ function renderDashboard() {
   const cKnown = companion.length - cc.Unknown;
   document.getElementById("kpis").innerHTML = [
     [pct(c.Completed, known) + "%", `Overall complete (${c.Completed} of ${known} known tasks)`],
-    [pct(cc.Completed, cKnown) + "%", `Companion complete (${cc.Completed} of ${cKnown}; audit only)`],
+    [pct(cc.Completed, cKnown) + "%", `Companion complete (${cc.Completed} of ${cKnown})`],
     [cc.Planned, "Companion tasks Planned"],
     [c.Unknown, "Unknown (excluded from %)"]
   ].map(([n, l]) => `<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
