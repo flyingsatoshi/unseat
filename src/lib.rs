@@ -1,5 +1,6 @@
 mod alerts;
 mod audio;
+pub mod companion;
 mod date;
 mod dock;
 mod engine;
