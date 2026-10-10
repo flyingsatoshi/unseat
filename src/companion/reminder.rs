@@ -18,8 +18,10 @@ pub enum ReminderKind {
 }
 
 impl ReminderKind {
-    /// Apple's `Topic` header: a newer push with the same topic replaces one Apple is still
-    /// holding, so a phone that was offline gets the latest reminder, not a backlog.
+    /// Apple's `Topic` header. The Web Push spec says a newer push with the same topic
+    /// replaces one still held for an offline phone, but in live testing (iOS 18.7, phone
+    /// offline ~2 min) Apple delivered all three held pushes on a topic. So a phone that was
+    /// offline can get a backlog; each notification carries the PC time it fired.
     pub fn topic(self) -> &'static str {
         match self {
             Self::TimeUp | Self::Repeat => "unseat-sitting",
@@ -127,16 +129,20 @@ pub fn phone_should_alert(settings: &Settings, presence: Presence) -> bool {
 }
 
 /// The push body: a Declarative Web Push message. iOS 18.4+ shows it itself; older iOS hands
-/// the same JSON to the app's service worker, which shows it. `mutable` also lets the service
-/// worker see it on 18.4+, so it can tell the PC the reminder reached the phone; if the worker
-/// fails, iOS still shows the notification. The event number rides in the `navigate` fragment.
-pub fn message(reminder: &Reminder, navigate: &str, event: u64) -> Vec<u8> {
+/// the same JSON to the app's service worker, which shows it. `mutable` asks iOS to let the
+/// service worker see it too (so it can confirm delivery to the PC), but iOS 18.7 ignored it in
+/// live testing: declarative pushes displayed and opened the app, yet never woke the worker.
+/// The event number rides in the `navigate` fragment. `fired_at` (the PC's local time, e.g.
+/// "14:05") ends the body, because Apple may deliver a held reminder late: in testing, a push
+/// with a 60 s lifetime arrived about 25 s after it expired.
+pub fn message(reminder: &Reminder, navigate: &str, event: u64, fired_at: &str) -> Vec<u8> {
+    let body = if fired_at.is_empty() { reminder.body.clone() } else { format!("{} Sent {fired_at}.", reminder.body) };
     serde_json::json!({
         "web_push": 8030,
         "mutable": true,
         "notification": {
             "title": reminder.title,
-            "body": reminder.body,
+            "body": body,
             "navigate": format!("{navigate}#e={event}"),
             "tag": reminder.kind.topic(),
             "silent": false,

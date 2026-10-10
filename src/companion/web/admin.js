@@ -85,7 +85,7 @@ function render(s) {
   for (const d of s.devices) {
     const tr = el("tr");
     const state = d.needsResubscribe ? ["needs reconnect (open the app)", "warn"] : d.subscribed ? ["on", "ok"] : ["not turned on yet", "warn"];
-    tr.append(el("td", d.name), el("td", d.login), el("td", state[0], state[1]), el("td", String(d.delivered)), el("td", String(d.received || 0)), el("td", String(d.missed), d.missed ? "warn" : ""),
+    tr.append(el("td", d.name), el("td", d.login), el("td", state[0], state[1]), el("td", String(d.delivered)), el("td", d.received ? String(d.received) : "not reported", d.received ? "" : "muted"), el("td", String(d.missed), d.missed ? "warn" : ""),
       el("td", fmt(d.lastSeenMs)), el("td", fmt(d.lastDeliveredMs)));
     const actions = el("td");
     actions.append(button("Send test", "ghost", () => act("/admin/test", { deviceId: d.id }, "Test sent.")), " ",

@@ -32,14 +32,18 @@ play a sound on Windows) and break over. No App Store, no Unseat account, no clo
 
 - The timer runs on the PC. Reminders reach the phone only while the PC is on, Unseat is running
   and the PC is online.
-- If the phone is offline, Apple holds the latest reminder until it goes stale (at most until
-  the next repeat, 15 minutes at most; break-over 10 minutes). A newer reminder replaces an older one.
+- If the phone is offline, Apple holds reminders and delivers them when it is back. Unseat asks
+  Apple to keep each one only until it goes stale (until the next repeat, 15 minutes at most;
+  break-over 10 minutes) and to replace an older one with a newer one, but in testing on iOS 18.7
+  Apple delivered every held reminder, and one about 25 s after its lifetime. Each notification
+  ends with the PC time it fired ("Sent 14:05."), so a late one is easy to spot.
 - If the PC can't reach Apple, it retries (2 s, doubling up to 60 s) until the reminder goes stale,
   then counts it as missed. The phone app shows delivered and missed counts.
 - Pausing, resetting, snoozing or taking a break on the PC cancels reminders that haven't gone out.
   A reminder already handed to Apple can't be recalled; it may still show if the phone was offline.
-- The app shows how many reminders were sent and how many the phone confirmed (its service
-  worker reports back over the tailnet, so confirmations need Tailscale on the phone).
+- The app shows how many reminders were sent to Apple. "Confirmed by this phone" counts only
+  pushes that wake the app's service worker; on iOS 18.7 the default (declarative) pushes display
+  without waking it, so that count shows "not reported by iOS".
 - If Tailscale isn't running yet when Unseat starts, Unseat keeps checking; if the port is taken
   by another program, the PC page says so and Unseat keeps trying.
 - If Apple drops the phone's subscription, the app says so: open it and tap **Turn on notifications**.

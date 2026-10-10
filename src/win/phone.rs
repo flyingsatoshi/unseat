@@ -355,7 +355,7 @@ fn enqueue(shared: &Arc<Shared>, r: &reminder::Reminder, only: Option<&str>) {
     let now = wall_ms();
     let (event, notes) = {
         let mut ob = shared.outbox.lock().unwrap();
-        let mut payload = reminder::message(r, &navigate, ob.next_event());
+        let mut payload = reminder::message(r, &navigate, ob.next_event(), &local_clock());
         if testhook::enabled() {
             payload = test_payload_variant(shared, payload);
         }
@@ -365,6 +365,12 @@ fn enqueue(shared: &Arc<Shared>, r: &reminder::Reminder, only: Option<&str>) {
     testhook::log(&format!("phone queued {} event={event} devices={}", r.kind.key(), devices.len()));
     record(shared, &notes);
     shared.wake.notify_all();
+}
+
+/// The PC's local time as "HH:MM", printed on each notification so a late one is recognisable.
+fn local_clock() -> String {
+    let st = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    format!("{:02}:{:02}", st.wHour, st.wMinute)
 }
 
 /// Test runs only: rewrite the push body into another format named in `push-format.txt` next

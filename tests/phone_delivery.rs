@@ -73,7 +73,10 @@ fn sitting_reminders_expire_at_the_next_repeat_and_never_live_long() {
 #[test]
 fn the_push_is_a_declarative_message_tagged_by_topic() {
     let r = reminder_for(Beep::LimitReached, &on(), Duration::from_secs(3600)).unwrap();
-    let v: serde_json::Value = serde_json::from_slice(&message(&r, "https://pc.example.ts.net/", 7)).unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&message(&r, "https://pc.example.ts.net/", 7, "14:05")).unwrap();
+    assert!(v["notification"]["body"].as_str().unwrap().ends_with(" Sent 14:05."), "late deliveries show when the reminder fired");
+    let plain: serde_json::Value = serde_json::from_slice(&message(&r, "/", 1, "")).unwrap();
+    assert_eq!(plain["notification"]["body"], r.body.as_str());
     assert_eq!(v["web_push"], 8030);
     assert_eq!(v["mutable"], true, "the service worker may see it, to confirm delivery");
     assert_eq!(v["notification"]["title"], "Time to stand up");

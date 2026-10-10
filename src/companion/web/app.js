@@ -223,7 +223,8 @@ async function refresh() {
     $("offBanner").classList.toggle("hidden", status.enabled);
     $("resubBanner").classList.toggle("hidden", !status.needsResubscribe);
     $("delivered").textContent = String(status.delivered);
-    $("received").textContent = String(status.received || 0);
+    // iOS only reports some push types back (not the default declarative ones on iOS 18.7).
+    $("received").textContent = status.received ? String(status.received) : "not reported by iOS";
     $("missed").textContent = String(status.missed);
     const working = Boolean(sub) && status.subscribed && !status.needsResubscribe && perm === "granted";
     $("sub").textContent = working ? "receiving" : "not receiving";

@@ -5,7 +5,8 @@
 //! Rules:
 //! - Each reminder becomes one job per subscribed device, with an expiry (its TTL).
 //! - A newer reminder on the same topic replaces a queued older one (no backlog of stale
-//!   "stand up" pushes); Apple's `Topic` header does the same for pushes it is holding.
+//!   "stand up" pushes). This only covers the PC's queue: Apple did not collapse held pushes
+//!   by `Topic` in live testing, and may deliver one shortly after its TTL.
 //! - Network errors, 429 and 5xx retry with backoff (2 s doubling to 60 s) until expiry; then
 //!   the reminder counts as missed.
 //! - 404/410 means the subscription is gone: the device's jobs are dropped and the host marks
