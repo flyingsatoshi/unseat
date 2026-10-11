@@ -2,6 +2,8 @@
 
 Unseat is a local Windows app. By default it does not accept network traffic and does not send data off the machine.
 
+**Check for updates** (Settings → General → About) makes one HTTPS request to GitHub's public API for this repository's latest release, only when you click it. It sends no data about you beyond what any HTTPS request carries (your IP address and a `User-Agent: Unseat/<version>` header). It only reports; it never downloads or installs anything, and its link can only open a release page of this repository.
+
 The optional iPhone reminders (off until you turn them on) change that, in a limited way:
 
 - Unseat listens on `127.0.0.1` only. Your phone reaches it through `tailscale serve`, inside your own tailnet. Every phone request must carry the identity header that Tailscale Serve adds; Funnel (public) traffic never has it and is refused. Never publish Unseat with `tailscale funnel`.

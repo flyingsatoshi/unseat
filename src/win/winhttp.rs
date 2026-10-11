@@ -1,9 +1,9 @@
-//! One HTTPS POST through WinHTTP: Windows' own TLS, proxy settings and certificate store, so
-//! Unseat carries no TLS stack of its own.
+//! One HTTP request through WinHTTP: Windows' own TLS, proxy settings and certificate store,
+//! so Unseat carries no TLS stack of its own.
 
 use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Networking::WinHttp::{
-    WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders,
+    WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders, WinHttpReadData,
     WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetTimeouts, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
     WINHTTP_FLAG_SECURE, WINHTTP_OPEN_REQUEST_FLAGS, WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
 };
@@ -31,6 +31,15 @@ fn open(h: *mut core::ffi::c_void, what: &str) -> Result<Handle, String> {
 /// POST `body` to `url` (https, or http for test endpoints). Returns the HTTP status, or an
 /// error string for network failures (which the queue retries).
 pub fn post(url: &str, headers: &[(&str, String)], body: &[u8], timeout_ms: i32) -> Result<u16, String> {
+    request("POST", url, headers, body, timeout_ms, 0).map(|(status, _)| status)
+}
+
+/// GET `url` and read at most `max_body` bytes of the reply (more is an error).
+pub fn get(url: &str, headers: &[(&str, String)], timeout_ms: i32, max_body: usize) -> Result<(u16, Vec<u8>), String> {
+    request("GET", url, headers, &[], timeout_ms, max_body)
+}
+
+fn request(method: &str, url: &str, headers: &[(&str, String)], body: &[u8], timeout_ms: i32, max_body: usize) -> Result<(u16, Vec<u8>), String> {
     let (secure, rest) = if let Some(r) = url.strip_prefix("https://") {
         (true, r)
     } else if let Some(r) = url.strip_prefix("http://") {
@@ -65,11 +74,13 @@ pub fn post(url: &str, headers: &[(&str, String)], body: &[u8], timeout_ms: i32)
         let connect = open(WinHttpConnect(session.0, &HSTRING::from(host), port, 0), "connect")?;
         let flags = if secure { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) };
         let request = open(
-            WinHttpOpenRequest(connect.0, &HSTRING::from("POST"), &HSTRING::from(path), PCWSTR::null(), PCWSTR::null(), std::ptr::null(), flags),
+            WinHttpOpenRequest(connect.0, &HSTRING::from(method), &HSTRING::from(path), PCWSTR::null(), PCWSTR::null(), std::ptr::null(), flags),
             "request",
         )?;
         let len = body.len() as u32;
-        WinHttpSendRequest(request.0, Some(&header_wide), Some(body.as_ptr().cast()), len, len, 0).map_err(|e| format!("send: {}", e.message()))?;
+        let body_ptr = if body.is_empty() { None } else { Some(body.as_ptr().cast()) };
+        let header_arg = if header_wide.is_empty() { None } else { Some(header_wide.as_slice()) };
+        WinHttpSendRequest(request.0, header_arg, body_ptr, len, len, 0).map_err(|e| format!("send: {}", e.message()))?;
         WinHttpReceiveResponse(request.0, std::ptr::null_mut()).map_err(|e| format!("receive: {}", e.message()))?;
         let mut status: u32 = 0;
         let mut size = std::mem::size_of::<u32>() as u32;
@@ -82,6 +93,22 @@ pub fn post(url: &str, headers: &[(&str, String)], body: &[u8], timeout_ms: i32)
             std::ptr::null_mut(),
         )
         .map_err(|e| format!("status: {}", e.message()))?;
-        Ok(status as u16)
+        let mut reply = Vec::new();
+        if max_body > 0 {
+            let mut chunk = [0u8; 8192];
+            loop {
+                let mut read = 0u32;
+                WinHttpReadData(request.0, chunk.as_mut_ptr().cast(), chunk.len() as u32, &mut read)
+                    .map_err(|e| format!("read: {}", e.message()))?;
+                if read == 0 {
+                    break;
+                }
+                reply.extend_from_slice(&chunk[..read as usize]);
+                if reply.len() > max_body {
+                    return Err("reply too large".into());
+                }
+            }
+        }
+        Ok((status as u16, reply))
     }
 }

@@ -12,7 +12,9 @@ use unseat::{
     CivilDate, DockEdge, DockReveal, InactivityBehavior, Palette, Rgba, Settings, ThemePreference,
     TimerDisplayMode, VisibleState, WidgetSize, ALERT_DURATION_PRESETS_SECS, SNOOZE_PRESETS_SECS,
 };
-use windows::core::{w, Interface};
+use unseat::about::UpdateCheck;
+use windows::core::{w, Interface, HSTRING};
+use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -48,7 +50,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowPos, ShowWindow, CREATESTRUCTW, GWLP_USERDATA, HTCAPTION, HTCLIENT, HWND_TOPMOST,
     IDC_ARROW, SWP_NOACTIVATE, SW_SHOW, WM_CHAR, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_DPICHANGED,
     WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCHITTEST, WM_PAINT,
-    WM_SYSKEYDOWN, WNDCLASSW, WS_EX_TOPMOST, WS_POPUP,
+    WM_SYSKEYDOWN, WNDCLASSW, WS_EX_TOPMOST, WS_POPUP, SW_SHOWNORMAL,
 };
 
 pub const CLASS: windows::core::PCWSTR = w!("UnseatSettings");
@@ -58,7 +60,8 @@ const PAD: f32 = 16.0;
 const HEADER_H: f32 = 60.0;
 const TABS_H: f32 = 34.0;
 const BODY_TOP: f32 = HEADER_H + TABS_H + 10.0;
-const FOOTER_H: f32 = 68.0;
+/// Cancel and Save, with the version line and "Check for updates" under them.
+const FOOTER_H: f32 = 84.0;
 const SECTION_HEAD: f32 = 26.0;
 const SECTION_GAP: f32 = 8.0;
 const ROW_GAP: f32 = 6.0;
@@ -334,6 +337,8 @@ enum Row {
     Note(&'static str),
     Stats,
     Defaults,
+    /// One line under the reminders: iPhone enabled, paired, Tailscale; opens the iPhone page.
+    Phone,
 }
 
 impl Row {
@@ -346,12 +351,13 @@ impl Row {
             Row::Note(_) => 38.0,
             Row::Stats => 112.0,
             Row::Defaults => 48.0,
+            Row::Phone => 32.0,
         }
     }
 
     /// Notes sit under the tile above them rather than in a tile of their own.
     fn tiled(self) -> bool {
-        !matches!(self, Row::Note(_))
+        !matches!(self, Row::Note(_) | Row::Phone)
     }
 }
 
@@ -419,6 +425,7 @@ fn sections(tab: Tab) -> &'static [Section] {
                     Row::Flag("Show notification", Flag::Notify, Some("When time is up and when a break ends")),
                     Row::Flag("Repeat while overdue", Flag::Repeat, None),
                     Row::Step("Remind every", Field::Every, None),
+                    Row::Phone,
                 ],
             ),
         ],
@@ -482,6 +489,8 @@ enum Ctl {
     Volume,
     Preview,
     Defaults,
+    Phone,
+    Updates,
     Cancel,
     Save,
 }
@@ -508,6 +517,8 @@ enum TextKind {
     Label,
     Hint,
     Note,
+    /// The version line in the footer.
+    Caption,
 }
 
 struct Label {
@@ -536,6 +547,8 @@ struct Lay {
     labels: Vec<Label>,
     controls: Vec<Placed>,
     stats: Option<D2D_RECT_F>,
+    /// Where the live iPhone status is written.
+    phone_status: Option<D2D_RECT_F>,
     status: D2D_RECT_F,
 }
 
@@ -590,6 +603,7 @@ fn layout(tab: Tab, draft: &Settings, scale: f32, win_h: f32, scroll: f32) -> La
     let mut controls = Vec::new();
     let mut tiles = Vec::new();
     let mut stats = None;
+    let mut phone_status = None;
 
     // Header: the tab's name, a live status chip and close.
     labels.push(Label {
@@ -645,15 +659,30 @@ fn layout(tab: Tab, draft: &Settings, scale: f32, win_h: f32, scroll: f32) -> La
             if row.tiled() {
                 tiles.push(rc);
             }
-            place_row(row, rc, s, &mut labels, &mut controls, &mut stats);
+            place_row(row, rc, s, &mut labels, &mut controls, &mut stats, &mut phone_status);
             y += rh;
         }
         y += px(SECTION_GAP, s);
     }
 
     let btn_h = px(40.0, s);
-    let by = h - px(FOOTER_H, s) + (px(FOOTER_H, s) - btn_h) * 0.5;
+    let by = h - px(FOOTER_H, s) + px(8.0, s);
     let mid = (x0 + x1) / 2.0;
+    // Under the buttons: which build this is, and "Check for updates".
+    let line_top = by + btn_h + px(6.0, s);
+    let link = gfx::rect(x1 - px(150.0, s), line_top, x1, h - px(8.0, s));
+    labels.push(Label {
+        text: version_line(),
+        rect: gfx::rect(x0 + px(2.0, s), line_top, link.left - px(6.0, s), h - px(8.0, s)),
+        kind: TextKind::Caption,
+        owner: None,
+    });
+    controls.push(Placed {
+        ctl: Ctl::Updates,
+        rect: link,
+        parts: vec![],
+        in_body: false,
+    });
     controls.push(Placed {
         ctl: Ctl::Cancel,
         rect: gfx::rect(x0, by, mid - px(4.0, s), by + btn_h),
@@ -678,8 +707,18 @@ fn layout(tab: Tab, draft: &Settings, scale: f32, win_h: f32, scroll: f32) -> La
         labels,
         controls,
         stats,
+        phone_status,
         status,
     }
+}
+
+/// "Unseat v0.2.0 · Stable · 5f24733", from build metadata; test copies say Test.
+fn version_line() -> &'static str {
+    static LINE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    LINE.get_or_init(|| {
+        let channel = unseat::about::Channel::current(crate::win::testhook::enabled());
+        unseat::about::version_line(channel, unseat::about::BUILD_SHA, unseat::about::BUILD_DIRTY)
+    })
 }
 
 fn place_row(
@@ -689,6 +728,7 @@ fn place_row(
     labels: &mut Vec<Label>,
     controls: &mut Vec<Placed>,
     stats: &mut Option<D2D_RECT_F>,
+    phone_status: &mut Option<D2D_RECT_F>,
 ) {
     let inner_l = rc.left + px(14.0, s);
     let inner_r = rc.right - px(12.0, s);
@@ -830,6 +870,16 @@ fn place_row(
                 rc.bottom - px(8.0, s),
             ))
         }
+        Row::Phone => {
+            let open = gfx::rect(inner_r - px(56.0, s), rc.top + px(4.0, s), inner_r, rc.bottom - px(4.0, s));
+            *phone_status = Some(gfx::rect(rc.left + px(4.0, s), rc.top, open.left - px(6.0, s), rc.bottom));
+            controls.push(Placed {
+                ctl: Ctl::Phone,
+                rect: open,
+                parts: vec![],
+                in_body: true,
+            });
+        }
         Row::Defaults => {
             let bh = px(30.0, s);
             let top = mid - bh * 0.5;
@@ -859,6 +909,7 @@ fn enabled(ctl: Ctl, d: &Settings) -> bool {
             d.sound_enabled
         }
         Ctl::Step(Field::HideAfter) => docking && d.dock_autohide,
+        Ctl::Updates => crate::win::update::state() != crate::win::update::State::Checking,
         Ctl::Group(Group::DockEdge)
         | Ctl::Group(Group::DockReveal)
         | Ctl::Step(Field::RevealFor)
@@ -877,7 +928,7 @@ fn focus_order(l: &Lay, d: &Settings) -> Vec<Ctl> {
             .filter(|p| p.in_body && enabled(p.ctl, d))
             .map(|p| p.ctl),
     );
-    order.extend([Ctl::Cancel, Ctl::Save]);
+    order.extend([Ctl::Cancel, Ctl::Save, Ctl::Updates]);
     order
 }
 
@@ -1320,6 +1371,18 @@ unsafe fn activate(hwnd: HWND, dlg: *mut Dialog, t: Target) {
                 );
             }
         }
+        (Ctl::Phone, _) => {
+            if !d.app.is_null() {
+                (*d.app).phone.open_admin();
+            }
+        }
+        (Ctl::Updates, _) => match crate::win::update::state() {
+            crate::win::update::State::Done(UpdateCheck::Available(release)) => {
+                // Only a page of the official repository (checked when the reply was parsed).
+                let _ = ShellExecuteW(HWND::default(), &HSTRING::from("open"), &HSTRING::from(release.url), None, None, SW_SHOWNORMAL);
+            }
+            _ => crate::win::update::start(),
+        },
         (Ctl::Defaults, _) => {
             d.draft = d.draft.with_default_preferences();
             preview_appearance(d);
@@ -1458,7 +1521,7 @@ unsafe fn on_key(hwnd: HWND, dlg: *mut Dialog, vk: VIRTUAL_KEY) {
         VK_RETURN => {
             if matches!(
                 d.focus,
-                Ctl::Cancel | Ctl::Close | Ctl::Defaults | Ctl::Preview
+                Ctl::Cancel | Ctl::Close | Ctl::Defaults | Ctl::Preview | Ctl::Phone | Ctl::Updates
             ) {
                 activate(
                     hwnd,
@@ -1538,6 +1601,7 @@ fn label_style(
         TextKind::Head => (px(11.5, s), gfx::SEMIBOLD),
         TextKind::Label => (px(13.0, s), gfx::MEDIUM),
         TextKind::Hint | TextKind::Note => (px(11.0, s), gfx::REGULAR),
+        TextKind::Caption => (px(10.5, s), gfx::REGULAR),
     }
 }
 
@@ -1569,16 +1633,22 @@ unsafe fn paint_ui(hwnd: HWND, d: &mut Dialog) {
     if let Some(rc) = l.stats {
         paint_stats(&rt, fonts, pal, d, rc, s);
     }
+    if let (Some(rc), false) = (l.phone_status, d.app.is_null()) {
+        let app = &mut *d.app;
+        let line = format!("iPhone: {}", app.phone.status_line(&app.settings));
+        let (size, weight) = label_style(TextKind::Hint, s);
+        gfx::text(&rt, fonts, Family::Ui, &line, rc, size, weight, gfx::LEADING, pal.text_secondary);
+    }
     for p in l.controls.iter().filter(|p| p.in_body) {
         paint_control(&rt, fonts, pal, d, p, s);
     }
-    for label in l.labels.iter().filter(|lb| lb.kind != TextKind::Title) {
+    for label in l.labels.iter().filter(|lb| !matches!(lb.kind, TextKind::Title | TextKind::Caption)) {
         paint_label(&rt, fonts, pal, d, label, s);
     }
     rt.PopAxisAlignedClip();
 
     // Chrome: title, live status chip, close, tabs and footer.
-    for label in l.labels.iter().filter(|lb| lb.kind == TextKind::Title) {
+    for label in l.labels.iter().filter(|lb| matches!(lb.kind, TextKind::Title | TextKind::Caption)) {
         paint_label(&rt, fonts, pal, d, label, s);
     }
     if !d.app.is_null() {
@@ -1653,10 +1723,12 @@ unsafe fn paint_label(
     let on = label.owner.map_or(true, |c| enabled(c, &d.draft));
     let color = match label.kind {
         _ if !on => pal.text_disabled,
-        TextKind::Head | TextKind::Hint | TextKind::Note => pal.text_secondary,
+        TextKind::Head | TextKind::Hint | TextKind::Note | TextKind::Caption => pal.text_secondary,
         _ => pal.text,
     };
-    if label.kind == TextKind::Note {
+    if label.kind == TextKind::Caption {
+        gfx::text(rt, fonts, Family::Ui, label.text, label.rect, size, weight, gfx::CENTER, color);
+    } else if label.kind == TextKind::Note {
         gfx::text_wrapped(rt, fonts, label.text, label.rect, size, color);
     } else {
         gfx::text(
@@ -1884,6 +1956,25 @@ unsafe fn paint_control(
                 paint_focus(rt, pal, knob, kr, s);
             }
         }
+        Ctl::Phone | Ctl::Updates => {
+            // Text links: "Open" for the iPhone page, the update check in the footer.
+            let (text, warn) = if p.ctl == Ctl::Phone { ("Open".to_string(), false) } else { update_link() };
+            let color = if !on {
+                pal.text_disabled
+            } else if warn {
+                pal.alarm
+            } else if hovered_any(d, p.ctl) {
+                pal.text
+            } else {
+                pal.accent
+            };
+            let (size, _) = label_style(TextKind::Caption, s);
+            let size = if p.ctl == Ctl::Phone { px(12.0, s) } else { size };
+            gfx::text(rt, fonts, Family::Ui, &text, p.rect, size, gfx::SEMIBOLD, gfx::TRAILING, color);
+            if focused {
+                paint_focus(rt, pal, p.rect, px(6.0, s), s);
+            }
+        }
         Ctl::Preview | Ctl::Defaults | Ctl::Cancel | Ctl::Save => {
             let primary = p.ctl == Ctl::Save;
             let br = px(9.0, s);
@@ -1918,6 +2009,27 @@ unsafe fn paint_control(
             if focused {
                 paint_focus(rt, pal, p.rect, br, s);
             }
+        }
+    }
+}
+
+/// The footer link's text for the update check, and whether it needs attention.
+fn update_link() -> (String, bool) {
+    use crate::win::update::State;
+    match crate::win::update::state() {
+        State::Idle => ("Check for updates".into(), false),
+        State::Checking => ("Checking…".into(), false),
+        State::Done(UpdateCheck::UpToDate { .. }) => ("Up to date · check again".into(), false),
+        State::Done(UpdateCheck::Available(r)) => (format!("{} available · open", r.tag), true),
+        State::Done(UpdateCheck::Failed(_)) => ("Couldn't check · retry".into(), true),
+    }
+}
+
+/// Repaint an open Settings window (called from other threads when a result arrives).
+pub fn repaint() {
+    unsafe {
+        if let Ok(hwnd) = FindWindowW(CLASS, &title()) {
+            let _ = InvalidateRect(hwnd, None, false);
         }
     }
 }
@@ -2172,6 +2284,8 @@ mod tests {
             Ctl::Volume,
             Ctl::Preview,
             Ctl::Defaults,
+            Ctl::Phone,
+            Ctl::Updates,
             Ctl::Cancel,
             Ctl::Save,
         ] {

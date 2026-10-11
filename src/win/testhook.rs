@@ -34,6 +34,9 @@ pub const MSG_SNAPSHOT: u32 = WM_APP + 0x43;
 pub const MSG_DOCK_HOVER: u32 = WM_APP + 0x44;
 /// Start the iPhone page's listener without opening a browser; logs `phone admin <url>`.
 pub const MSG_PHONE_ADMIN: u32 = WM_APP + 0x45;
+/// Run "Check for updates" (UNSEAT_TEST_UPDATE_URL may point it at a local fake); logs
+/// `update check <result>`.
+pub const MSG_CHECK_UPDATE: u32 = WM_APP + 0x46;
 
 const NO_OVERRIDE: u64 = u64::MAX;
 static IDLE_OVERRIDE_SECS: AtomicU64 = AtomicU64::new(NO_OVERRIDE);

@@ -18,6 +18,7 @@ mod testhook;
 mod theme;
 mod tray;
 mod tray_panel;
+mod update;
 mod widget;
 mod winhttp;
 

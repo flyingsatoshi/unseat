@@ -2,7 +2,7 @@
 
 Unseat is a local sitting timer. The portable executable runs from the user's chosen folder with an `asInvoker`, `uiAccess=false` manifest. It does not require administrator rights. It no longer copies itself into AppData, relaunches a copy, or creates Start Menu shortcuts on launch. Launch with Windows defaults to off; changing that setting explicitly updates only the current user's Unseat Run entry. Existing preferences and Run entries are preserved.
 
-The GUI uses ordinary Win32 windows, Direct2D drawing, a notification-area icon, last-input age, lock notifications, and power notifications. Last-input age does not capture keystrokes. Settings and timer checkpoints are local JSON. There is no downloaded payload, process injection, executable packer, or antivirus exclusion in the application code. The only network code is the optional iPhone reminders, off by default: a listener bound to `127.0.0.1` and HTTPS requests to Apple's push service through WinHTTP. Repeat antivirus checks with that feature on and off.
+The GUI uses ordinary Win32 windows, Direct2D drawing, a notification-area icon, last-input age, lock notifications, and power notifications. Last-input age does not capture keystrokes. Settings and timer checkpoints are local JSON. There is no downloaded payload, process injection, executable packer, or antivirus exclusion in the application code. The only network code is the optional iPhone reminders, off by default (a listener bound to `127.0.0.1` and HTTPS requests to Apple's push service through WinHTTP), and **Check for updates**, a single HTTPS GET to `api.github.com` that runs only when clicked and never downloads anything. Repeat antivirus checks with the iPhone feature on and off.
 
 ## Build and sign releases
 

@@ -489,6 +489,41 @@ Scenario "a visible test overlay is marked TEST" {
   } finally { Stop-TestInstance $i }
 }
 
+Scenario "settings shows the build and checks for updates against the release source" {
+  $port = 18798; $dir = Join-Path $TestRoot "fake-releases"; New-Item -ItemType Directory -Force $dir | Out-Null
+  $job = Start-Job -ArgumentList $port, $dir -ScriptBlock {
+    param($port, $dir)
+    $l = New-Object System.Net.HttpListener; $l.Prefixes.Add("http://localhost:$port/"); $l.Start()
+    while ($true) {
+      $c = $l.GetContext()
+      $f = Join-Path $dir "reply.txt"; $status = [int](Get-Content (Join-Path $dir "status.txt") -Raw)
+      Add-Content (Join-Path $dir "requests.txt") ("$($c.Request.HttpMethod) $($c.Request.Url.AbsolutePath) UA=$($c.Request.UserAgent)")
+      $bytes = [Text.Encoding]::UTF8.GetBytes((Get-Content $f -Raw))
+      $c.Response.StatusCode = $status; $c.Response.OutputStream.Write($bytes, 0, $bytes.Length); $c.Response.Close()
+    }
+  }
+  try {
+    Set-Content (Join-Path $dir "status.txt") "200" -NoNewline
+    Set-Content (Join-Path $dir "reply.txt") '{"tag_name":"v9.9.9","html_url":"https://github.com/flyingsatoshi/unseat/releases/tag/v9.9.9","draft":false,"prerelease":false}' -NoNewline
+    $env:UNSEAT_TEST_UPDATE_URL = "http://localhost:$port/repos/flyingsatoshi/unseat/releases/latest"
+    try { $i = Start-TestInstance $Exe (Base) } finally { Remove-Item env:UNSEAT_TEST_UPDATE_URL }
+    try {
+      Check (@(Read-Log $i | Where-Object { $_ -like "update check*" }).Count -eq 0) "no check until asked"
+      Send-ToWidget $i ($WM_APP + 0x46)
+      $line = Wait-Until { Read-Log $i | Where-Object { $_ -like "update check *" } | Select-Object -Last 1 }
+      Check ($line -match 'Available\(Release \{ tag: "v9.9.9"') "newer release reported ($line)"
+      Check ((Get-Content (Join-Path $dir "requests.txt") | Select-Object -Last 1) -match '^GET /repos/flyingsatoshi/unseat/releases/latest UA=Unseat/') "one GET to the release API with a User-Agent"
+      Set-Content (Join-Path $dir "reply.txt") '{"tag_name":"v9.9.9","html_url":"https://evil.example/x"}' -NoNewline
+      Send-ToWidget $i ($WM_APP + 0x46)
+      Wait-Until { @(Read-Log $i | Where-Object { $_ -like "update check Failed*" }).Count -gt 0 } | Out-Null
+      Set-Content (Join-Path $dir "status.txt") "404" -NoNewline
+      Send-ToWidget $i ($WM_APP + 0x46)
+      Wait-Until { @(Read-Log $i | Where-Object { $_ -like "*no published release*" }).Count -gt 0 } | Out-Null
+      Check (-not ((Read-Log $i) -match "^notify ")) "nothing else happens"
+    } finally { Stop-TestInstance $i }
+  } finally { Stop-Job $job; Remove-Job $job -Force }
+}
+
 $RealAfter = Get-RealUnseat
 $results.Add([pscustomobject]@{ Test = "the user's own Unseat was left alone"; Result = $(if ((@($RealBefore) -join ",") -eq (@($RealAfter) -join ",")) { "PASS" } else { "FAIL" }); Ms = 0; Detail = "before: $($RealBefore -join ',') after: $($RealAfter -join ',')" })
 
