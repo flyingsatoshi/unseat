@@ -284,6 +284,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             (*app).dock_pointer(wp.0 == 1);
             LRESULT(0)
         }
+        testhook::MSG_CHECK_UPDATE if testhook::enabled() => {
+            crate::win::update::start();
+            LRESULT(0)
+        }
         testhook::MSG_PHONE_ADMIN if testhook::enabled() => {
             let _ = (*app).phone.start_admin();
             LRESULT(0)

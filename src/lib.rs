@@ -1,3 +1,4 @@
+pub mod about;
 mod alerts;
 mod audio;
 pub mod companion;

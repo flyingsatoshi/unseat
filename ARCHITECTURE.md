@@ -15,6 +15,7 @@ No Win32. Everything that decides behavior lives here and is unit-tested:
 | `theme` | Signal palettes (light and dark): per-state overlay surface, band, digit and tag colours; contrast-checked in tests |
 | `dock` | Edge docking: geometry for every edge (`dock_frame`) and a time-driven `DockController` (hide delay, peek, click, alert reveal, pin, fullscreen) |
 | `stats`, `date` | Weekly chart data and civil-date arithmetic |
+| `about` | Version, commit and release channel from build metadata (`Cargo.toml`, `build.rs`); version comparison and strict parsing of GitHub's latest-release reply |
 | `companion` | iPhone reminders: Web Push encryption and VAPID, the reminder policy (all reminders or idle-only, TTLs), the delivery queue (replace, retry, expiry, recovery), pairing, the device store, a strict HTTP parser and the companion API as a pure function. The phone app and PC page are embedded files |
 
 The host must not invent timer rules. If a behavior cannot be asked of the engine, it does not exist.
@@ -53,6 +54,7 @@ The engine reports `LimitReached`, `Progressive` and `BreakOver` regardless of s
 | `sound` | Embedded WAVs via `PlaySoundW(SND_MEMORY)` from a volume-scaled copy kept alive while playing |
 | `hotkeys` | Optional `Ctrl+Alt+Shift` shortcuts |
 | `autostart` | Opt-in `HKCU\...\Run` value; reads Task Manager's StartupApproved state; repairs a stale path |
+| `update` | Check for updates: one user-initiated HTTPS GET to GitHub's releases API, result shown in Settings; never installs |
 | `phone`, `winhttp` | Companion host: loopback listeners, the push sender thread, DPAPI key storage, read-only Tailscale status. Nothing starts until iPhone reminders are on or the page is opened |
 | `testhook` | Inert unless `UNSEAT_TEST_HOOKS=1`: fake idle time, advance the clock, log events, snapshot the overlay, separate titles/singleton/startup value for tests |
 

@@ -36,7 +36,11 @@ if ($Exe) {
 } elseif ($Docker) {
   $built = Join-Path $root "target\x86_64-pc-windows-gnu\release\unseat.exe"
   Remove-Item -LiteralPath $built -ErrorAction SilentlyContinue
-  docker run --rm -v "${root}:/src" $image bash /src/scripts/cross_build.sh
+  # The container gets the tree without .git, so pass the commit for the version line.
+  $sha = (git -C $root rev-parse --short=7 HEAD 2>$null)
+  $branch = (git -C $root rev-parse --abbrev-ref HEAD 2>$null)
+  $dirty = if (git -C $root status --porcelain --untracked-files=no 2>$null) { "1" } else { "0" }
+  docker run --rm -e "UNSEAT_GIT_SHA=$sha" -e "UNSEAT_GIT_BRANCH=$branch" -e "UNSEAT_GIT_DIRTY=$dirty" -v "${root}:/src" $image bash /src/scripts/cross_build.sh
   if ($LASTEXITCODE -ne 0) { throw "Docker build failed with exit code $LASTEXITCODE" }
 } else {
   $built = Join-Path $root "target\release\unseat.exe"

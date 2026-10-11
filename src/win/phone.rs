@@ -226,6 +226,28 @@ impl Phone {
         });
     }
 
+    /// One line for Settings: "Enabled · Paired (1) · Tailscale connected". Read-only: it
+    /// never creates the device store or a key, even while iPhone reminders are off.
+    pub fn status_line(&mut self, settings: &Settings) -> String {
+        let enabled = if settings.phone_enabled { "Enabled" } else { "Disabled" };
+        let paired = match &self.shared {
+            Some(shared) => shared.companion.lock().map(|c| c.store.devices.len()).unwrap_or(0),
+            None => std::fs::read(self.data_dir.join("companion.json"))
+                .ok()
+                .and_then(|b| Store::parse(&b).ok())
+                .map_or(0, |s| s.devices.len()),
+        };
+        let paired = if paired == 0 { "Not paired".to_string() } else { format!("Paired ({paired})") };
+        let tailscale = match check_tailscale() {
+            TailscaleState::Unchecked => "Tailscale not checked",
+            TailscaleState::Checking => "checking Tailscale…",
+            TailscaleState::Connected => "Tailscale connected",
+            TailscaleState::Disconnected => "Tailscale disconnected",
+            TailscaleState::Missing => "Tailscale not found",
+        };
+        format!("{enabled} · {paired} · {tailscale}")
+    }
+
     /// Open the PC page in the browser (tray menu → iPhone).
     pub fn open_admin(&mut self) {
         match self.start_admin() {
@@ -660,6 +682,54 @@ fn refresh_tailscale(shared: &Arc<Shared>, min_gap_ms: u64) {
         c.app.serve_status = serve;
         c.app.funnel_status = funnel;
     });
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TailscaleState {
+    Unchecked,
+    Checking,
+    Connected,
+    Disconnected,
+    Missing,
+}
+
+/// Last known Tailscale state for the Settings line, and when it was read (wall ms).
+static TAILSCALE_STATE: Mutex<(TailscaleState, u64)> = Mutex::new((TailscaleState::Unchecked, 0));
+
+/// Connected means the local Tailscale is running and this PC is online in the tailnet.
+fn tailscale_state_from(status_json: Option<&str>) -> TailscaleState {
+    let Some(json) = status_json else { return TailscaleState::Missing };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else { return TailscaleState::Disconnected };
+    let running = v["BackendState"].as_str() == Some("Running");
+    let online = v["Self"]["Online"].as_bool().unwrap_or(true);
+    if running && online {
+        TailscaleState::Connected
+    } else {
+        TailscaleState::Disconnected
+    }
+}
+
+/// The cached state, refreshed off the UI thread at most every 30 s (read-only CLI call).
+fn check_tailscale() -> TailscaleState {
+    if testhook::enabled() {
+        return TailscaleState::Unchecked;
+    }
+    let now = wall_ms();
+    let Ok(mut st) = TAILSCALE_STATE.lock() else { return TailscaleState::Unchecked };
+    if st.1 == 0 || now.saturating_sub(st.1) >= 30_000 {
+        if st.0 == TailscaleState::Unchecked {
+            st.0 = TailscaleState::Checking;
+        }
+        st.1 = now;
+        let _ = std::thread::Builder::new().name("unseat-tailscale-state".into()).spawn(|| {
+            let state = tailscale_state_from(tailscale(&["status", "--json"]).as_deref());
+            if let Ok(mut st) = TAILSCALE_STATE.lock() {
+                st.0 = state;
+            }
+            crate::win::settings_dlg::repaint();
+        });
+    }
+    st.0
 }
 
 // ---------------------------------------------------------------- storage
