@@ -25,6 +25,16 @@ required-features = ["gui"]
 default = ["gui"]
 gui = ["dep:windows"]
 
+[profile.release]
+# Size over speed. The hot paths run inside Windows (Direct2D, DirectWrite, DWM): with these
+# settings repaint, tick and startup cost measured the same as opt-level 3 while the exe shrank
+# by a fifth (scripts/bench.ps1). The iPhone push crypto slows from ~0.14 to ~0.2 ms per
+# message, at most once per reminder. Panics still unwind, so a panic on an iPhone thread ends
+# that thread instead of the whole app.
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+
 [build-dependencies]
 embed-resource = "3.0"
 
