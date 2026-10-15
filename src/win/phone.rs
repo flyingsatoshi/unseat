@@ -340,7 +340,7 @@ impl Phone {
     /// The user acted on the PC: queued sitting reminders are obsolete.
     pub fn on_command(&self, command: Command) {
         let Some(shared) = &self.shared else { return };
-        if matches!(command, Command::Reset | Command::StartBreak | Command::Snooze(_) | Command::TogglePause) {
+        if matches!(command, Command::Reset | Command::StartBreak | Command::Snooze(_) | Command::Extend | Command::TogglePause) {
             let notes = shared.outbox.lock().unwrap().cancel_topic(ReminderKind::TimeUp.topic());
             record(shared, &notes);
         }

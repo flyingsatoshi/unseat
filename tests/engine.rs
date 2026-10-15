@@ -623,6 +623,66 @@ fn snooze_resets_progressive_beeps() {
     assert_eq!(again.beep, Beep::LimitReached);
 }
 
+#[test]
+fn extend_adds_one_full_session_from_now() {
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(3600 + 7 * 60), day(), active());
+    assert_eq!(e.snapshot().state, VisibleState::Overdue);
+    e.apply(Command::Extend);
+    let snap = e.snapshot();
+    assert_eq!(snap.state, VisibleState::Sitting);
+    assert_eq!(snap.timer_remaining, Duration::from_secs(3600));
+    assert_eq!(snap.sitting_elapsed, Duration::from_secs(3600 + 7 * 60), "sitting time is kept");
+    let still = e.tick(Duration::from_secs(2 * 3600 + 7 * 60 - 1), day(), active());
+    assert_eq!(still.snapshot.state, VisibleState::Sitting);
+    assert_eq!(still.beep, Beep::None);
+    let again = e.tick(Duration::from_secs(2 * 3600 + 7 * 60), day(), active());
+    assert_eq!(again.snapshot.state, VisibleState::Overdue);
+    assert_eq!(again.beep, Beep::LimitReached, "asks again when the extension runs out");
+}
+
+#[test]
+fn extend_before_the_limit_or_on_a_break_does_nothing() {
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(600), day(), active());
+    e.apply(Command::Extend);
+    assert_eq!(e.snapshot().timer_remaining, Duration::from_secs(3000));
+    e.tick(Duration::from_secs(3600), day(), active());
+    e.apply(Command::StartBreak);
+    e.apply(Command::Extend);
+    let snap = e.snapshot();
+    assert_eq!(snap.state, VisibleState::Break);
+    assert_eq!(snap.break_remaining, Duration::from_secs(180));
+}
+
+#[test]
+fn extend_follows_the_current_sitting_limit() {
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(3600), day(), active());
+    let mut shorter = cfg();
+    shorter.sitting_limit = Duration::from_secs(40 * 60);
+    e.set_config(shorter);
+    e.apply(Command::Extend);
+    assert_eq!(e.snapshot().timer_remaining, Duration::from_secs(40 * 60));
+}
+
+#[test]
+fn extend_survives_a_restart() {
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(3600), day(), active());
+    e.apply(Command::Extend);
+    e.tick(Duration::from_secs(3600 + 600), day(), active());
+    let saved = e.checkpoint(1_000);
+    let back = SittingEngine::restore(cfg(), day(), Duration::ZERO, saved, 1_000);
+    let snap = back.snapshot();
+    assert_eq!(snap.state, VisibleState::Sitting);
+    assert_eq!(snap.timer_remaining, Duration::from_secs(3000));
+}
+
 fn default_cfg() -> EngineConfig {
     EngineConfig::from_settings(&Settings::default())
 }

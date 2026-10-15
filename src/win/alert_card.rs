@@ -1,6 +1,8 @@
-//! In-app alert card shown beside the overlay when time is up (and briefly when a break
-//! ends). It never takes focus; its buttons post the same commands as the tray. When the
-//! overlay is hidden the host shows a Windows notification instead.
+//! In-app card beside the overlay. When time is up it asks: take a break, or extend by one
+//! more session; it stays until answered or closed, and the host closes it once the
+//! session moves on. When a break ends it tells so for a few seconds. It never takes
+//! focus; its buttons post commands like the tray does. While the overlay is hidden the
+//! host waits, or shows a Windows notification if those are on.
 
 use crate::win::app::App;
 use crate::win::gfx::{self, Family, Fonts};
@@ -63,7 +65,8 @@ struct State {
     card: Card,
     title: String,
     body: String,
-    snooze_min: u64,
+    primary: String,
+    secondary: String,
     hover: Option<Button>,
     tracking: bool,
     scale: f32,
@@ -121,6 +124,34 @@ pub fn hide() {
     }
 }
 
+/// The card's state, if the window exists.
+unsafe fn state() -> Option<(HWND, *mut State)> {
+    let hwnd = FindWindowW(CLASS, &title()).ok()?;
+    let st = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
+    (!st.is_null()).then_some((hwnd, st))
+}
+
+/// Hide the card only if it is showing `card`.
+pub fn hide_card(card: Card) {
+    unsafe {
+        if state().is_some_and(|(_, st)| (*st).card == card) {
+            hide();
+        }
+    }
+}
+
+/// Refresh the text of `card` if it is the one up (no-op if unchanged).
+pub fn set_body(card: Card, body: &str) {
+    unsafe {
+        if let Some((hwnd, st)) = state() {
+            if (*st).card == card && (*st).body != body {
+                (*st).body = body.to_string();
+                let _ = InvalidateRect(hwnd, None, false);
+            }
+        }
+    }
+}
+
 pub fn shutdown() {
     unsafe {
         if let Ok(hwnd) = FindWindowW(CLASS, &title()) {
@@ -129,8 +160,9 @@ pub fn shutdown() {
     }
 }
 
-/// Show `card` next to the overlay window `anchor`.
-pub fn show(app: *mut App, anchor: HWND, card: Card, title_text: &str, body: &str) {
+/// Show `card` next to the overlay window `anchor`, with a `primary` button and, for the
+/// time-up card, a `secondary` one.
+pub fn show(app: *mut App, anchor: HWND, card: Card, title_text: &str, body: &str, primary: &str, secondary: &str) {
     if crate::win::testhook::hidden() {
         crate::win::testhook::log(&format!("alert card skipped (hidden test run): {title_text}"));
         return;
@@ -172,15 +204,20 @@ pub fn show(app: *mut App, anchor: HWND, card: Card, title_text: &str, body: &st
         (*st).card = card;
         (*st).title = title_text.to_string();
         (*st).body = body.to_string();
-        (*st).snooze_min = (*app).settings.snooze_secs / 60;
+        (*st).primary = primary.to_string();
+        (*st).secondary = secondary.to_string();
         (*st).hover = None;
         (*st).scale = match GetDpiForWindow(anchor) {
             0 => 1.0,
             d => d as f32 / 96.0,
         };
         place(hwnd, anchor, (*st).scale);
-        let secs = if card == Card::TimeUp { 60 } else { 10 };
-        let _ = SetTimer(hwnd, DISMISS_ID, secs * 1000, None);
+        // The question waits for an answer; the break-over note goes away by itself.
+        if card == Card::BreakOver {
+            let _ = SetTimer(hwnd, DISMISS_ID, 10_000, None);
+        } else {
+            let _ = KillTimer(hwnd, DISMISS_ID);
+        }
         let _ = InvalidateRect(hwnd, None, false);
         crate::win::testhook::log(&format!("card {card:?}"));
     }
@@ -226,7 +263,8 @@ unsafe fn press(st: &State, b: Button) {
     }
     let cmd = match (st.card, b) {
         (Card::TimeUp, Button::Primary) => tray::ID_BREAK,
-        (Card::TimeUp, Button::Secondary) => tray::ID_SNOOZE_CUSTOM,
+        (Card::TimeUp, Button::Secondary) => tray::ID_EXTEND,
+        (Card::TimeUp, Button::Close) => tray::ID_PROMPT_CLOSE,
         _ => return,
     };
     crate::win::testhook::log(&format!("card action {b:?}"));
@@ -246,7 +284,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             card: Card::TimeUp,
             title: String::new(),
             body: String::new(),
-            snooze_min: 10,
+            primary: String::new(),
+            secondary: String::new(),
             hover: None,
             tracking: false,
             scale: 1.0,
@@ -383,13 +422,11 @@ unsafe fn paint(hwnd: HWND, st: &mut State) {
                     Card::BreakOver => (pal.selected, pal.on_selected),
                 };
                 gfx::fill_round(&rt, rc, px(9.0, s), if hot { gfx::fade(fill, 0.9) } else { fill });
-                let caption = if st.card == Card::TimeUp { "Take a break" } else { "OK" };
-                gfx::text(&rt, fonts, Family::Ui, caption, rc, px(13.5, s), gfx::SEMIBOLD, gfx::CENTER, text);
+                gfx::text(&rt, fonts, Family::Ui, &st.primary, rc, px(13.5, s), gfx::SEMIBOLD, gfx::CENTER, text);
             }
             Button::Secondary => {
                 gfx::fill_round(&rt, rc, px(9.0, s), gfx::fade(ink, if hot { 0.26 } else { 0.18 }));
-                let caption = format!("Snooze {} min", st.snooze_min);
-                gfx::text(&rt, fonts, Family::Ui, &caption, rc, px(13.5, s), gfx::MEDIUM, gfx::CENTER, ink);
+                gfx::text(&rt, fonts, Family::Ui, &st.secondary, rc, px(13.5, s), gfx::MEDIUM, gfx::CENTER, ink);
             }
         }
     }

@@ -400,7 +400,7 @@ impl App {
                 Hit::Pause => self.apply_engine_command(Command::TogglePause),
                 Hit::Break => self.toggle_break(),
                 Hit::Reset => self.apply_engine_command(Command::Reset),
-                Hit::Snooze => self.snooze_default(),
+                Hit::Prompt => self.ask_time_up(),
                 Hit::Close if dock.is_some() => self.toggle_pin(),
                 Hit::Close => self.hide_widget(),
             }
@@ -428,6 +428,7 @@ impl App {
             }
             self.end_drag_dock(hwnd);
             self.save_settings();
+            self.place_prompt();
         }
     }
 

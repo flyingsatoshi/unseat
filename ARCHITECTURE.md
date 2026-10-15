@@ -8,7 +8,7 @@ No Win32. Everything that decides behavior lives here and is unit-tested:
 
 | Module | Role |
 | --- | --- |
-| `engine` | `SittingEngine`: session time, overdue, snooze, manual pause, inactivity (*away*), explicit breaks, alert events, restore from a checkpoint |
+| `engine` | `SittingEngine`: session time, overdue, snooze, extend (one more session), manual pause, inactivity (*away*), explicit breaks, alert events, restore from a checkpoint |
 | `settings` | `Settings` JSON under `%APPDATA%\Unseat\settings.json`: defaults, clamping, schema migration, reset to defaults, 14-day history |
 | `alerts` / `audio` | Which alert events play a sound or show a notification; PCM16 volume scaling |
 | `view` | Overlay layout and hit targets at 96 DPI, face digits, tag text, tray status line, edge snapping |
@@ -37,7 +37,7 @@ The host supplies monotonic timestamps (`GetTickCount64`, which keeps counting t
 
 ### Alerts
 
-The engine reports `LimitReached`, `Progressive` and `BreakOver` regardless of sound settings. `alert_actions` decides: sound if enabled and volume > 0; a notification for time-up and break-over only, so long overdue stretches never pile up toasts. A delayed update that spans several reminder intervals fires one reminder, not a burst.
+The engine reports `LimitReached`, `Progressive` and `BreakOver` regardless of sound settings. `alert_actions` decides: sound if enabled and volume > 0; a Windows notification for time-up and break-over only, so long overdue stretches never pile up toasts. The host shows that notification only while the overlay is hidden; beside a visible overlay the alert card asks *Break* or *Extend* (`time_up_prompt`) whatever the notification setting, and waits for the overlay if it is hidden. A delayed update that spans several reminder intervals fires one reminder, not a burst.
 
 ## Win32 host (`src/win/`, `--features gui`)
 
@@ -48,7 +48,7 @@ The engine reports `LimitReached`, `Progressive` and `BreakOver` regardless of s
 | `paint`, `gfx` | Overlay painter (pill as progress bar, docked tab and peek) with a cached back buffer; shared Direct2D helpers, text-format cache, the embedded Sora font loaded from memory, tabular digits measured to fit |
 | `docking` | Applies `DockController` to the overlay window: placement, slide frames (~16 ms timer only while sliding), drag-to-dock, fullscreen detection |
 | `tray_panel` | Custom tray panel that replaces the native menu; keyboard operable |
-| `alert_card` | Non-activating card beside the overlay when time is up or a break ends |
+| `alert_card` | Non-activating card beside the overlay: asks *Break* or *Extend* when time is up (stays until answered), tells when a break ends |
 | `settings_dlg` | Tabbed settings. One row table drives layout, painting, hit testing and keyboard focus |
 | `tray`, `flyout` | Tray icon, status tooltip (updated only when its text changes), notifications, hover card |
 | `sound` | Embedded WAVs via `PlaySoundW(SND_MEMORY)` from a volume-scaled copy kept alive while playing |

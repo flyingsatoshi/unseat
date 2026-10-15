@@ -414,10 +414,10 @@ fn clicking_a_paused_pill_anywhere_resumes() {
 }
 
 #[test]
-fn overdue_digits_snooze_but_hover_buttons_still_win() {
+fn overdue_digits_ask_again_but_hover_buttons_still_win() {
     let l = widget_layout(1.0);
     let digits = (l.digits_l + 10.0, l.pill_y + l.pill_h / 2.0);
-    assert_eq!(center_hit(VisibleState::Overdue, false, digits), Some(Hit::Snooze));
+    assert_eq!(center_hit(VisibleState::Overdue, false, digits), Some(Hit::Prompt));
     assert_eq!(center_hit(VisibleState::Sitting, false, digits), None);
     assert_eq!(center_hit(VisibleState::Overdue, true, l.reset), Some(Hit::Reset));
 }
