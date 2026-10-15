@@ -536,12 +536,20 @@ impl App {
             testhook::log("tray skipped (hidden test run)");
             return;
         }
-        // After an Explorer restart the old icon may or may not survive; start clean.
-        tray::remove(self.hidden);
-        self.tray_added = tray::add(self.hidden);
-        self.last_tip.clear();
+        // After an Explorer restart the old icon may or may not survive; start clean. A first
+        // add (or a retry after a failed one) has nothing to remove. Each call goes to Explorer.
+        if self.tray_added {
+            tray::remove(self.hidden);
+        }
+        let tip = self.tray_tip();
+        self.tray_added = tray::add(self.hidden, &tip);
+        self.last_tip = if self.tray_added { tip } else { String::new() };
         testhook::log(&format!("tray added={}", self.tray_added));
-        self.update_tray();
+    }
+
+    fn tray_tip(&self) -> String {
+        let snap = self.engine.snapshot();
+        format!("Unseat · {}\n{}", status_line(snap), format_today(snap.today_sitting))
     }
 
     /// Update the tooltip only when its text changes; it is a cross-process call to Explorer.
@@ -549,8 +557,7 @@ impl App {
         if !self.tray_added || testhook::hidden() {
             return;
         }
-        let snap = self.engine.snapshot();
-        let tip = format!("Unseat · {}\n{}", status_line(snap), format_today(snap.today_sitting));
+        let tip = self.tray_tip();
         if tip != self.last_tip {
             tray::set_tip(self.hidden, &tip);
             self.last_tip = tip;
