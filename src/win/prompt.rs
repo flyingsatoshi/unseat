@@ -490,8 +490,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     match msg {
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE),
         WM_TIMER if wp.0 == ANIM_ID => {
+            // Decide before drawing, so the last frame is always the resting one: checked after,
+            // the slide could stop on a frame a fraction of a pixel short of it.
+            let done = progress(st) >= 1.0;
             render(hwnd, st);
-            if progress(st) >= 1.0 {
+            if done {
                 let _ = KillTimer(hwnd, ANIM_ID);
             }
             LRESULT(0)
