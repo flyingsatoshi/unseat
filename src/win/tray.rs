@@ -23,9 +23,17 @@ pub const ID_PHONE: u32 = 26;
 /// The time-up tabs' second answer: one more session.
 pub const ID_EXTEND: u32 = 27;
 
-pub fn add(hwnd: HWND) -> bool {
-    if !nid(hwnd, true) {
-        return false;
+/// Add the icon with its tooltip, in version 4 mode.
+pub fn add(hwnd: HWND, text: &str) -> bool {
+    unsafe {
+        let mut data = empty_nid(hwnd);
+        data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+        data.uCallbackMessage = CALLBACK;
+        data.hIcon = icon::small();
+        tip(&mut data, text);
+        if !Shell_NotifyIconW(NIM_ADD, &data).as_bool() {
+            return false;
+        }
     }
     unsafe {
         let mut data = empty_nid(hwnd);
@@ -51,18 +59,6 @@ pub fn remove(hwnd: HWND) {
     unsafe {
         let mut data = empty_nid(hwnd);
         let _ = Shell_NotifyIconW(NIM_DELETE, &mut data);
-    }
-}
-
-fn nid(hwnd: HWND, add: bool) -> bool {
-    unsafe {
-        let mut data = empty_nid(hwnd);
-        data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
-        data.uCallbackMessage = CALLBACK;
-        data.hIcon = icon::small();
-        tip(&mut data, "Unseat");
-        let op = if add { NIM_ADD } else { NIM_MODIFY };
-        Shell_NotifyIconW(op, &mut data).as_bool()
     }
 }
 

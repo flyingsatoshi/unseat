@@ -5,7 +5,7 @@ use crate::win::{
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use unseat::{
-    alert_actions, break_over_note, clamp_clock, format_today, next_tick_delay,
+    alert_actions, break_over_note, checkpoint_current, clamp_clock, format_today, next_tick_delay,
     restored_today_sitting, status_line, time_up_prompt, timer_render_key, widget_layout, Beep,
     CivilDate, Command, DockDraw, DockFrame, DockPhase, EngineConfig, Input, PhoneAlerts,
     Settings, SittingEngine, ThemePreference, TimerRenderKey, VisibleState, WidgetSize, WIDGET_H,
@@ -23,7 +23,7 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW, GetMessageW,
-    GetWindowLongPtrW, KillTimer, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer,
+    GetWindowLongPtrW, IsIconic, KillTimer, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer,
     SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, CREATESTRUCTW, GWLP_USERDATA,
     HWND_MESSAGE, HWND_NOTOPMOST, HWND_TOPMOST, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
     SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_HOTKEY,
@@ -33,7 +33,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const HIDDEN_CLASS: windows::core::PCWSTR = w!("UnseatHidden");
 const TICK_ID: usize = 1;
 const SOUND_ID: usize = 2;
+/// How often to check whether the settings file still restores the running timer.
 const SAVE_EVERY: Duration = Duration::from_secs(60);
+/// Rewrite it at least this often anyway, so a crash just before midnight loses little of
+/// that day's total (an archived day keeps the total last written).
+const SAVE_AT_LEAST_EVERY: Duration = Duration::from_secs(15 * 60);
+/// How far a restore from the file may be off before it counts as stale.
+const RESTORE_TOLERANCE: Duration = Duration::from_secs(3);
 
 pub struct App {
     pub engine: SittingEngine,
@@ -52,7 +58,11 @@ pub struct App {
     pub tray_added: bool,
     pub d2d: Option<paint::D2d>,
     last_key: Option<TimerRenderKey>,
+    /// When the periodic save check last ran, and when the file was last written (monotonic).
     last_save_at: Duration,
+    last_write_at: Duration,
+    /// What the settings file holds: the settings as last written.
+    on_disk: Option<Settings>,
     last_tray_select: Option<Instant>,
     last_clock: Option<Duration>,
     last_tip: String,
@@ -163,6 +173,8 @@ pub fn run() -> windows::core::Result<()> {
             d2d: paint::D2d::new(),
             last_key: None,
             last_save_at: Duration::ZERO,
+            last_write_at: Duration::ZERO,
+            on_disk: None,
             last_tray_select: None,
             last_clock: None,
             last_tip: String::new(),
@@ -238,6 +250,11 @@ pub fn run() -> windows::core::Result<()> {
         prompt::shutdown();
         settings_dlg::shutdown();
         tray::remove(hidden);
+        // No window may keep a pointer to the App about to be freed.
+        for hwnd in [(*ptr).widget, hidden] {
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            let _ = DestroyWindow(hwnd);
+        }
         drop(Box::from_raw(ptr));
         let _ = ReleaseMutex(mutex);
         let _ = CloseHandle(mutex);
@@ -487,8 +504,10 @@ impl App {
             result.snapshot.sitting_elapsed,
         );
         if now.saturating_sub(self.last_save_at) >= SAVE_EVERY {
-            self.persist_today();
             self.last_save_at = now;
+            if self.disk_stale(now) {
+                self.persist_today();
+            }
         }
         if !self.tray_added {
             self.add_tray();
@@ -517,12 +536,20 @@ impl App {
             testhook::log("tray skipped (hidden test run)");
             return;
         }
-        // After an Explorer restart the old icon may or may not survive; start clean.
-        tray::remove(self.hidden);
-        self.tray_added = tray::add(self.hidden);
-        self.last_tip.clear();
+        // After an Explorer restart the old icon may or may not survive; start clean. A first
+        // add (or a retry after a failed one) has nothing to remove. Each call goes to Explorer.
+        if self.tray_added {
+            tray::remove(self.hidden);
+        }
+        let tip = self.tray_tip();
+        self.tray_added = tray::add(self.hidden, &tip);
+        self.last_tip = if self.tray_added { tip } else { String::new() };
         testhook::log(&format!("tray added={}", self.tray_added));
-        self.update_tray();
+    }
+
+    fn tray_tip(&self) -> String {
+        let snap = self.engine.snapshot();
+        format!("Unseat · {}\n{}", status_line(snap), format_today(snap.today_sitting))
     }
 
     /// Update the tooltip only when its text changes; it is a cross-process call to Explorer.
@@ -530,8 +557,7 @@ impl App {
         if !self.tray_added || testhook::hidden() {
             return;
         }
-        let snap = self.engine.snapshot();
-        let tip = format!("Unseat · {}\n{}", status_line(snap), format_today(snap.today_sitting));
+        let tip = self.tray_tip();
         if tip != self.last_tip {
             tray::set_tip(self.hidden, &tip);
             self.last_tip = tip;
@@ -620,8 +646,29 @@ impl App {
         self.save_settings();
     }
 
-    pub fn save_settings(&self) {
-        let _ = self.settings.save_to(&self.settings_path);
+    pub fn save_settings(&mut self) {
+        if self.settings.save_to(&self.settings_path).is_ok() {
+            self.on_disk = Some(self.settings.clone());
+            self.last_write_at = self.clock_now();
+        }
+    }
+
+    /// Whether the settings file no longer brings back what a restart should: a preference,
+    /// the date or the history changed, or the timer moved in a way that restoring from the
+    /// saved checkpoint would not reproduce. While only time passes it stays current (a
+    /// restore adds the downtime itself), so it is not rewritten every minute.
+    fn disk_stale(&self, now: Duration) -> bool {
+        let Some(disk) = &self.on_disk else { return true };
+        let Some(checkpoint) = disk.timer_checkpoint else { return true };
+        now.saturating_sub(self.last_write_at) >= SAVE_AT_LEAST_EVERY
+            || *disk != self.settings
+            || !checkpoint_current(
+                &self.engine,
+                checkpoint,
+                Duration::from_secs(disk.today_sitting_secs),
+                wall_now_secs(),
+                RESTORE_TOLERANCE,
+            )
     }
 
     /// Show the size, theme and always-on-top choices on the overlay without saving them.
@@ -757,18 +804,32 @@ impl App {
         .at_scale(scale)
         .with_progress(fill, unseat::widget_layout(scale).pill_w)
         .with_dock(frame.map_or(0, |f| f.code() * 2 + u32::from(pinned)));
+        let key = match frame.map(|f| f.draw) {
+            Some(DockDraw::Tab) => key.for_tab(snap, false),
+            Some(DockDraw::Peek) => key.for_tab(snap, true),
+            _ => key,
+        };
+        let minimized = unsafe { IsIconic(self.widget).as_bool() };
         match frame {
             Some(frame) => self.place_docked(frame),
             None => {
                 self.dock_frame = None;
-                widget::resize_to_shape(
-                    self.widget,
-                    self.settings.timer_shape,
-                    self.settings.widget_size,
-                );
+                // A minimized window reports its iconic rectangle, so sizing it would move
+                // it every second; `show_widget` repaints (and sizes) it when it is back.
+                if self.widget_visible && !minimized {
+                    widget::resize_to_shape(
+                        self.widget,
+                        self.settings.timer_shape,
+                        self.settings.widget_size,
+                    );
+                }
             }
         }
-        if self.last_key == Some(key) {
+        // Nobody sees an overlay that is hidden or held back over a fullscreen app: skip the
+        // once-a-second frames until it is back (showing it forces a repaint). A forced
+        // repaint (`last_key` cleared) still draws, so the window never shows a stale frame.
+        let on_screen = self.widget_visible && !self.dock_suppressed && !minimized;
+        if self.last_key == Some(key) || (!on_screen && self.last_key.is_some()) {
             return;
         }
         self.last_key = Some(key);

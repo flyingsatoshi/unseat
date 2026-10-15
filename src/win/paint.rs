@@ -1,7 +1,7 @@
 use crate::win::gfx::{self, glyph, Family, Fonts};
 use std::cell::RefCell;
 use unseat::{
-    chip_center, palette, progress, tag_text, timer_digit_px, timer_face_digits, widget_layout,
+    chip_center, palette, peek_minutes, progress, tag_text, timer_digit_px, timer_face_digits, widget_layout,
     widget_pixel_size, DockDraw, DockEdge, Palette, Rgba, Snapshot, TimerDisplayMode, TimerShape,
     VisibleState,
 };
@@ -11,12 +11,11 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory, ID2D1RenderTarget,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE,
-    D2D1_ANTIALIAS_MODE_ALIASED, D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+    ID2D1DCRenderTarget, ID2D1Factory, ID2D1RenderTarget, D2D1_FEATURE_LEVEL_DEFAULT,
+    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT,
+    D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE, D2D1_ANTIALIAS_MODE_ALIASED,
+    D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
 };
-use windows::Win32::Graphics::DirectWrite::{DWriteCreateFactory, DWRITE_FACTORY_TYPE_SHARED};
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, CreateFontW, DeleteDC, DeleteObject, DrawTextW, GetDC,
@@ -27,25 +26,21 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{UpdateLayeredWindow, ULW_ALPHA};
 
-/// Device-independent Direct2D resources plus the overlay's reusable back buffer.
+/// The shared Direct2D resources plus the overlay's reusable back buffer.
 pub struct D2d {
-    factory: ID2D1Factory,
-    pub fonts: Fonts,
+    gfx: &'static gfx::Shared,
+    pub fonts: &'static Fonts,
     surface: RefCell<Option<Surface>>,
 }
 
 impl D2d {
     pub fn new() -> Option<Self> {
-        unsafe {
-            let factory: ID2D1Factory =
-                D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok()?;
-            let dwrite = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).ok()?;
-            Some(Self {
-                factory,
-                fonts: Fonts::new(dwrite),
-                surface: RefCell::new(None),
-            })
-        }
+        let gfx = gfx::shared()?;
+        Some(Self {
+            gfx,
+            fonts: &gfx.fonts,
+            surface: RefCell::new(None),
+        })
     }
 }
 
@@ -197,7 +192,7 @@ pub fn paint(d2d: Option<&D2d>, hwnd: HWND, p: &OverlayPaint) {
         let surface = match cache.as_deref_mut() {
             Some(slot) => {
                 if slot.as_ref().map_or(true, |s| s.w != cx || s.h != cy) {
-                    *slot = Surface::new(d2d.map(|d| &d.factory), cx, cy);
+                    *slot = Surface::new(d2d.map(|d| &d.gfx.factory), cx, cy);
                 }
                 slot.as_ref()
             }
@@ -225,7 +220,7 @@ pub fn paint(d2d: Option<&D2d>, hwnd: HWND, p: &OverlayPaint) {
                     None => draw_pill(&rt, d2d, pal, p, None, 0.0, 0.0),
                 }
                 if crate::win::testhook::badge() {
-                    draw_test_badge(&rt, &d2d.fonts, cx as f32, cy as f32);
+                    draw_test_badge(&rt, d2d.fonts, cx as f32, cy as f32);
                 }
             }
             drew = rt.EndDraw(None, None).is_ok();
@@ -297,7 +292,7 @@ unsafe fn draw_pill(
     dx: f32,
     dy: f32,
 ) {
-    let fonts = &d2d.fonts;
+    let fonts = d2d.fonts;
     let s = p.scale;
     let l = widget_layout(s);
     let fill = fraction(p);
@@ -418,13 +413,14 @@ unsafe fn draw_tab(
         return;
     }
     let snap = p.snap;
-    let (value, unit) = match snap.state {
-        VisibleState::Overdue => (format!("+{}", snap.overdue_by.as_secs() / 60), "over"),
-        VisibleState::Break => (snap.break_remaining.as_secs().div_ceil(60).to_string(), "break"),
-        _ => (snap.timer_remaining.as_secs().div_ceil(60).to_string(), "min"),
+    let (minutes, unit) = peek_minutes(snap);
+    let value = if snap.state == VisibleState::Overdue {
+        format!("+{minutes}")
+    } else {
+        minutes.to_string()
     };
     let ink = gfx::fade(c.digits, digit_alpha(snap.state));
-    let fonts = &d2d.fonts;
+    let fonts = d2d.fonts;
     if matches!(edge, DockEdge::Left | DockEdge::Right) {
         let mid = h / 2.0;
         gfx::digits(rt, fonts, &value, gfx::rect(0.0, mid - 16.0 * s, w, mid + 4.0 * s), 17.0 * s, gfx::SEMIBOLD, gfx::CENTER, ink);

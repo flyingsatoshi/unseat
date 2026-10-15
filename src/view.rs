@@ -81,6 +81,25 @@ impl TimerRenderKey {
         self.dock = code;
         self
     }
+
+    /// A docked tab shows no clock, only progress (and whole minutes while it peeks), so its
+    /// key leaves the seconds out: it repaints when what it shows changes, not every second.
+    pub fn for_tab(mut self, snapshot: Snapshot, peek: bool) -> Self {
+        self.face_secs = if peek { peek_minutes(snapshot).0 } else { 0 };
+        self.overdue_mins = 0;
+        self.break_remaining_secs = 0;
+        self
+    }
+}
+
+/// What a peeking docked tab shows: whole minutes over the limit, left of the break, or left
+/// of the session, and their unit.
+pub fn peek_minutes(snapshot: Snapshot) -> (u64, &'static str) {
+    match snapshot.state {
+        VisibleState::Overdue => (snapshot.overdue_by.as_secs() / 60, "over"),
+        VisibleState::Break => (snapshot.break_remaining.as_secs().div_ceil(60), "break"),
+        _ => (snapshot.timer_remaining.as_secs().div_ceil(60), "min"),
+    }
 }
 
 pub fn widget_pixel_size(_shape: TimerShape, scale: f32) -> (i32, i32) {

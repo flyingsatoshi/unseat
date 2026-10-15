@@ -155,7 +155,7 @@ End-to-end tests drive the real executable (idle, lock, sleep/resume, minimize, 
 ```bat
 powershell -ExecutionPolicy Bypass -File scripts\test_app.ps1
 powershell -ExecutionPolicy Bypass -File scripts\capture_screens.ps1
-powershell -ExecutionPolicy Bypass -File scripts\measure.ps1 -Exes target\release\unseat.exe
+powershell -ExecutionPolicy Bypass -File scripts\bench.ps1 -Exes dist\unseat.exe,target\release\unseat.exe -Budgets scripts\perf-budgets.json
 ```
 
 Library tests do not need the GUI feature. The Win32 host is behind `--features gui`.

@@ -397,6 +397,38 @@ impl SittingEngine {
     }
 }
 
+/// Whether restarting now from `saved` (the checkpoint and today's total last written, on the
+/// same day) would bring back `live` to within `tolerance`. A restore adds the downtime of a
+/// running session (with "continue while inactive"), of a break and of today's total, so while
+/// only time passes the file on disk stays current and needs no rewrite. A pause, a break,
+/// a snooze, or a session that stops counting while the user is away all make it stale.
+pub fn checkpoint_current(
+    live: &SittingEngine,
+    saved: TimerCheckpoint,
+    saved_today: Duration,
+    wall_now_secs: u64,
+    tolerance: Duration,
+) -> bool {
+    let today = restored_today_sitting(
+        saved_today,
+        live.today,
+        live.today,
+        live.config.inactivity_behavior,
+        saved,
+        wall_now_secs,
+        Duration::ZERO,
+    );
+    let restored = SittingEngine::restore(live.config, live.today, today, saved, wall_now_secs);
+    let (a, b) = (restored.snapshot(), live.snapshot());
+    let near = |x: Duration, y: Duration| x.abs_diff(y) <= tolerance;
+    a.state == b.state
+        && a.running == b.running
+        && near(a.sitting_elapsed, b.sitting_elapsed)
+        && near(a.timer_remaining, b.timer_remaining)
+        && near(a.break_elapsed, b.break_elapsed)
+        && near(a.today_sitting, b.today_sitting)
+}
+
 /// Reconcile a monotonic clock without discarding time when update messages are delayed.
 pub fn clamp_clock(last: Option<Duration>, now: Duration) -> Duration {
     match last {

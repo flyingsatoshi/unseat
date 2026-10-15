@@ -15,11 +15,7 @@ use unseat::{palette, Caption, DockEdge};
 use windows::core::w;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
-use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Factory, D2D1_FACTORY_TYPE_SINGLE_THREADED,
-    D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
-};
-use windows::Win32::Graphics::DirectWrite::{DWriteCreateFactory, DWRITE_FACTORY_TYPE_SHARED};
+use windows::Win32::Graphics::Direct2D::D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE;
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
@@ -124,9 +120,14 @@ struct State {
     tracking: bool,
     shown_at: Option<Instant>,
     animate: bool,
-    factory: Option<ID2D1Factory>,
-    fonts: Option<Fonts>,
+    gfx: Option<&'static gfx::Shared>,
     surface: Option<Surface>,
+}
+
+impl State {
+    fn fonts(&self) -> Option<&'static Fonts> {
+        self.gfx.map(|g| &g.fonts)
+    }
 }
 
 fn title() -> windows::core::HSTRING {
@@ -221,7 +222,7 @@ pub fn show(app: *mut App, anchor: Anchor, kind: Kind, caption: &Caption, labels
         st.labels = labels.map(str::to_string);
         st.anchor = Some(anchor);
         st.hover = None;
-        st.layout = st.fonts.as_ref().map(|f| layout(f, &anchor, kind, &st.labels, &st.caption));
+        st.layout = st.fonts().map(|f| layout(f, &anchor, kind, &st.labels, &st.caption));
         if !again {
             st.shown_at = Some(Instant::now());
             st.animate = animations_on();
@@ -266,7 +267,7 @@ pub fn update(anchor: Anchor, caption: Option<&Caption>) {
         }
         st.caption = caption;
         st.anchor = Some(anchor);
-        st.layout = st.fonts.as_ref().map(|f| layout(f, &anchor, st.kind, &st.labels, &st.caption));
+        st.layout = st.fonts().map(|f| layout(f, &anchor, st.kind, &st.labels, &st.caption));
         render(hwnd, st);
         if moved {
             order_below(hwnd, anchor.overlay);
@@ -390,9 +391,9 @@ fn shifted(rc: D2D_RECT_F, dy: f32) -> D2D_RECT_F {
 unsafe fn render(hwnd: HWND, st: &mut State) {
     let (Some(l), Some(a)) = (st.layout, st.anchor) else { return };
     if st.surface.as_ref().map_or(true, |s| s.w != l.w || s.h != l.h) {
-        st.surface = Surface::new(st.factory.as_ref(), l.w, l.h);
+        st.surface = Surface::new(st.gfx.map(|g| &g.factory), l.w, l.h);
     }
-    let (Some(surface), Some(fonts)) = (st.surface.as_ref(), st.fonts.as_ref()) else { return };
+    let (Some(surface), Some(fonts)) = (st.surface.as_ref(), st.fonts()) else { return };
     let Some(rt) = surface.target() else { return };
     let (hover, kind) = (st.hover, st.kind);
     let c = palette(a.dark).prompt;
@@ -475,8 +476,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             tracking: false,
             shown_at: None,
             animate: false,
-            factory: D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok(),
-            fonts: DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).ok().map(Fonts::new),
+            gfx: gfx::shared(),
             surface: None,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(st) as isize);
@@ -490,8 +490,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     match msg {
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE),
         WM_TIMER if wp.0 == ANIM_ID => {
+            // Decide before drawing, so the last frame is always the resting one: checked after,
+            // the slide could stop on a frame a fraction of a pixel short of it.
+            let done = progress(st) >= 1.0;
             render(hwnd, st);
-            if progress(st) >= 1.0 {
+            if done {
                 let _ = KillTimer(hwnd, ANIM_ID);
             }
             LRESULT(0)

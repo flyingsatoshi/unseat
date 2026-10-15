@@ -15,7 +15,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use unseat::companion::api::{Companion, Effect};
@@ -24,7 +24,7 @@ use unseat::companion::reminder::{self, Presence, ReminderKind};
 use unseat::companion::store::Store;
 use unseat::companion::webpush::{self, b64u, b64u_decode, Outcome, VapidKey};
 use unseat::companion::{http, ADMIN_PORT, PHONE_PORT, VAPID_SUBJECT};
-use unseat::{Beep, Command, PhoneAlerts, Settings, VisibleState};
+use unseat::{write_atomic, Beep, Command, PhoneAlerts, Settings, VisibleState};
 use windows::core::HSTRING;
 use windows::Win32::Foundation::{HLOCAL, HWND, LPARAM, LocalFree, WPARAM};
 use windows::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB};
@@ -43,6 +43,12 @@ const BIND_RETRY: Duration = Duration::from_secs(10);
 const TAILSCALE_RETRY_MS: u64 = 30_000;
 const TAILSCALE_RECHECK_MS: u64 = 10 * 60_000;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Lock state shared with the phone threads. A panic on one of them must not take the timer
+/// down with it, so a poisoned lock is used as it is rather than unwrapped.
+fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 struct Shared {
     companion: Mutex<Companion>,
@@ -191,22 +197,22 @@ impl Phone {
             self.last_bind_try = Some(Instant::now());
             let Some(shared) = self.ensure() else { return };
             {
-                let mut c = shared.companion.lock().unwrap();
+                let mut c = locked(&shared.companion);
                 c.app.enabled = true;
                 c.app.alerts = settings.phone_alerts;
             }
             self.start_phone_listener(&shared);
         } else {
             if let Some(shared) = &self.shared {
-                shared.companion.lock().unwrap().app.listener_error = None;
+                locked(&shared.companion).app.listener_error = None;
             }
             if let Some(l) = self.phone.take() {
                 l.close();
                 testhook::log("phone listener off");
             }
             if let Some(shared) = &self.shared {
-                shared.companion.lock().unwrap().app.enabled = false;
-                let mut ob = shared.outbox.lock().unwrap();
+                locked(&shared.companion).app.enabled = false;
+                let mut ob = locked(&shared.outbox);
                 for topic in [ReminderKind::TimeUp.topic(), ReminderKind::BreakOver.topic(), ReminderKind::Test.topic()] {
                     ob.cancel_topic(topic);
                 }
@@ -221,7 +227,7 @@ impl Phone {
         let port = ports().0;
         self.phone = listen(shared, port, false);
         testhook::log(&format!("phone listener {}", if self.phone.is_some() { "on" } else { "failed" }));
-        shared.companion.lock().unwrap().app.listener_error = self.phone.is_none().then(|| {
+        locked(&shared.companion).app.listener_error = self.phone.is_none().then(|| {
             format!("Port {port} is in use by another program, so the phone can't connect. Unseat keeps trying.")
         });
     }
@@ -272,7 +278,7 @@ impl Phone {
         }
         self.admin.as_ref()?;
         refresh_tailscale(&shared, 0);
-        let token = shared.companion.lock().unwrap().admin_token.clone();
+        let token = locked(&shared.companion).admin_token.clone();
         let url = format!("http://127.0.0.1:{}/#t={token}", ports().1);
         testhook::log(&format!("phone admin {url}"));
         Some(url)
@@ -304,12 +310,12 @@ impl Phone {
         let Some(shared) = self.shared.clone() else { return };
         if session_ended {
             // A natural break (idle long enough) reset the session without a PC command.
-            let notes = shared.outbox.lock().unwrap().cancel_topic(ReminderKind::TimeUp.topic());
+            let notes = locked(&shared.outbox).cancel_topic(ReminderKind::TimeUp.topic());
             record(&shared, &notes);
         }
-        let pending = shared.outbox.lock().unwrap().pending();
+        let pending = locked(&shared.outbox).pending();
         let known = {
-            let mut c = shared.companion.lock().unwrap();
+            let mut c = locked(&shared.companion);
             if c.app.timer_line != timer_line {
                 c.app.timer_line = timer_line.to_string();
             }
@@ -341,7 +347,7 @@ impl Phone {
     pub fn on_command(&self, command: Command) {
         let Some(shared) = &self.shared else { return };
         if matches!(command, Command::Reset | Command::StartBreak | Command::Snooze(_) | Command::Extend | Command::TogglePause) {
-            let notes = shared.outbox.lock().unwrap().cancel_topic(ReminderKind::TimeUp.topic());
+            let notes = locked(&shared.outbox).cancel_topic(ReminderKind::TimeUp.topic());
             record(shared, &notes);
         }
     }
@@ -353,7 +359,7 @@ impl Phone {
         if let Some(s) = self.shared.take() {
             // Under the queue lock, so the sender can't miss the wake-up between its check
             // and its wait.
-            let _ob = s.outbox.lock().unwrap();
+            let _ob = locked(&s.outbox);
             s.stop.store(true, Ordering::SeqCst);
             s.wake.notify_all();
         }
@@ -363,7 +369,7 @@ impl Phone {
 /// Queue a reminder for every receiving device (or one device for a test).
 fn enqueue(shared: &Arc<Shared>, r: &reminder::Reminder, only: Option<&str>) {
     let (devices, navigate) = {
-        let c = shared.companion.lock().unwrap();
+        let c = locked(&shared.companion);
         let mut d = c.store.receivers();
         if let Some(id) = only {
             d.retain(|x| x == id);
@@ -376,14 +382,14 @@ fn enqueue(shared: &Arc<Shared>, r: &reminder::Reminder, only: Option<&str>) {
     }
     let now = wall_ms();
     let (event, notes) = {
-        let mut ob = shared.outbox.lock().unwrap();
+        let mut ob = locked(&shared.outbox);
         let mut payload = reminder::message(r, &navigate, ob.next_event(), &local_clock());
         if testhook::enabled() {
             payload = test_payload_variant(shared, payload);
         }
         ob.enqueue(r.kind, payload, r.ttl_secs, &devices, now)
     };
-    shared.companion.lock().unwrap().note_sent(event, now);
+    locked(&shared.companion).note_sent(event, now);
     testhook::log(&format!("phone queued {} event={event} devices={}", r.kind.key(), devices.len()));
     record(shared, &notes);
     shared.wake.notify_all();
@@ -429,7 +435,7 @@ fn sender(shared: Arc<Shared>) {
     let mut vapid_cache: HashMap<String, (u64, String)> = HashMap::new();
     loop {
         let job = {
-            let mut ob = shared.outbox.lock().unwrap();
+            let mut ob = locked(&shared.outbox);
             loop {
                 if shared.stop.load(Ordering::SeqCst) {
                     return;
@@ -439,16 +445,16 @@ fn sender(shared: Arc<Shared>) {
                 if !notes.is_empty() {
                     drop(ob);
                     record(&shared, &notes);
-                    ob = shared.outbox.lock().unwrap();
+                    ob = locked(&shared.outbox);
                 }
                 if let Some(job) = job {
                     break job;
                 }
                 let wait = ob.next_wake_ms().map_or(3_600_000, |t| t.saturating_sub(now)).clamp(20, 3_600_000);
-                ob = shared.wake.wait_timeout(ob, Duration::from_millis(wait)).unwrap().0;
+                ob = shared.wake.wait_timeout(ob, Duration::from_millis(wait)).unwrap_or_else(PoisonError::into_inner).0;
             }
         };
-        let sub = shared.companion.lock().unwrap().store.device(&job.device).and_then(|d| d.subscription.clone());
+        let sub = locked(&shared.companion).store.device(&job.device).and_then(|d| d.subscription.clone());
         let now = wall_ms();
         let (mut outcome, status, mut detail) = match sub.as_ref() {
             None => (Outcome::Rejected, None, "no subscription".to_string()),
@@ -469,7 +475,7 @@ fn sender(shared: Arc<Shared>) {
         if outcome == Outcome::Gone {
             // The phone may have subscribed again while this send was under way: then "gone"
             // is about the old endpoint, and the reminder should go to the new one.
-            let current = shared.companion.lock().unwrap().store.device(&job.device).and_then(|d| d.subscription.as_ref().map(|s| s.endpoint.clone()));
+            let current = locked(&shared.companion).store.device(&job.device).and_then(|d| d.subscription.as_ref().map(|s| s.endpoint.clone()));
             if current.is_some() && current != sub.as_ref().map(|s| s.endpoint.clone()) {
                 outcome = Outcome::Retry;
                 detail = "old subscription gone; resending to the new one".into();
@@ -482,7 +488,7 @@ fn sender(shared: Arc<Shared>) {
             job.attempts,
             status.map_or("-".to_string(), |s| s.to_string())
         ));
-        let notes = shared.outbox.lock().unwrap().finish(job.id, outcome, status, wall_ms());
+        let notes = locked(&shared.outbox).finish(job.id, outcome, status, wall_ms());
         record(&shared, &notes);
     }
 }
@@ -522,7 +528,7 @@ fn record(shared: &Shared, notes: &[Note]) {
     if notes.is_empty() {
         return;
     }
-    let mut c = shared.companion.lock().unwrap();
+    let mut c = locked(&shared.companion);
     let mut changed = false;
     for n in notes {
         testhook::log(&format!("phone note {n:?}").replace(['\n', '\r'], " "));
@@ -600,10 +606,18 @@ fn serve(shared: &Arc<Shared>, mut stream: TcpStream, admin: bool) {
     let request = loop {
         match http::parse(&buf) {
             Ok(r) => break r,
-            Err(http::ParseError::Incomplete) if Instant::now() < deadline && buf.len() <= http::MAX_HEAD + http::MAX_BODY => match stream.read(&mut chunk) {
-                Ok(0) | Err(_) => return,
-                Ok(n) => buf.extend_from_slice(&chunk[..n]),
-            },
+            Err(http::ParseError::Incomplete) if Instant::now() < deadline && buf.len() <= http::MAX_HEAD + http::MAX_BODY => {
+                // Each read may only use what is left of the deadline, so a client that
+                // trickles bytes can't hold this (single) listener longer than IO_TIMEOUT.
+                let left = deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(1));
+                if stream.set_read_timeout(Some(left)).is_err() {
+                    return;
+                }
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                }
+            }
             Err(e) => {
                 let _ = stream.write_all(&http::Response::error(e.status(), "bad request").to_bytes());
                 let _ = stream.shutdown(Shutdown::Both);
@@ -612,7 +626,7 @@ fn serve(shared: &Arc<Shared>, mut stream: TcpStream, admin: bool) {
         }
     };
     let (response, effects) = {
-        let mut c = shared.companion.lock().unwrap();
+        let mut c = locked(&shared.companion);
         if admin {
             c.handle_admin(&request, wall_ms())
         } else {
@@ -631,7 +645,7 @@ fn serve(shared: &Arc<Shared>, mut stream: TcpStream, admin: bool) {
     for effect in effects {
         match effect {
             Effect::Persist => {
-                let c = shared.companion.lock().unwrap();
+                let c = locked(&shared.companion);
                 let _ = write_atomic(&shared.store_path, &c.store.to_json());
             }
             Effect::SetPhone { enabled, alerts } => unsafe {
@@ -639,7 +653,7 @@ fn serve(shared: &Arc<Shared>, mut stream: TcpStream, admin: bool) {
                 let _ = PostMessageW(HWND(shared.hidden as *mut _), MSG_PHONE_SETTINGS, WPARAM(wp), LPARAM(0));
             },
             Effect::SendTest { device } => enqueue(shared, &reminder::test_reminder(), Some(&device)),
-            Effect::DropJobs { device } => shared.outbox.lock().unwrap().drop_device(&device),
+            Effect::DropJobs { device } => locked(&shared.outbox).drop_device(&device),
             Effect::Receipt { device, event, after_ms } => {
                 testhook::log(&format!("phone receipt event={event} after_ms={after_ms} device={device}"));
             }
@@ -675,7 +689,7 @@ fn refresh_tailscale(shared: &Arc<Shared>, min_gap_ms: u64) {
             .filter(|h| h.ends_with(".ts.net"));
         let serve = tailscale(&["serve", "status"]).unwrap_or_else(|| "Tailscale not found".into());
         let funnel = tailscale(&["funnel", "status"]).unwrap_or_else(|| "Tailscale not found".into());
-        let mut c = shared.companion.lock().unwrap();
+        let mut c = locked(&shared.companion);
         if host.is_some() {
             c.public_host = host;
         }
@@ -733,15 +747,6 @@ fn check_tailscale() -> TailscaleState {
 }
 
 // ---------------------------------------------------------------- storage
-
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)
-}
 
 /// Encrypt for the current Windows user (DPAPI).
 fn protect(data: &[u8]) -> Option<Vec<u8>> {

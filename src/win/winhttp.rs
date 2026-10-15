@@ -40,6 +40,10 @@ pub fn get(url: &str, headers: &[(&str, String)], timeout_ms: i32, max_body: usi
 }
 
 fn request(method: &str, url: &str, headers: &[(&str, String)], body: &[u8], timeout_ms: i32, max_body: usize) -> Result<(u16, Vec<u8>), String> {
+    // WinHTTP takes NUL-terminated strings: a NUL could cut the host short.
+    if url.chars().any(char::is_control) {
+        return Err("unsupported URL".into());
+    }
     let (secure, rest) = if let Some(r) = url.strip_prefix("https://") {
         (true, r)
     } else if let Some(r) = url.strip_prefix("http://") {

@@ -28,6 +28,32 @@ jobs:
           foreach ($dll in "vcruntime140", "msvcp140", "libgcc_s", "libwinpthread") {
             if ($text.IndexOf($dll, [StringComparison]::OrdinalIgnoreCase) -ge 0) { throw "unseat.exe needs $dll, which is not part of Windows" }
           }
+      - name: Executable size budget
+        shell: pwsh
+        run: |
+          $size = (Get-Item target/release/unseat.exe).Length
+          $max = (Get-Content -Raw scripts/perf-budgets.json | ConvertFrom-Json).max.SizeBytes
+          "unseat.exe: $size bytes (budget $max)" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          if ($size -gt $max) { throw "unseat.exe is $size bytes, over its $max-byte budget in scripts/perf-budgets.json. Shrink it, or raise the budget in the same change and say why." }
+      # Timing, CPU and memory depend on the runner (no GPU, shared hardware), so this only
+      # reports; compare builds on one machine with scripts\bench.ps1 for decisions.
+      - name: Benchmark (informational)
+        continue-on-error: true
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bench.ps1 -Exes target/release/unseat.exe `
+            -Rounds 1 -IdleSeconds 20 -Cycles 3 -Budgets scripts/perf-budgets.json -Out bench.json | Tee-Object -FilePath bench.txt
+          "### Benchmark (informational, runner hardware)" >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+          Get-Content bench.txt >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench
+          path: bench.json
+          if-no-files-found: ignore
       # A ready-to-run build of every commit, for scripts\install.ps1 -Exe (no Rust or Docker).
       - uses: actions/upload-artifact@v4
         with:

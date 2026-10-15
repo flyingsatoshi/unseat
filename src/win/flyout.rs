@@ -1,29 +1,20 @@
-use crate::win::gfx::{self, Family, Fonts};
+use crate::win::gfx::{self, Family};
 use unseat::palette;
-use windows::core::{w, Interface};
+use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT, D2D_SIZE_U};
-use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1RenderTarget,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
-    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
-};
-use windows::Win32::Graphics::DirectWrite::{DWriteCreateFactory, DWRITE_FACTORY_TYPE_SHARED};
+use windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget;
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWMWCP_ROUND,
 };
-use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, EndPaint, GetDC, GetMonitorInfoW, InvalidateRect, MonitorFromRect, ReleaseDC,
     MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{Shell_NotifyIconGetRect, NOTIFYICONIDENTIFIER};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DrawIconEx, FindWindowW, GetClientRect,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DrawIconEx, FindWindowW,
     GetWindowLongPtrW, RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, DI_NORMAL,
     GWLP_USERDATA, HWND_TOPMOST, SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, WM_CREATE,
     WM_DESTROY, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
@@ -38,8 +29,7 @@ struct State {
     today: String,
     dark: bool,
     scale: f32,
-    factory: Option<ID2D1Factory>,
-    fonts: Option<Fonts>,
+    gfx: Option<&'static gfx::Shared>,
     rt: Option<ID2D1HwndRenderTarget>,
 }
 
@@ -71,7 +61,7 @@ pub fn show(owner: HWND, status: &str, today: &str, dark: bool) {
             (*ptr).status = status.to_string();
             (*ptr).today = today.to_string();
             (*ptr).dark = dark;
-            (*ptr).scale = dpi_scale(hwnd);
+            (*ptr).scale = gfx::dpi_scale(hwnd);
         }
         let dark_attr: i32 = dark.into();
         let _ = DwmSetWindowAttribute(
@@ -134,13 +124,6 @@ fn ensure_window() -> HWND {
     }
 }
 
-fn dpi_scale(hwnd: HWND) -> f32 {
-    match unsafe { GetDpiForWindow(hwnd) } {
-        0 => 1.0,
-        d => d as f32 / 96.0,
-    }
-}
-
 fn position(hwnd: HWND, owner: HWND) {
     unsafe {
         let ident = NOTIFYICONIDENTIFIER {
@@ -166,7 +149,7 @@ fn position(hwnd: HWND, owner: HWND) {
                 bottom: 1080,
             }
         };
-        let scale = dpi_scale(hwnd);
+        let scale = gfx::dpi_scale(hwnd);
         let fw = (WIN_W as f32 * scale).round() as i32;
         let fh = (WIN_H as f32 * scale).round() as i32;
         let gap = (8.0 * scale).round() as i32;
@@ -188,11 +171,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             status: String::new(),
             today: String::new(),
             dark: true,
-            scale: dpi_scale(hwnd),
-            factory: D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok(),
-            fonts: DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)
-                .ok()
-                .map(Fonts::new),
+            scale: gfx::dpi_scale(hwnd),
+            gfx: gfx::shared(),
             rt: None,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
@@ -221,10 +201,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 }
 
 unsafe fn paint(hwnd: HWND, st: &mut State) {
-    let Some(rt) = ensure_rt(hwnd, st) else {
+    let Some(rt) = gfx::window_target(hwnd, &mut st.rt) else {
         return;
     };
-    let Some(fonts) = st.fonts.as_ref() else {
+    let Some(fonts) = st.gfx.map(|g| &g.fonts) else {
         return;
     };
     let pal = palette(st.dark);
@@ -278,34 +258,3 @@ unsafe fn paint(hwnd: HWND, st: &mut State) {
     ReleaseDC(hwnd, hdc);
 }
 
-unsafe fn ensure_rt(hwnd: HWND, st: &mut State) -> Option<ID2D1RenderTarget> {
-    let mut rc = RECT::default();
-    let _ = GetClientRect(hwnd, &mut rc);
-    let size = D2D_SIZE_U {
-        width: (rc.right - rc.left).max(1) as u32,
-        height: (rc.bottom - rc.top).max(1) as u32,
-    };
-    if st.rt.is_none() {
-        let factory = st.factory.as_ref()?;
-        let props = D2D1_RENDER_TARGET_PROPERTIES {
-            r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
-            pixelFormat: D2D1_PIXEL_FORMAT {
-                format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                alphaMode: D2D1_ALPHA_MODE_IGNORE,
-            },
-            dpiX: 96.0,
-            dpiY: 96.0,
-            usage: D2D1_RENDER_TARGET_USAGE_NONE,
-            minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-        };
-        let hwnd_props = D2D1_HWND_RENDER_TARGET_PROPERTIES {
-            hwnd,
-            pixelSize: size,
-            presentOptions: D2D1_PRESENT_OPTIONS_NONE,
-        };
-        st.rt = factory.CreateHwndRenderTarget(&props, &hwnd_props).ok();
-    } else if let Some(rt) = st.rt.as_ref() {
-        let _ = rt.Resize(&size);
-    }
-    st.rt.as_ref().and_then(|rt| rt.cast().ok())
-}
