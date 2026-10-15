@@ -13,30 +13,24 @@ use unseat::{
     TimerDisplayMode, VisibleState, WidgetSize, ALERT_DURATION_PRESETS_SECS, SNOOZE_PRESETS_SECS,
 };
 use unseat::about::UpdateCheck;
-use windows::core::{w, Interface, HSTRING};
+use windows::core::{w, HSTRING};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
-};
+use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 use windows::Win32::Graphics::Direct2D::{
     ID2D1HwndRenderTarget, ID2D1RenderTarget, D2D1_ANTIALIAS_MODE_ALIASED,
-    D2D1_FEATURE_LEVEL_DEFAULT, D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE,
-    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
 };
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWMWCP_ROUND,
 };
-use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, EndPaint, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, ScreenToClient,
     MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
     VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT, VK_NEXT, VK_PRIOR,
@@ -1098,13 +1092,6 @@ unsafe fn apply_frame_theme(hwnd: HWND, dark: bool) {
     );
 }
 
-unsafe fn dpi_scale(hwnd: HWND) -> f32 {
-    match GetDpiForWindow(hwnd) {
-        0 => 1.0,
-        d => d as f32 / 96.0,
-    }
-}
-
 /// Size the window for `scale` and center it on the work area of the monitor nearest `near`.
 unsafe fn place_window(hwnd: HWND, scale: f32, near: POINT) {
     let monitor = MonitorFromPoint(near, MONITOR_DEFAULTTONEAREST);
@@ -1289,9 +1276,9 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
     };
     let mut cursor = POINT::default();
     let _ = GetCursorPos(&mut cursor);
-    place_window(hwnd, dpi_scale(hwnd), cursor);
+    place_window(hwnd, gfx::dpi_scale(hwnd), cursor);
     // The target monitor may use a different DPI than where the window was created.
-    let scale = dpi_scale(hwnd);
+    let scale = gfx::dpi_scale(hwnd);
     place_window(hwnd, scale, cursor);
     Box::new(Dialog {
         app,
@@ -1554,38 +1541,6 @@ unsafe fn ensure_focus_visible(hwnd: HWND, d: &mut Dialog) {
     }
 }
 
-unsafe fn ensure_rt(hwnd: HWND, d: &mut Dialog) -> Option<ID2D1RenderTarget> {
-    let mut rc = RECT::default();
-    let _ = GetClientRect(hwnd, &mut rc);
-    let size = D2D_SIZE_U {
-        width: (rc.right - rc.left).max(1) as u32,
-        height: (rc.bottom - rc.top).max(1) as u32,
-    };
-    if d.rt.is_none() {
-        let factory = &d.gfx?.factory;
-        let props = D2D1_RENDER_TARGET_PROPERTIES {
-            r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
-            pixelFormat: D2D1_PIXEL_FORMAT {
-                format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                alphaMode: D2D1_ALPHA_MODE_IGNORE,
-            },
-            dpiX: 96.0,
-            dpiY: 96.0,
-            usage: D2D1_RENDER_TARGET_USAGE_NONE,
-            minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-        };
-        let hwnd_props = D2D1_HWND_RENDER_TARGET_PROPERTIES {
-            hwnd,
-            pixelSize: size,
-            presentOptions: D2D1_PRESENT_OPTIONS_NONE,
-        };
-        d.rt = factory.CreateHwndRenderTarget(&props, &hwnd_props).ok();
-    } else if let Some(rt) = d.rt.as_ref() {
-        let _ = rt.Resize(&size);
-    }
-    d.rt.as_ref().and_then(|rt| rt.cast().ok())
-}
-
 fn label_style(
     kind: TextKind,
     s: f32,
@@ -1600,7 +1555,7 @@ fn label_style(
 }
 
 unsafe fn paint_ui(hwnd: HWND, d: &mut Dialog) {
-    let Some(rt) = ensure_rt(hwnd, d) else {
+    let Some(rt) = gfx::window_target(hwnd, &mut d.rt) else {
         return;
     };
     let scroll_max = max_scroll(&d.lay(hwnd));

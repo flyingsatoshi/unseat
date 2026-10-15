@@ -7,35 +7,27 @@ use crate::win::app::App;
 use crate::win::gfx::{self, Family, Fonts};
 use crate::win::tray;
 use unseat::{format_today_hm, palette, progress, timer_face_digits, Palette, Rgba, VisibleState};
-use windows::core::{w, Interface};
+use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
-};
-use windows::Win32::Graphics::Direct2D::{
-    ID2D1HwndRenderTarget, ID2D1RenderTarget, D2D1_FEATURE_LEVEL_DEFAULT,
-    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
-};
+use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
+use windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget;
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWMWCP_ROUND,
 };
-use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, EndPaint, GetMonitorInfoW, InvalidateRect, MonitorFromPoint, MONITORINFO,
     MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VIRTUAL_KEY, VK_DOWN, VK_ESCAPE,
     VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 use windows::Win32::UI::Shell::{Shell_NotifyIconGetRect, NOTIFYICONIDENTIFIER};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW, GetClientRect, GetCursorPos,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowW, GetCursorPos,
     GetWindowLongPtrW, KillTimer, LoadCursorW, PostMessageW, RegisterClassW, SetForegroundWindow,
     SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, CREATESTRUCTW, GWLP_USERDATA,
     HWND_TOPMOST, IDC_ARROW, SWP_SHOWWINDOW, SW_HIDE, WA_INACTIVE, WM_ACTIVATE, WM_CHAR,
@@ -290,7 +282,7 @@ pub fn show(app: *mut App, owner: HWND) {
         if st.is_null() {
             return;
         }
-        (*st).scale = dpi_scale(hwnd);
+        (*st).scale = gfx::dpi_scale(hwnd);
         (*st).focus = None;
         (*st).hover = None;
         let v = view(&*app);
@@ -310,13 +302,6 @@ pub fn show(app: *mut App, owner: HWND) {
         let _ = SetTimer(hwnd, REFRESH_ID, 1000, None);
         let _ = InvalidateRect(hwnd, None, false);
         crate::win::testhook::log("panel shown");
-    }
-}
-
-fn dpi_scale(hwnd: HWND) -> f32 {
-    match unsafe { GetDpiForWindow(hwnd) } {
-        0 => 1.0,
-        d => d as f32 / 96.0,
     }
 }
 
@@ -416,7 +401,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             focus: None,
             hover: None,
             tracking: false,
-            scale: dpi_scale(hwnd),
+            scale: gfx::dpi_scale(hwnd),
             gfx: gfx::shared(),
             rt: None,
         });
@@ -517,38 +502,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     }
 }
 
-unsafe fn ensure_rt(hwnd: HWND, st: &mut State) -> Option<ID2D1RenderTarget> {
-    let mut rc = RECT::default();
-    let _ = GetClientRect(hwnd, &mut rc);
-    let size = D2D_SIZE_U {
-        width: (rc.right - rc.left).max(1) as u32,
-        height: (rc.bottom - rc.top).max(1) as u32,
-    };
-    if st.rt.is_none() {
-        let factory = &st.gfx?.factory;
-        let props = D2D1_RENDER_TARGET_PROPERTIES {
-            r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
-            pixelFormat: D2D1_PIXEL_FORMAT {
-                format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                alphaMode: D2D1_ALPHA_MODE_IGNORE,
-            },
-            dpiX: 96.0,
-            dpiY: 96.0,
-            usage: D2D1_RENDER_TARGET_USAGE_NONE,
-            minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
-        };
-        let hwnd_props = D2D1_HWND_RENDER_TARGET_PROPERTIES {
-            hwnd,
-            pixelSize: size,
-            presentOptions: D2D1_PRESENT_OPTIONS_NONE,
-        };
-        st.rt = factory.CreateHwndRenderTarget(&props, &hwnd_props).ok();
-    } else if let Some(rt) = st.rt.as_ref() {
-        let _ = rt.Resize(&size);
-    }
-    st.rt.as_ref().and_then(|rt| rt.cast().ok())
-}
-
 fn bar_color(pal: &Palette, state: VisibleState) -> Rgba {
     match state {
         VisibleState::Overdue => pal.alarm,
@@ -562,7 +515,7 @@ unsafe fn paint(hwnd: HWND, st: &mut State) {
     if st.app.is_null() {
         return;
     }
-    let Some(rt) = ensure_rt(hwnd, st) else {
+    let Some(rt) = gfx::window_target(hwnd, &mut st.rt) else {
         return;
     };
     let Some(fonts) = st.fonts() else {

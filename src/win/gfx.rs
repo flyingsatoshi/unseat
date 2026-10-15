@@ -4,14 +4,21 @@ use std::cell::{OnceCell, RefCell};
 use unseat::Rgba;
 use windows::core::{w, PCWSTR};
 use windows::core::Interface;
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED, D2D_POINT_2F, D2D_RECT_F,
-    D2D_SIZE_F,
+    D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED,
+    D2D1_PIXEL_FORMAT, D2D_POINT_2F, D2D_RECT_F, D2D_SIZE_F, D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Factory, ID2D1RenderTarget, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_SMALL,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_ROUNDED_RECT, D2D1_SWEEP_DIRECTION_CLOCKWISE,
+    D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1RenderTarget, D2D1_ARC_SEGMENT,
+    D2D1_ARC_SIZE_SMALL, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
+    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
+    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
+    D2D1_SWEEP_DIRECTION_CLOCKWISE,
 };
+use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, DWRITE_FACTORY_TYPE_SHARED,
     IDWriteFactory, IDWriteFactory5, IDWriteFontCollection, IDWriteFontCollection1,
@@ -58,6 +65,53 @@ pub fn shared() -> Option<&'static Shared> {
             })))
         })
     })
+}
+
+/// The window's DPI as a scale factor (1.0 at 96 DPI).
+pub fn dpi_scale(hwnd: HWND) -> f32 {
+    match unsafe { GetDpiForWindow(hwnd) } {
+        0 => 1.0,
+        d => d as f32 / 96.0,
+    }
+}
+
+/// The render target of an ordinary (opaque) window, from the shared factory: created on first
+/// use, resized to the client area after that. `slot` holds it between paints.
+pub unsafe fn window_target(
+    hwnd: HWND,
+    slot: &mut Option<ID2D1HwndRenderTarget>,
+) -> Option<ID2D1RenderTarget> {
+    let mut rc = RECT::default();
+    let _ = GetClientRect(hwnd, &mut rc);
+    let size = D2D_SIZE_U {
+        width: (rc.right - rc.left).max(1) as u32,
+        height: (rc.bottom - rc.top).max(1) as u32,
+    };
+    match slot.as_ref() {
+        Some(rt) => {
+            let _ = rt.Resize(&size);
+        }
+        None => {
+            let props = D2D1_RENDER_TARGET_PROPERTIES {
+                r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                pixelFormat: D2D1_PIXEL_FORMAT {
+                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    alphaMode: D2D1_ALPHA_MODE_IGNORE,
+                },
+                dpiX: 96.0,
+                dpiY: 96.0,
+                usage: D2D1_RENDER_TARGET_USAGE_NONE,
+                minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
+            };
+            let hwnd_props = D2D1_HWND_RENDER_TARGET_PROPERTIES {
+                hwnd,
+                pixelSize: size,
+                presentOptions: D2D1_PRESENT_OPTIONS_NONE,
+            };
+            *slot = shared()?.factory.CreateHwndRenderTarget(&props, &hwnd_props).ok();
+        }
+    }
+    slot.as_ref().and_then(|rt| rt.cast().ok())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

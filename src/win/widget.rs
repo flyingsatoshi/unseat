@@ -12,7 +12,6 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
@@ -70,16 +69,7 @@ pub fn create(app: *mut App, x: i32, y: i32) -> windows::core::Result<HWND> {
     }
 }
 
-pub fn scale(hwnd: HWND) -> f32 {
-    unsafe {
-        let dpi = GetDpiForWindow(hwnd);
-        if dpi == 0 {
-            1.0
-        } else {
-            dpi as f32 / 96.0
-        }
-    }
-}
+pub use crate::win::gfx::dpi_scale as scale;
 
 pub fn paint_scale(hwnd: HWND, size: WidgetSize) -> f32 {
     layout_scale(scale(hwnd), size)
