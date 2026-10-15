@@ -444,3 +444,39 @@ fn render_key_follows_the_progress_band_by_the_pixel() {
     assert_eq!(key(0.5), key(0.501));
     assert_ne!(key(0.5), key(0.51));
 }
+
+#[test]
+fn docked_tab_key_ignores_seconds_it_does_not_show() {
+    let key = |s: Snapshot| {
+        timer_render_key(s, TimerDisplayMode::Countdown, TimerShape::Capsule, WidgetSize::Small, false, true)
+    };
+    let mut a = snap(VisibleState::Sitting);
+    a.sitting_elapsed = Duration::from_secs(600);
+    a.timer_remaining = Duration::from_secs(14 * 60 + 30);
+    let mut b = a;
+    b.sitting_elapsed += Duration::from_secs(1);
+    b.timer_remaining -= Duration::from_secs(1);
+    // The pill shows seconds; a tab shows only progress, and a peek only whole minutes.
+    assert_ne!(key(a), key(b));
+    assert_eq!(key(a).for_tab(a, false), key(b).for_tab(b, false));
+    assert_eq!(key(a).for_tab(a, true), key(b).for_tab(b, true));
+    let mut c = a;
+    c.timer_remaining = Duration::from_secs(13 * 60 + 59);
+    assert_ne!(key(a).for_tab(a, true), key(c).for_tab(c, true));
+    // State still counts: a tab changes colour when the session goes overdue.
+    let over = snap(VisibleState::Overdue);
+    assert_ne!(key(a).for_tab(a, false), key(over).for_tab(over, false));
+}
+
+#[test]
+fn peek_shows_whole_minutes_for_each_state() {
+    let mut s = snap(VisibleState::Sitting);
+    s.timer_remaining = Duration::from_secs(12 * 60 + 1);
+    assert_eq!(unseat::peek_minutes(s), (13, "min"));
+    let mut o = snap(VisibleState::Overdue);
+    o.overdue_by = Duration::from_secs(7 * 60 + 59);
+    assert_eq!(unseat::peek_minutes(o), (7, "over"));
+    let mut b = snap(VisibleState::Break);
+    b.break_remaining = Duration::from_secs(61);
+    assert_eq!(unseat::peek_minutes(b), (2, "break"));
+}

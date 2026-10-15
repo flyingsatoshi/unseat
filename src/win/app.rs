@@ -23,7 +23,7 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW, GetMessageW,
-    GetWindowLongPtrW, KillTimer, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer,
+    GetWindowLongPtrW, IsIconic, KillTimer, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer,
     SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, CREATESTRUCTW, GWLP_USERDATA,
     HWND_MESSAGE, HWND_NOTOPMOST, HWND_TOPMOST, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
     SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_HOTKEY,
@@ -757,18 +757,32 @@ impl App {
         .at_scale(scale)
         .with_progress(fill, unseat::widget_layout(scale).pill_w)
         .with_dock(frame.map_or(0, |f| f.code() * 2 + u32::from(pinned)));
+        let key = match frame.map(|f| f.draw) {
+            Some(DockDraw::Tab) => key.for_tab(snap, false),
+            Some(DockDraw::Peek) => key.for_tab(snap, true),
+            _ => key,
+        };
+        let minimized = unsafe { IsIconic(self.widget).as_bool() };
         match frame {
             Some(frame) => self.place_docked(frame),
             None => {
                 self.dock_frame = None;
-                widget::resize_to_shape(
-                    self.widget,
-                    self.settings.timer_shape,
-                    self.settings.widget_size,
-                );
+                // A minimized window reports its iconic rectangle, so sizing it would move
+                // it every second; `show_widget` repaints (and sizes) it when it is back.
+                if self.widget_visible && !minimized {
+                    widget::resize_to_shape(
+                        self.widget,
+                        self.settings.timer_shape,
+                        self.settings.widget_size,
+                    );
+                }
             }
         }
-        if self.last_key == Some(key) {
+        // Nobody sees an overlay that is hidden or held back over a fullscreen app: skip the
+        // once-a-second frames until it is back (showing it forces a repaint). A forced
+        // repaint (`last_key` cleared) still draws, so the window never shows a stale frame.
+        let on_screen = self.widget_visible && !self.dock_suppressed && !minimized;
+        if self.last_key == Some(key) || (!on_screen && self.last_key.is_some()) {
             return;
         }
         self.last_key = Some(key);

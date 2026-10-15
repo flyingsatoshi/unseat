@@ -37,7 +37,7 @@ pub use theme::{
 };
 pub use view::{
     chip_center, face_digits, format_elapsed, format_goal_parts, format_limit, format_today, format_today_hm,
-    hit_control, hit_overlay, layout_scale, progress, snap_to_edges, status_line, tag_text, timer_digit_px,
+    hit_control, hit_overlay, layout_scale, peek_minutes, progress, snap_to_edges, status_line, tag_text, timer_digit_px,
     timer_face_digits, timer_render_key, widget_layout, widget_pixel_size, Hit, TimerRenderKey,
     WidgetLayout, PILL_RADIUS, WIDGET_H, WIDGET_W,
 };

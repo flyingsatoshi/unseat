@@ -1,7 +1,7 @@
 use crate::win::gfx::{self, glyph, Family, Fonts};
 use std::cell::RefCell;
 use unseat::{
-    chip_center, palette, progress, tag_text, timer_digit_px, timer_face_digits, widget_layout,
+    chip_center, palette, peek_minutes, progress, tag_text, timer_digit_px, timer_face_digits, widget_layout,
     widget_pixel_size, DockDraw, DockEdge, Palette, Rgba, Snapshot, TimerDisplayMode, TimerShape,
     VisibleState,
 };
@@ -413,10 +413,11 @@ unsafe fn draw_tab(
         return;
     }
     let snap = p.snap;
-    let (value, unit) = match snap.state {
-        VisibleState::Overdue => (format!("+{}", snap.overdue_by.as_secs() / 60), "over"),
-        VisibleState::Break => (snap.break_remaining.as_secs().div_ceil(60).to_string(), "break"),
-        _ => (snap.timer_remaining.as_secs().div_ceil(60).to_string(), "min"),
+    let (minutes, unit) = peek_minutes(snap);
+    let value = if snap.state == VisibleState::Overdue {
+        format!("+{minutes}")
+    } else {
+        minutes.to_string()
     };
     let ink = gfx::fade(c.digits, digit_alpha(snap.state));
     let fonts = d2d.fonts;
