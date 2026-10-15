@@ -250,6 +250,11 @@ pub fn run() -> windows::core::Result<()> {
         prompt::shutdown();
         settings_dlg::shutdown();
         tray::remove(hidden);
+        // No window may keep a pointer to the App about to be freed.
+        for hwnd in [(*ptr).widget, hidden] {
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            let _ = DestroyWindow(hwnd);
+        }
         drop(Box::from_raw(ptr));
         let _ = ReleaseMutex(mutex);
         let _ = CloseHandle(mutex);
