@@ -1,0 +1,4 @@
+# Link the C runtime into the exe, so Unseat runs on a clean Windows PC without the Visual C++
+# Redistributable (VCRUNTIME140.dll). GNU builds already use only Windows' own DLLs.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

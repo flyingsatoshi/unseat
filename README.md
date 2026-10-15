@@ -84,7 +84,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for how the engine and Win32 host split.
 
 Download `unseat.exe` from [Releases](https://github.com/flyingsatoshi/unseat/releases), put it in a permanent folder of your choice (for example `%LOCALAPPDATA%\Programs\Unseat`), and run it there.
 
-> The latest published release is 0.1.1. Version 0.2 described here is on `main`; until its release is published, [build it from source](#build-from-source). Unseat is portable: it does not copy or relaunch itself, or create shortcuts automatically. You can pin it to the taskbar or create a shortcut yourself.
+Unseat needs only Windows 10/11 (x64): no installer, runtime, Docker or developer tools.
+
+> The latest published release is 0.1.1. Version 0.2 described here is on `main`; until its release is published, download the `unseat-exe` artifact from the latest [CI run](https://github.com/flyingsatoshi/unseat/actions/workflows/ci.yml?query=branch%3Amain) on `main` (needs a GitHub sign-in), or [build it from source](#build-from-source). Unseat is portable: it does not copy or relaunch itself, or create shortcuts automatically. You can pin it to the taskbar or create a shortcut yourself.
 
 Close from the taskbar or tray **Quit**. Click the pinned icon to open it again. Hide the overlay from the close chip or tray; the timer keeps running.
 
@@ -126,22 +128,27 @@ For a shorter delay, snooze **5 / 10 / 15 / 30** minutes or a custom duration (S
 
 ## Build from source
 
-Windows 10/11 x64, [Rust](https://rustup.rs/), and the MSVC Build Tools C++ workload including the Windows SDK/resource compiler.
+Windows 10/11 x64, [Rust](https://rustup.rs/), and the MSVC Build Tools C++ workload including the Windows SDK/resource compiler. Docker is not needed.
 
-From an x64 Native Tools prompt (or after `vcvars64.bat`):
+Cargo finds the Build Tools by itself; an x64 Native Tools prompt works too:
 
 ```bat
 cargo test --locked --all-targets
 cargo build --locked --release --features gui
 ```
 
-The binary is `target\release\unseat.exe`. To run it day to day, install it instead:
+The binary is `target\release\unseat.exe`. It links the C runtime statically (`.cargo/config.toml`), so it runs on any Windows 10/11 PC without the Visual C++ Redistributable; CI checks that it needs only Windows' own DLLs. To run it day to day, install it instead:
 
 ```bat
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-That builds, closes the running Unseat, copies the build to `dist\unseat.exe`, points **Launch with Windows** there and starts it. Rerun it after every change. If Smart App Control blocks local builds (`os error 4551`), add `-Docker` to cross-build in a Rust Linux container instead. Builds under `target\` never register themselves to start with Windows, and opening a newer build while an older one runs replaces the older one.
+That builds, closes the running Unseat, copies the build to `dist\unseat.exe`, points an existing **Launch with Windows** entry there and starts it. Settings, statistics and iPhone pairing in `%APPDATA%\Unseat` are kept. Rerun it after every change.
+
+- `-Exe path\to\unseat.exe` installs an exe that is already built, such as a release or the `unseat-exe` CI artifact. It needs no Rust, build tools or Docker.
+- `-Docker` is optional. It cross-builds in a Rust Linux container when local builds are blocked, for example by Smart App Control (`os error 4551`). The container is limited to 4 CPUs and 6 GB (`-DockerCpus`, `-DockerMemory`) and keeps downloaded crates in the `unseat-cargo-registry` volume. The exe it makes also needs only Windows.
+
+Builds under `target\` never register themselves to start with Windows, and opening a newer build while an older one runs replaces the older one.
 
 End-to-end tests drive the real executable (idle, lock, sleep/resume, minimize, restart, migration, sizes, monitors, tray, startup entry, shortcuts). They run an isolated test instance beside any Unseat you already have open, with its own settings folder and startup value:
 
