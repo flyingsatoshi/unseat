@@ -1,4 +1,3 @@
-mod alert_card;
 mod app;
 mod autostart;
 mod docking;
@@ -11,6 +10,7 @@ mod idle;
 mod install;
 mod paint;
 mod phone;
+mod prompt;
 mod session;
 mod settings_dlg;
 mod sound;

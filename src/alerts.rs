@@ -1,6 +1,6 @@
 use crate::engine::Beep;
 use crate::settings::Settings;
-use crate::view::format_limit;
+use crate::view::{format_goal_parts, format_limit};
 use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,22 +62,48 @@ pub fn alert_notice(beep: Beep, settings: &Settings, sitting: Duration) -> Optio
     }
 }
 
-/// The question beside the overlay when time is up: take a break, or keep going for one
-/// more full session. The button labels carry the lengths from Settings.
+/// A one-line caption under the overlay, with a shorter form for when the full one would
+/// be wider than a small pill.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Caption {
+    pub full: String,
+    pub short: String,
+}
+
+/// The quiet question under the overlay when time is up: two small tabs (take a break, or
+/// one more full session) and a caption. Labels carry the lengths from Settings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimeUpPrompt {
-    pub title: &'static str,
-    pub body: String,
+    pub caption: Caption,
     pub break_label: String,
     pub extend_label: String,
 }
 
 pub fn time_up_prompt(settings: &Settings, sitting: Duration) -> TimeUpPrompt {
-    let minutes = |secs: u64| format_limit(Duration::from_secs(secs / 60 * 60));
+    let sat = format_limit(Duration::from_secs(sitting.as_secs() / 60 * 60));
     TimeUpPrompt {
-        title: "Time to stand up",
-        body: format!("You've been sitting for {}. Break or keep going?", minutes(sitting.as_secs())),
-        break_label: format!("Break · {}", minutes(settings.break_duration_secs)),
-        extend_label: format!("Extend · {}", minutes(settings.sitting_limit_secs)),
+        caption: Caption {
+            full: format!("{sat} sitting · time to stand"),
+            short: format!("{sat} sitting"),
+        },
+        break_label: format!("Break {}", short_minutes(settings.break_duration_secs)),
+        extend_label: format!("+{}", short_minutes(settings.sitting_limit_secs)),
     }
+}
+
+/// The caption shown for a few seconds when a break ends.
+pub fn break_over_note(settings: &Settings) -> Caption {
+    Caption {
+        full: format!(
+            "Break's over · new {} session",
+            format_limit(Duration::from_secs(settings.sitting_limit_secs))
+        ),
+        short: "Break's over".to_string(),
+    }
+}
+
+/// "10m", "40m", "90m", "2h": the overlay's short form.
+fn short_minutes(secs: u64) -> String {
+    let (n, unit) = format_goal_parts(Duration::from_secs(secs / 60 * 60));
+    format!("{n}{}", if unit == "hr" { "h" } else { "m" })
 }

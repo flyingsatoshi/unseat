@@ -225,6 +225,7 @@ pub struct DockController {
     left_at: Option<Duration>,
     reveal_until: Option<Duration>,
     fullscreen: bool,
+    held: bool,
 }
 
 impl DockController {
@@ -243,6 +244,7 @@ impl DockController {
             left_at: Some(Duration::ZERO),
             reveal_until: None,
             fullscreen: false,
+            held: false,
         }
     }
 
@@ -317,6 +319,23 @@ impl DockController {
         }
     }
 
+    /// While a question waits on the overlay (the time-up tabs), it does not slide away by
+    /// itself. Holding never slides it out; letting go starts the usual hide delay.
+    pub fn hold(&mut self, now: Duration, on: bool) {
+        if on == self.held {
+            return;
+        }
+        self.held = on;
+        if !on && !self.hover {
+            self.left_at = Some(now);
+            self.reveal_until = None;
+        }
+    }
+
+    pub fn held(&self) -> bool {
+        self.held
+    }
+
     pub fn set_autohide(&mut self, now: Duration, autohide: bool) {
         self.autohide = autohide;
         if !autohide {
@@ -355,7 +374,7 @@ impl DockController {
 
     /// Advance timers; call at `next_wake` or on any event.
     pub fn tick(&mut self, now: Duration) {
-        if self.phase != DockPhase::Expanded || self.hover {
+        if self.phase != DockPhase::Expanded || self.hover || self.held {
             return;
         }
         if !self.autohide && !self.fullscreen {
@@ -380,7 +399,7 @@ impl DockController {
         if self.animating(now) {
             return Some(FRAME);
         }
-        if self.phase != DockPhase::Expanded || self.hover || (!self.autohide && !self.fullscreen) {
+        if self.phase != DockPhase::Expanded || self.hover || self.held || (!self.autohide && !self.fullscreen) {
             return None;
         }
         let due = match (self.reveal_until, self.left_at) {

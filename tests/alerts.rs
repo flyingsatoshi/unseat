@@ -1,7 +1,7 @@
 use std::time::Duration;
 use unseat::{
-    alert_actions, alert_notice, scale_wav, time_up_prompt, volume_peak, wav_peak, AlertSound,
-    Beep, Settings, MAX_PEAK,
+    alert_actions, alert_notice, break_over_note, scale_wav, time_up_prompt, volume_peak,
+    wav_peak, AlertSound, Beep, Settings, MAX_PEAK,
 };
 
 const SOUNDS: [(&str, &[u8]); 5] = [
@@ -120,11 +120,11 @@ fn time_up_prompt_offers_a_break_or_one_more_session_with_their_lengths() {
     let mut s = Settings::default();
     s.sitting_limit_secs = 40 * 60;
     s.break_duration_secs = 10 * 60;
-    let p = time_up_prompt(&s, Duration::from_secs(40 * 60 + 59));
-    assert_eq!(p.title, "Time to stand up");
-    assert_eq!(p.body, "You've been sitting for 40 min. Break or keep going?");
-    assert_eq!(p.break_label, "Break · 10 min");
-    assert_eq!(p.extend_label, "Extend · 40 min");
+    let p = time_up_prompt(&s, Duration::from_secs(80 * 60 + 59));
+    assert_eq!(p.break_label, "Break 10m");
+    assert_eq!(p.extend_label, "+40m");
+    assert_eq!(p.caption.full, "80 min sitting · time to stand");
+    assert_eq!(p.caption.short, "80 min sitting");
 }
 
 #[test]
@@ -132,10 +132,21 @@ fn time_up_prompt_counts_extended_time_and_long_limits_in_hours() {
     let mut s = Settings::default();
     s.sitting_limit_secs = 2 * 3600;
     let p = time_up_prompt(&s, Duration::from_secs(4 * 3600));
-    assert_eq!(p.body, "You've been sitting for 4 hr. Break or keep going?");
-    assert_eq!(p.extend_label, "Extend · 2 hr");
+    assert_eq!(p.caption.full, "4 hr sitting · time to stand");
+    assert_eq!(p.extend_label, "+2h");
+    s.sitting_limit_secs = 90 * 60;
     let p = time_up_prompt(&s, Duration::from_secs(150 * 60));
-    assert!(p.body.contains("150 min"), "{}", p.body);
+    assert_eq!(p.extend_label, "+90m");
+    assert!(p.caption.full.starts_with("150 min"), "{}", p.caption.full);
+}
+
+#[test]
+fn break_over_note_names_the_new_session() {
+    let mut s = Settings::default();
+    s.sitting_limit_secs = 40 * 60;
+    let note = break_over_note(&s);
+    assert_eq!(note.full, "Break's over · new 40 min session");
+    assert_eq!(note.short, "Break's over");
 }
 
 #[test]

@@ -37,7 +37,7 @@ The host supplies monotonic timestamps (`GetTickCount64`, which keeps counting t
 
 ### Alerts
 
-The engine reports `LimitReached`, `Progressive` and `BreakOver` regardless of sound settings. `alert_actions` decides: sound if enabled and volume > 0; a Windows notification for time-up and break-over only, so long overdue stretches never pile up toasts. The host shows that notification only while the overlay is hidden; beside a visible overlay the alert card asks *Break* or *Extend* (`time_up_prompt`) whatever the notification setting, and waits for the overlay if it is hidden. A delayed update that spans several reminder intervals fires one reminder, not a burst.
+The engine reports `LimitReached`, `Progressive` and `BreakOver` regardless of sound settings. `alert_actions` decides: sound if enabled and volume > 0; a Windows notification for time-up and break-over only, so long overdue stretches never pile up toasts. The host shows that notification only while the overlay is hidden; beside a visible overlay the tabs under it ask (`time_up_prompt`) whatever the notification setting, wait while the overlay is hidden or docked away, and hold an auto-hiding dock out (`DockController::hold`). A delayed update that spans several reminder intervals fires one reminder, not a burst.
 
 ## Win32 host (`src/win/`, `--features gui`)
 
@@ -48,7 +48,7 @@ The engine reports `LimitReached`, `Progressive` and `BreakOver` regardless of s
 | `paint`, `gfx` | Overlay painter (pill as progress bar, docked tab and peek) with a cached back buffer; shared Direct2D helpers, text-format cache, the embedded Sora font loaded from memory, tabular digits measured to fit |
 | `docking` | Applies `DockController` to the overlay window: placement, slide frames (~16 ms timer only while sliding), drag-to-dock, fullscreen detection |
 | `tray_panel` | Custom tray panel that replaces the native menu; keyboard operable |
-| `alert_card` | Non-activating card beside the overlay: asks *Break* or *Extend* when time is up (stays until answered), tells when a break ends |
+| `prompt` | When time is up, two small tabs (*Break*, one more session) and a caption hang from the overdue pill, in a layered window kept just below the overlay; a caption when a break ends. Never takes focus |
 | `settings_dlg` | Tabbed settings. One row table drives layout, painting, hit testing and keyboard focus |
 | `tray`, `flyout` | Tray icon, status tooltip (updated only when its text changes), notifications, hover card |
 | `sound` | Embedded WAVs via `PlaySoundW(SND_MEMORY)` from a volume-scaled copy kept alive while playing |

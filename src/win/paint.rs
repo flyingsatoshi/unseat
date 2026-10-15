@@ -49,11 +49,12 @@ impl D2d {
     }
 }
 
-/// A 32-bit DIB selected into a memory DC, with a DC render target bound to it. Rebuilt only
-/// when the overlay size changes, instead of once per second.
-struct Surface {
-    w: i32,
-    h: i32,
+/// A 32-bit DIB selected into a memory DC, with a DC render target bound to it, for a
+/// layered (per-pixel alpha) window: the overlay and the prompt under it. Rebuilt only when
+/// the size changes, instead of once per second.
+pub(crate) struct Surface {
+    pub(crate) w: i32,
+    pub(crate) h: i32,
     hdc: HDC,
     dib: HBITMAP,
     old: HGDIOBJ,
@@ -62,7 +63,7 @@ struct Surface {
 }
 
 impl Surface {
-    unsafe fn new(factory: Option<&ID2D1Factory>, w: i32, h: i32) -> Option<Self> {
+    pub(crate) unsafe fn new(factory: Option<&ID2D1Factory>, w: i32, h: i32) -> Option<Self> {
         let screen = GetDC(HWND::default());
         let hdc = CreateCompatibleDC(screen);
         ReleaseDC(HWND::default(), screen);
@@ -106,6 +107,46 @@ impl Surface {
     }
 }
 
+impl Surface {
+    /// The Direct2D target drawing into this surface, if hardware drawing is available.
+    pub(crate) fn target(&self) -> Option<ID2D1RenderTarget> {
+        self.rt.as_ref().and_then(as_rt)
+    }
+
+    /// Raw premultiplied BGRA pixels, for test screenshots.
+    pub(crate) fn pixels(&self) -> Option<Vec<u8>> {
+        if self.bits.is_null() {
+            return None;
+        }
+        let len = (self.w * self.h * 4) as usize;
+        Some(unsafe { std::slice::from_raw_parts(self.bits as *const u8, len) }.to_vec())
+    }
+
+    /// Show the painted pixels in the layered window `hwnd`, moved to `at` (screen pixels)
+    /// if given, and faded to `alpha`.
+    pub(crate) unsafe fn present(&self, hwnd: HWND, at: Option<POINT>, alpha: u8) {
+        let blend = BLENDFUNCTION {
+            BlendOp: AC_SRC_OVER as u8,
+            BlendFlags: 0,
+            SourceConstantAlpha: alpha,
+            AlphaFormat: AC_SRC_ALPHA as u8,
+        };
+        let size = SIZE { cx: self.w, cy: self.h };
+        let src = POINT { x: 0, y: 0 };
+        let _ = UpdateLayeredWindow(
+            hwnd,
+            HDC::default(),
+            at.as_ref().map(|p| p as *const POINT),
+            Some(&size as *const SIZE),
+            self.hdc,
+            Some(&src as *const POINT),
+            COLORREF(0),
+            Some(&blend as *const BLENDFUNCTION),
+            ULW_ALPHA,
+        );
+    }
+}
+
 impl Drop for Surface {
     fn drop(&mut self) {
         unsafe {
@@ -121,12 +162,7 @@ impl D2d {
     pub fn snapshot(&self) -> Option<(i32, i32, Vec<u8>)> {
         let surface = self.surface.borrow();
         let s = surface.as_ref()?;
-        if s.bits.is_null() {
-            return None;
-        }
-        let len = (s.w * s.h * 4) as usize;
-        let bytes = unsafe { std::slice::from_raw_parts(s.bits as *const u8, len) }.to_vec();
-        Some((s.w, s.h, bytes))
+        Some((s.w, s.h, s.pixels()?))
     }
 }
 
@@ -197,25 +233,7 @@ pub fn paint(d2d: Option<&D2d>, hwnd: HWND, p: &OverlayPaint) {
         if !drew {
             gdi_fallback(surface.hdc, surface.bits, cx, cy, pal, p);
         }
-        let blend = BLENDFUNCTION {
-            BlendOp: AC_SRC_OVER as u8,
-            BlendFlags: 0,
-            SourceConstantAlpha: 255,
-            AlphaFormat: AC_SRC_ALPHA as u8,
-        };
-        let size = SIZE { cx, cy };
-        let src = POINT { x: 0, y: 0 };
-        let _ = UpdateLayeredWindow(
-            hwnd,
-            HDC::default(),
-            None,
-            Some(&size as *const SIZE),
-            surface.hdc,
-            Some(&src as *const POINT),
-            COLORREF(0),
-            Some(&blend as *const BLENDFUNCTION),
-            ULW_ALPHA,
-        );
+        surface.present(hwnd, None, 255);
     }
 }
 

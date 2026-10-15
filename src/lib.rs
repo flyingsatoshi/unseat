@@ -12,7 +12,8 @@ mod theme;
 mod view;
 
 pub use alerts::{
-    alert_actions, alert_notice, time_up_prompt, AlertActions, Notice, TimeUpPrompt,
+    alert_actions, alert_notice, break_over_note, time_up_prompt, AlertActions, Caption, Notice,
+    TimeUpPrompt,
 };
 pub use audio::{scale_wav, volume_peak, wav_peak, MAX_PEAK};
 pub use date::CivilDate;
@@ -31,7 +32,9 @@ pub use settings::{
     HISTORY_DAYS, SETTINGS_VERSION, SNOOZE_PRESETS_SECS,
 };
 pub use stats::{average_secs, recent_days, weekday_initial, DayBar};
-pub use theme::{contrast, palette, OverlayColors, Palette, Rgba, DARK, LIGHT, WARN_AT};
+pub use theme::{
+    contrast, palette, OverlayColors, Palette, PromptColors, Rgba, DARK, LIGHT, WARN_AT,
+};
 pub use view::{
     chip_center, face_digits, format_elapsed, format_goal_parts, format_limit, format_today, format_today_hm,
     hit_control, hit_overlay, layout_scale, progress, snap_to_edges, status_line, tag_text, timer_digit_px,

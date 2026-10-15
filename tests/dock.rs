@@ -196,3 +196,33 @@ fn fullscreen_apps_hide_the_overlay_and_its_tab_and_block_reveals() {
     pinned.set_fullscreen(ms(5000), false);
     assert_eq!(pinned.phase(), DockPhase::Expanded, "a pinned overlay comes back");
 }
+
+#[test]
+fn a_waiting_question_holds_the_overlay_out_until_answered() {
+    let mut d = controller();
+    d.tick(ms(3000));
+    assert!(d.alert(ms(10_000), true));
+    d.hold(ms(10_000), true);
+    d.tick(ms(60_000));
+    assert_eq!(d.phase(), DockPhase::Expanded, "held past the reveal time");
+    assert_eq!(d.next_wake(ms(60_000)), None, "nothing to wake for while held");
+    d.hold(ms(60_000), false);
+    d.tick(ms(62_900));
+    assert_eq!(d.phase(), DockPhase::Expanded, "the usual hide delay after letting go");
+    d.tick(ms(63_000));
+    assert_eq!(d.phase(), DockPhase::Hidden);
+}
+
+#[test]
+fn holding_never_slides_a_hidden_overlay_out() {
+    let mut d = controller();
+    d.tick(ms(3000));
+    assert_eq!(d.phase(), DockPhase::Hidden);
+    d.hold(ms(4000), true);
+    d.tick(ms(5000));
+    assert_eq!(d.phase(), DockPhase::Hidden, "a reveal policy of Never is respected");
+    d.click(ms(6000));
+    d.tick(ms(30_000));
+    assert_eq!(d.phase(), DockPhase::Expanded, "opened by the user, then held");
+    assert!(d.held());
+}
