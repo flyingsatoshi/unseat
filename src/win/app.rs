@@ -5,7 +5,7 @@ use crate::win::{
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use unseat::{
-    alert_actions, break_over_note, clamp_clock, format_today, next_tick_delay,
+    alert_actions, break_over_note, checkpoint_current, clamp_clock, format_today, next_tick_delay,
     restored_today_sitting, status_line, time_up_prompt, timer_render_key, widget_layout, Beep,
     CivilDate, Command, DockDraw, DockFrame, DockPhase, EngineConfig, Input, PhoneAlerts,
     Settings, SittingEngine, ThemePreference, TimerRenderKey, VisibleState, WidgetSize, WIDGET_H,
@@ -33,7 +33,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const HIDDEN_CLASS: windows::core::PCWSTR = w!("UnseatHidden");
 const TICK_ID: usize = 1;
 const SOUND_ID: usize = 2;
+/// How often to check whether the settings file still restores the running timer.
 const SAVE_EVERY: Duration = Duration::from_secs(60);
+/// Rewrite it at least this often anyway, so a crash just before midnight loses little of
+/// that day's total (an archived day keeps the total last written).
+const SAVE_AT_LEAST_EVERY: Duration = Duration::from_secs(15 * 60);
+/// How far a restore from the file may be off before it counts as stale.
+const RESTORE_TOLERANCE: Duration = Duration::from_secs(3);
 
 pub struct App {
     pub engine: SittingEngine,
@@ -52,7 +58,11 @@ pub struct App {
     pub tray_added: bool,
     pub d2d: Option<paint::D2d>,
     last_key: Option<TimerRenderKey>,
+    /// When the periodic save check last ran, and when the file was last written (monotonic).
     last_save_at: Duration,
+    last_write_at: Duration,
+    /// What the settings file holds: the settings as last written.
+    on_disk: Option<Settings>,
     last_tray_select: Option<Instant>,
     last_clock: Option<Duration>,
     last_tip: String,
@@ -163,6 +173,8 @@ pub fn run() -> windows::core::Result<()> {
             d2d: paint::D2d::new(),
             last_key: None,
             last_save_at: Duration::ZERO,
+            last_write_at: Duration::ZERO,
+            on_disk: None,
             last_tray_select: None,
             last_clock: None,
             last_tip: String::new(),
@@ -487,8 +499,10 @@ impl App {
             result.snapshot.sitting_elapsed,
         );
         if now.saturating_sub(self.last_save_at) >= SAVE_EVERY {
-            self.persist_today();
             self.last_save_at = now;
+            if self.disk_stale(now) {
+                self.persist_today();
+            }
         }
         if !self.tray_added {
             self.add_tray();
@@ -620,8 +634,29 @@ impl App {
         self.save_settings();
     }
 
-    pub fn save_settings(&self) {
-        let _ = self.settings.save_to(&self.settings_path);
+    pub fn save_settings(&mut self) {
+        if self.settings.save_to(&self.settings_path).is_ok() {
+            self.on_disk = Some(self.settings.clone());
+            self.last_write_at = self.clock_now();
+        }
+    }
+
+    /// Whether the settings file no longer brings back what a restart should: a preference,
+    /// the date or the history changed, or the timer moved in a way that restoring from the
+    /// saved checkpoint would not reproduce. While only time passes it stays current (a
+    /// restore adds the downtime itself), so it is not rewritten every minute.
+    fn disk_stale(&self, now: Duration) -> bool {
+        let Some(disk) = &self.on_disk else { return true };
+        let Some(checkpoint) = disk.timer_checkpoint else { return true };
+        now.saturating_sub(self.last_write_at) >= SAVE_AT_LEAST_EVERY
+            || *disk != self.settings
+            || !checkpoint_current(
+                &self.engine,
+                checkpoint,
+                Duration::from_secs(disk.today_sitting_secs),
+                wall_now_secs(),
+                RESTORE_TOLERANCE,
+            )
     }
 
     /// Show the size, theme and always-on-top choices on the overlay without saving them.

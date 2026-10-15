@@ -22,7 +22,7 @@ pub use dock::{
     DockReveal, Rect, DOCK_SNAP, PILL_MARGIN, TAB_LEN, TAB_THICK,
 };
 pub use engine::{
-    clamp_clock, next_tick_delay, restored_today_sitting, Beep, Command, EngineConfig, Input, SittingEngine,
+    checkpoint_current, clamp_clock, next_tick_delay, restored_today_sitting, Beep, Command, EngineConfig, Input, SittingEngine,
     Snapshot, TickResult, VisibleState,
 };
 pub use place::{is_dev_build, newer_build_takes_over};

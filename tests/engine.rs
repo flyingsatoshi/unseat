@@ -1,7 +1,8 @@
 use std::time::Duration;
 use unseat::{
-    clamp_clock, next_tick_delay, restored_today_sitting, Beep, CivilDate, Command, EngineConfig,
-    InactivityBehavior, Input, Settings, SittingEngine, TimerCheckpoint, VisibleState,
+    checkpoint_current, clamp_clock, next_tick_delay, restored_today_sitting, Beep, CivilDate,
+    Command, EngineConfig, InactivityBehavior, Input, Settings, SittingEngine, TimerCheckpoint,
+    VisibleState,
 };
 
 /// "Pause when inactive" turned on. Most legacy tests exercise that opt-in mode.
@@ -915,4 +916,75 @@ fn next_tick_lands_just_after_the_next_second_boundary() {
 
     e.apply(Command::TogglePause);
     assert_eq!(next_tick_delay(&e.snapshot()), Duration::from_secs(1));
+}
+
+fn continue_cfg() -> EngineConfig {
+    EngineConfig {
+        inactivity_behavior: InactivityBehavior::Continue,
+        ..cfg()
+    }
+}
+
+const TOLERANCE: Duration = Duration::from_secs(3);
+
+#[test]
+fn a_running_session_stays_current_on_disk_while_only_time_passes() {
+    let mut e = SittingEngine::new(continue_cfg(), day(), Duration::from_secs(500));
+    e.tick(Duration::ZERO, day(), active());
+    e.tick(Duration::from_secs(100), day(), active());
+    let saved = e.checkpoint(10_000);
+    let saved_today = e.snapshot().today_sitting;
+    // Fourteen minutes later, idle or not, through the limit: a restore adds the same time.
+    e.tick(Duration::from_secs(100 + 14 * 60), day(), idle());
+    assert!(checkpoint_current(&e, saved, saved_today, 10_000 + 14 * 60, TOLERANCE));
+    e.tick(Duration::from_secs(100 + 3600), day(), active());
+    assert_eq!(e.snapshot().state, VisibleState::Overdue);
+    assert!(checkpoint_current(&e, saved, saved_today, 10_000 + 3600, TOLERANCE));
+    // A wall clock that jumped away from the session's time is not.
+    assert!(!checkpoint_current(&e, saved, saved_today, 10_000 + 3600 + 30, TOLERANCE));
+}
+
+#[test]
+fn commands_make_the_saved_checkpoint_stale() {
+    let base = || {
+        let mut e = SittingEngine::new(continue_cfg(), day(), Duration::ZERO);
+        e.tick(Duration::ZERO, day(), active());
+        e.tick(Duration::from_secs(3700), day(), active());
+        e
+    };
+    let saved = base().checkpoint(20_000);
+    let today = base().snapshot().today_sitting;
+    for cmd in [Command::TogglePause, Command::Reset, Command::Extend, Command::StartBreak, Command::Snooze(Duration::from_secs(600))] {
+        let mut e = base();
+        e.apply(cmd);
+        assert!(!checkpoint_current(&e, saved, today, 20_000, TOLERANCE), "{cmd:?}");
+        // Saved again, it is current until something else changes.
+        let resaved = e.checkpoint(20_000);
+        assert!(checkpoint_current(&e, resaved, e.snapshot().today_sitting, 20_000, TOLERANCE), "{cmd:?}");
+    }
+}
+
+#[test]
+fn pauses_and_breaks_stay_current_but_pause_when_inactive_does_not() {
+    // Paused: nothing moves, so the old checkpoint still restores it.
+    let mut e = SittingEngine::new(continue_cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.apply(Command::TogglePause);
+    let saved = e.checkpoint(1_000);
+    e.tick(Duration::from_secs(900), day(), active());
+    assert!(checkpoint_current(&e, saved, Duration::ZERO, 1_900, TOLERANCE));
+    // A break counts wall-clock time, and so does its restore.
+    let mut e = SittingEngine::new(continue_cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    e.apply(Command::StartBreak);
+    let saved = e.checkpoint(1_000);
+    e.tick(Duration::from_secs(100), day(), idle());
+    assert!(checkpoint_current(&e, saved, Duration::ZERO, 1_100, TOLERANCE));
+    // With "pause when inactive" a restore adds no downtime, so a running session is stale
+    // once it has counted more than the tolerance.
+    let mut e = SittingEngine::new(cfg(), day(), Duration::ZERO);
+    e.tick(Duration::ZERO, day(), active());
+    let saved = e.checkpoint(1_000);
+    e.tick(Duration::from_secs(10), day(), active());
+    assert!(!checkpoint_current(&e, saved, Duration::ZERO, 1_010, TOLERANCE));
 }
