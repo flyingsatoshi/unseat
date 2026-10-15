@@ -45,7 +45,7 @@ The engine reports `LimitReached`, `Progressive` and `BreakOver` regardless of s
 | --- | --- |
 | `app` | Owns the engine; feeds time, last-input age and lock/sleep state; persists every 60 s, on every command and at shutdown |
 | `widget` | Layered Direct2D overlay (no-activate, optionally topmost). Receives the broadcasts the message-only window cannot: theme change, `TaskbarCreated`, display/DPI changes, power, end-session |
-| `paint`, `gfx` | Overlay painter (pill as progress bar, docked tab and peek) with a cached back buffer; shared Direct2D helpers, text-format cache, the embedded Sora font loaded from memory, tabular digits measured to fit |
+| `paint`, `gfx` | Overlay painter (pill as progress bar, docked tab and peek) with a cached back buffer; shared Direct2D helpers, text-format cache, the embedded Sora font loaded from memory, tabular digits measured to fit. Every window draws through one Direct2D factory on the UI thread (`gfx::shared`), so they share one Direct3D device |
 | `docking` | Applies `DockController` to the overlay window: placement, slide frames (~16 ms timer only while sliding), drag-to-dock, fullscreen detection |
 | `tray_panel` | Custom tray panel that replaces the native menu; keyboard operable |
 | `prompt` | When time is up, two small tabs (*Break*, one more session) and a caption hang from the overdue pill, in a layered window kept just below the overlay; a caption when a break ends. Never takes focus |

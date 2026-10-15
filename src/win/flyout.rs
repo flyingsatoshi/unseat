@@ -1,15 +1,13 @@
-use crate::win::gfx::{self, Family, Fonts};
+use crate::win::gfx::{self, Family};
 use unseat::palette;
 use windows::core::{w, Interface};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT, D2D_SIZE_U};
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1RenderTarget,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
+    ID2D1HwndRenderTarget, ID2D1RenderTarget, D2D1_FEATURE_LEVEL_DEFAULT,
     D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
     D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
 };
-use windows::Win32::Graphics::DirectWrite::{DWriteCreateFactory, DWRITE_FACTORY_TYPE_SHARED};
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWMWCP_ROUND,
@@ -38,8 +36,7 @@ struct State {
     today: String,
     dark: bool,
     scale: f32,
-    factory: Option<ID2D1Factory>,
-    fonts: Option<Fonts>,
+    gfx: Option<&'static gfx::Shared>,
     rt: Option<ID2D1HwndRenderTarget>,
 }
 
@@ -189,10 +186,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             today: String::new(),
             dark: true,
             scale: dpi_scale(hwnd),
-            factory: D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok(),
-            fonts: DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)
-                .ok()
-                .map(Fonts::new),
+            gfx: gfx::shared(),
             rt: None,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
@@ -224,7 +218,7 @@ unsafe fn paint(hwnd: HWND, st: &mut State) {
     let Some(rt) = ensure_rt(hwnd, st) else {
         return;
     };
-    let Some(fonts) = st.fonts.as_ref() else {
+    let Some(fonts) = st.gfx.map(|g| &g.fonts) else {
         return;
     };
     let pal = palette(st.dark);
@@ -286,7 +280,7 @@ unsafe fn ensure_rt(hwnd: HWND, st: &mut State) -> Option<ID2D1RenderTarget> {
         height: (rc.bottom - rc.top).max(1) as u32,
     };
     if st.rt.is_none() {
-        let factory = st.factory.as_ref()?;
+        let factory = &st.gfx?.factory;
         let props = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {

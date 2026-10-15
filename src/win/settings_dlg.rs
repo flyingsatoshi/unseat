@@ -21,12 +21,10 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1RenderTarget,
-    D2D1_ANTIALIAS_MODE_ALIASED, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
-    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
+    ID2D1HwndRenderTarget, ID2D1RenderTarget, D2D1_ANTIALIAS_MODE_ALIASED,
+    D2D1_FEATURE_LEVEL_DEFAULT, D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE,
+    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
 };
-use windows::Win32::Graphics::DirectWrite::{DWriteCreateFactory, DWRITE_FACTORY_TYPE_SHARED};
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWMWCP_ROUND,
@@ -993,8 +991,7 @@ struct Dialog {
     tracking: bool,
     scale: f32,
     scroll: f32,
-    factory: Option<ID2D1Factory>,
-    fonts: Option<Fonts>,
+    gfx: Option<&'static gfx::Shared>,
     rt: Option<ID2D1HwndRenderTarget>,
 }
 
@@ -1310,10 +1307,7 @@ unsafe fn build(hwnd: HWND, app: *mut App) -> Box<Dialog> {
         tracking: false,
         scale,
         scroll: 0.0,
-        factory: D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok(),
-        fonts: DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)
-            .ok()
-            .map(Fonts::new),
+        gfx: gfx::shared(),
         rt: None,
     })
 }
@@ -1568,7 +1562,7 @@ unsafe fn ensure_rt(hwnd: HWND, d: &mut Dialog) -> Option<ID2D1RenderTarget> {
         height: (rc.bottom - rc.top).max(1) as u32,
     };
     if d.rt.is_none() {
-        let factory = d.factory.as_ref()?;
+        let factory = &d.gfx?.factory;
         let props = D2D1_RENDER_TARGET_PROPERTIES {
             r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
             pixelFormat: D2D1_PIXEL_FORMAT {
@@ -1614,7 +1608,7 @@ unsafe fn paint_ui(hwnd: HWND, d: &mut Dialog) {
     let l = d.lay(hwnd);
     let pal = palette(d.dark());
     let d = &*d;
-    let Some(fonts) = d.fonts.as_ref() else {
+    let Some(fonts) = d.gfx.map(|g| &g.fonts) else {
         return;
     };
     let s = l.scale;

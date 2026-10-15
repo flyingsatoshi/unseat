@@ -1,6 +1,6 @@
 //! Direct2D/DirectWrite helpers shared by the overlay, flyout and settings window.
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use unseat::Rgba;
 use windows::core::{w, PCWSTR};
 use windows::core::Interface;
@@ -9,10 +9,11 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D_SIZE_F,
 };
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1RenderTarget, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_SMALL, D2D1_ROUNDED_RECT,
-    D2D1_SWEEP_DIRECTION_CLOCKWISE,
+    D2D1CreateFactory, ID2D1Factory, ID2D1RenderTarget, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_SMALL,
+    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_ROUNDED_RECT, D2D1_SWEEP_DIRECTION_CLOCKWISE,
 };
 use windows::Win32::Graphics::DirectWrite::{
+    DWriteCreateFactory, DWRITE_FACTORY_TYPE_SHARED,
     IDWriteFactory, IDWriteFactory5, IDWriteFontCollection, IDWriteFontCollection1,
     IDWriteFontSetBuilder1, IDWriteInMemoryFontFileLoader, IDWriteTextFormat, DWRITE_FONT_FEATURE,
     DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -28,6 +29,35 @@ pub use windows::Win32::Graphics::DirectWrite::{
     DWRITE_TEXT_ALIGNMENT_CENTER as CENTER, DWRITE_TEXT_ALIGNMENT_LEADING as LEADING,
     DWRITE_TEXT_ALIGNMENT_TRAILING as TRAILING,
 };
+
+/// The UI thread's Direct2D factory and text formats, used by every window. Hardware render
+/// targets from one factory share one Direct3D device; a factory per window cost 6–22 MB of
+/// private memory each, kept for as long as the window existed (hidden ones included).
+pub struct Shared {
+    pub factory: ID2D1Factory,
+    pub fonts: Fonts,
+}
+
+/// The shared factory, created on first use. `None` if Direct2D or DirectWrite cannot start.
+///
+/// It lives until the process exits and is never released: every window is created on the UI
+/// thread and may draw until the message loop ends, and releasing COM objects from a
+/// thread-local destructor during process teardown is not safe.
+pub fn shared() -> Option<&'static Shared> {
+    thread_local! {
+        static SHARED: OnceCell<Option<&'static Shared>> = const { OnceCell::new() };
+    }
+    SHARED.with(|cell| {
+        *cell.get_or_init(|| unsafe {
+            let factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok()?;
+            let dwrite = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).ok()?;
+            Some(&*Box::leak(Box::new(Shared {
+                factory,
+                fonts: Fonts::new(dwrite),
+            })))
+        })
+    })
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Family {
