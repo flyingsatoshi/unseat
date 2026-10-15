@@ -1,6 +1,7 @@
 use std::time::Duration;
 use unseat::{
-    alert_actions, scale_wav, volume_peak, wav_peak, AlertSound, Beep, Settings, MAX_PEAK,
+    alert_actions, alert_notice, scale_wav, time_up_prompt, volume_peak, wav_peak, AlertSound,
+    Beep, Settings, MAX_PEAK,
 };
 
 const SOUNDS: [(&str, &[u8]); 5] = [
@@ -112,4 +113,38 @@ fn sound_toggle_volume_and_notification_toggle_are_independent() {
 fn no_event_means_no_action() {
     let a = alert_actions(Beep::None, &Settings::default(), Duration::ZERO);
     assert!(!a.play_sound && a.notification.is_none());
+}
+
+#[test]
+fn time_up_prompt_offers_a_break_or_one_more_session_with_their_lengths() {
+    let mut s = Settings::default();
+    s.sitting_limit_secs = 40 * 60;
+    s.break_duration_secs = 10 * 60;
+    let p = time_up_prompt(&s, Duration::from_secs(40 * 60 + 59));
+    assert_eq!(p.title, "Time to stand up");
+    assert_eq!(p.body, "You've been sitting for 40 min. Break or keep going?");
+    assert_eq!(p.break_label, "Break · 10 min");
+    assert_eq!(p.extend_label, "Extend · 40 min");
+}
+
+#[test]
+fn time_up_prompt_counts_extended_time_and_long_limits_in_hours() {
+    let mut s = Settings::default();
+    s.sitting_limit_secs = 2 * 3600;
+    let p = time_up_prompt(&s, Duration::from_secs(4 * 3600));
+    assert_eq!(p.body, "You've been sitting for 4 hr. Break or keep going?");
+    assert_eq!(p.extend_label, "Extend · 2 hr");
+    let p = time_up_prompt(&s, Duration::from_secs(150 * 60));
+    assert!(p.body.contains("150 min"), "{}", p.body);
+}
+
+#[test]
+fn alert_words_exist_even_with_windows_notifications_off() {
+    let mut s = Settings::default();
+    s.notify_enabled = false;
+    assert!(alert_actions(Beep::BreakOver, &s, Duration::ZERO).notification.is_none());
+    assert_eq!(alert_notice(Beep::BreakOver, &s, Duration::ZERO).unwrap().title, "Break's over");
+    let up = alert_notice(Beep::LimitReached, &s, Duration::from_secs(3600)).unwrap();
+    assert!(up.body.contains("take a break or extend"), "{}", up.body);
+    assert!(alert_notice(Beep::Progressive, &s, Duration::ZERO).is_none());
 }

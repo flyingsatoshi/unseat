@@ -193,6 +193,7 @@ impl App {
         }
         // SW_HIDE reports the window as not visible; keep the user's intent.
         self.widget_visible = true;
+        self.sync_prompt();
     }
 
     /// Re-arm the frame timer for the next slide frame or pending hide.

@@ -124,6 +124,7 @@ Scenario "minimized overlay keeps timing and alerting" {
     Check ((LogCount $i "notify Time to stand up*") -eq 1) "Windows notification while the overlay is hidden"
     Send-Command $i $ID_HIDE
     Check ((Get-State $i).visible -eq "true") "overlay shown again"
+    Check ((LogCount $i "card TimeUp") -eq 1) "asks break or extend once the overlay is back"
   } finally { Stop-TestInstance $i }
 }
 
@@ -429,6 +430,105 @@ Scenario "alert card offers a break when time is up" {
     Start-Sleep -Milliseconds 300
     Check ((Get-State $i).state -eq "Break") "Take a break from the card"
     Check (-not [UnseatTest]::IsWindowVisible($card)) "card dismissed"
+  } finally { Stop-TestInstance $i }
+}
+
+# Card buttons in logical px (320 wide): Break centred (86, 109), Extend (230, 109), x (293, 27).
+function Card-Scale([IntPtr]$card) { $r = Get-Rect $card; ($r.Right - $r.Left) / 320.0 }
+
+Scenario "time-up card asks break or extend even with notifications off" {
+  $i = Start-TestInstance $Exe (Base @{ notify_enabled = $false })
+  try {
+    Advance $i 1201
+    $card = Find-TestWindow "UnseatAlertCard" (TestTitle $i "Unseat alert")
+    Check ((LogCount $i "notify *") -eq 0) "no Windows notification"
+    $s = Card-Scale $card
+    Click-At $card ([int](230 * $s)) ([int](109 * $s))
+    Start-Sleep -Milliseconds 300
+    $st = Get-State $i
+    Check ($st.state -eq "Sitting") "extended back to sitting: $($st.state)"
+    Near ([int]$st.remaining) 1200 4 "one more full session"
+    Near ([int]$st.sitting) 1201 4 "sitting time kept"
+    Check (-not [UnseatTest]::IsWindowVisible($card)) "card closed"
+    Check ((LogCount $i "command Extend") -eq 1) "extend command"
+    Advance $i 1201
+    Check ((Get-State $i).state -eq "Overdue") "overdue when the extension runs out"
+    Check ((LogCount $i "card TimeUp") -eq 2) "asks again"
+  } finally { Stop-TestInstance $i }
+}
+
+Scenario "closing the time-up card and clicking the overdue time asks again" {
+  $i = Start-TestInstance $Exe (Base @{ notify_enabled = $false })
+  try {
+    Advance $i 1201
+    $card = Find-TestWindow "UnseatAlertCard" (TestTitle $i "Unseat alert")
+    $s = Card-Scale $card
+    Click-At $card ([int](293 * $s)) ([int](27 * $s))
+    Start-Sleep -Milliseconds 300
+    Check (-not [UnseatTest]::IsWindowVisible($card)) "closed with the x"
+    Advance $i 30
+    Check ((Get-State $i).state -eq "Overdue") "still overdue"
+    Check (-not [UnseatTest]::IsWindowVisible($card)) "stays closed"
+    $w = Get-Rect $i.Widget
+    $ws = ($w.Right - $w.Left) / 176.0
+    Click-At $i.Widget ([int](40 * $ws)) ([int](30 * $ws))
+    Start-Sleep -Milliseconds 300
+    Check ([UnseatTest]::IsWindowVisible($card)) "clicking the overdue time asks again"
+    Check ((LogCount $i "card TimeUp") -eq 2) "shown twice"
+    Check ((Get-State $i).state -eq "Overdue") "the click itself changes nothing"
+    Click-At $card ([int](86 * $s)) ([int](109 * $s))
+    Start-Sleep -Milliseconds 300
+    Check ((Get-State $i).state -eq "Break") "break from the card"
+  } finally { Stop-TestInstance $i }
+}
+
+Scenario "time-up while the overlay is hidden asks once it is back" {
+  $i = Start-TestInstance $Exe (Base @{ notify_enabled = $false })
+  try {
+    Send-Command $i $ID_HIDE
+    Advance $i 1201
+    Check ((Get-State $i).state -eq "Overdue") "overdue while hidden"
+    Check ((LogCount $i "card TimeUp") -eq 0) "no card beside a hidden overlay"
+    Check ((LogCount $i "notify *") -eq 0) "notifications are off"
+    Send-Command $i $ID_HIDE
+    $card = Find-TestWindow "UnseatAlertCard" (TestTitle $i "Unseat alert")
+    Check ((LogCount $i "card TimeUp") -eq 1) "asked when the overlay came back"
+    Send-Command $i $ID_HIDE
+    Start-Sleep -Milliseconds 200
+    Check (-not [UnseatTest]::IsWindowVisible($card)) "card hides with the overlay"
+    Send-Command $i $ID_HIDE
+    Start-Sleep -Milliseconds 200
+    Check ([UnseatTest]::IsWindowVisible($card)) "and returns with it"
+  } finally { Stop-TestInstance $i }
+}
+
+Scenario "time-up card closes itself when the session moves on" {
+  $i = Start-TestInstance $Exe (Base @{ inactivity_behavior = "pause" })
+  try {
+    Set-Idle $i 0
+    Advance $i 1201
+    $card = Find-TestWindow "UnseatAlertCard" (TestTitle $i "Unseat alert")
+    Set-Idle $i 3600
+    Advance $i 200
+    Check ((Get-State $i).state -eq "Away") "away"
+    Set-Idle $i 0
+    Advance $i 1
+    $st = Get-State $i
+    Check ($st.state -eq "Sitting") "a long absence counts as a break: $($st.state)"
+    Start-Sleep -Milliseconds 200
+    Check (-not [UnseatTest]::IsWindowVisible($card)) "card closed by itself"
+  } finally { Stop-TestInstance $i }
+}
+
+Scenario "break-over card shows even with notifications off" {
+  $i = Start-TestInstance $Exe (Base @{ notify_enabled = $false })
+  try {
+    Advance $i 300
+    Send-Command $i $ID_BREAK
+    Advance $i 181
+    Check ((Get-State $i).state -eq "Sitting") "fresh session"
+    Check ((LogCount $i "card BreakOver") -eq 1) "break-over card"
+    Check ((LogCount $i "notify *") -eq 0) "no Windows notification"
   } finally { Stop-TestInstance $i }
 }
 

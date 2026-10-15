@@ -69,7 +69,7 @@ pub fn reminder_for(beep: Beep, settings: &Settings, sitting: Duration) -> Optio
         Beep::LimitReached => (
             ReminderKind::TimeUp,
             "Time to stand up".to_string(),
-            format!("You've been sitting for {sat}. Take a break or snooze from the PC."),
+            format!("You've been sitting for {sat}. Take a break or extend on your PC."),
             sitting_ttl,
         ),
         Beep::Progressive => (

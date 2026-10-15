@@ -11,7 +11,8 @@ pub enum Hit {
     Reset,
     /// The corner chip: hide the overlay, or pin it open when docked.
     Close,
-    Snooze,
+    /// The overdue time: ask "break or extend?" again.
+    Prompt,
 }
 
 /// Overlay window size at 96 DPI for size S. Other sizes multiply `scale`.
@@ -223,7 +224,7 @@ pub fn hit_overlay(
     let lane_r = if hover { l.digits_hover_r } else { l.digits_r };
     match state {
         VisibleState::Paused => Some(Hit::Pause),
-        VisibleState::Overdue if xf >= l.digits_l && xf <= lane_r => Some(Hit::Snooze),
+        VisibleState::Overdue if xf >= l.digits_l && xf <= lane_r => Some(Hit::Prompt),
         _ => None,
     }
 }

@@ -6,9 +6,10 @@ use crate::win::{
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use unseat::{
-    alert_actions, clamp_clock, format_today, next_tick_delay, restored_today_sitting,
-    status_line, timer_render_key, Beep, CivilDate, Command, EngineConfig, Input, PhoneAlerts, Settings,
-    SittingEngine, ThemePreference, TimerRenderKey, WidgetSize, WIDGET_H, WIDGET_W,
+    alert_actions, alert_notice, clamp_clock, format_today, next_tick_delay, restored_today_sitting,
+    status_line, time_up_prompt, timer_render_key, Beep, CivilDate, Command, EngineConfig, Input,
+    PhoneAlerts, Settings, SittingEngine, ThemePreference, TimerRenderKey, VisibleState, WidgetSize,
+    WIDGET_H, WIDGET_W,
 };
 use windows::core::w;
 use windows::Win32::Foundation::{
@@ -63,6 +64,20 @@ pub struct App {
     pub dock_suppressed: bool,
     /// iPhone reminders; inert until turned on or opened from the tray.
     pub phone: phone::Phone,
+    /// The "break or extend?" card for the current time-up.
+    prompt: Prompt,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Prompt {
+    /// Nothing to ask.
+    Idle,
+    /// Time is up but the overlay is hidden or in full screen; ask when it is back.
+    Waiting,
+    /// The card is up beside the overlay.
+    Shown,
+    /// The user closed the card; clicking the overdue time brings it back.
+    Dismissed,
 }
 
 pub fn run() -> windows::core::Result<()> {
@@ -159,6 +174,7 @@ pub fn run() -> windows::core::Result<()> {
             dock_frame: None,
             dock_suppressed: false,
             phone: phone::Phone::new(&data_dir),
+            prompt: Prompt::Idle,
         });
         let ptr = Box::into_raw(app);
 
@@ -257,33 +273,82 @@ impl App {
         }
         testhook::log(&format!("alert {beep:?}"));
         self.mirror_to_phone(beep);
-        let actions = alert_actions(beep, &self.settings, self.engine.snapshot().sitting_elapsed);
+        let sitting = self.engine.snapshot().sitting_elapsed;
+        let actions = alert_actions(beep, &self.settings, sitting);
         if actions.play_sound {
             self.play_alert_sound();
         }
         self.dock_alert(beep == Beep::LimitReached);
-        if let Some(notice) = actions.notification {
-            // While the overlay is on screen the alert card beside it replaces the toast.
-            let on_screen = self.widget_visible && !self.dock_suppressed;
-            let card = match beep {
-                Beep::LimitReached => Some(alert_card::Card::TimeUp),
-                Beep::BreakOver => Some(alert_card::Card::BreakOver),
-                _ => None,
-            };
-            match card {
-                Some(card) if on_screen => {
-                    let body = match card {
-                        alert_card::Card::TimeUp => format!(
-                            "{} minutes in your seat. A {} minute break resets the clock.",
-                            self.settings.sitting_limit_secs / 60,
-                            self.settings.break_duration_secs / 60
-                        ),
-                        alert_card::Card::BreakOver => notice.body.clone(),
-                    };
-                    alert_card::show(self as *mut App, self.widget, card, notice.title, &body);
+        // Beside a visible overlay a card asks (time up) or tells (break over), whatever the
+        // notification setting; a Windows notification stands in only while it is hidden.
+        let on_screen = self.prompt_on_screen();
+        match beep {
+            Beep::LimitReached => self.show_time_up_prompt(),
+            Beep::BreakOver if on_screen => {
+                if let Some(n) = alert_notice(beep, &self.settings, sitting) {
+                    alert_card::show(self as *mut App, self.widget, alert_card::Card::BreakOver, n.title, &n.body, "OK", "");
                 }
-                _ => tray::notify(self.hidden, notice.title, &notice.body),
             }
+            _ => {}
+        }
+        if !on_screen {
+            if let Some(notice) = actions.notification {
+                tray::notify(self.hidden, notice.title, &notice.body);
+            }
+        }
+    }
+
+    fn prompt_on_screen(&self) -> bool {
+        self.widget_visible && !self.dock_suppressed
+    }
+
+    /// Ask "break or extend?" beside the overlay, or wait until the overlay is on screen.
+    fn show_time_up_prompt(&mut self) {
+        if !self.prompt_on_screen() {
+            self.prompt = Prompt::Waiting;
+            return;
+        }
+        let p = time_up_prompt(&self.settings, self.engine.snapshot().sitting_elapsed);
+        alert_card::show(self as *mut App, self.widget, alert_card::Card::TimeUp, p.title, &p.body, &p.break_label, &p.extend_label);
+        self.prompt = Prompt::Shown;
+    }
+
+    /// Keep the time-up card in step: it waits while the overlay is hidden, comes back
+    /// with it, keeps its sitting time current and closes once the session moves on.
+    pub fn sync_prompt(&mut self) {
+        let snap = self.engine.snapshot();
+        if matches!(snap.state, VisibleState::Sitting | VisibleState::Break) {
+            if self.prompt == Prompt::Shown {
+                alert_card::hide_card(alert_card::Card::TimeUp);
+            }
+            self.prompt = Prompt::Idle;
+            return;
+        }
+        match (self.prompt, self.prompt_on_screen()) {
+            (Prompt::Shown, false) => {
+                alert_card::hide_card(alert_card::Card::TimeUp);
+                self.prompt = Prompt::Waiting;
+            }
+            (Prompt::Shown, true) if snap.state == VisibleState::Overdue => {
+                let p = time_up_prompt(&self.settings, snap.sitting_elapsed);
+                alert_card::set_body(alert_card::Card::TimeUp, &p.body);
+            }
+            (Prompt::Waiting, true) if snap.state == VisibleState::Overdue => self.show_time_up_prompt(),
+            _ => {}
+        }
+    }
+
+    /// The overdue time on the overlay was clicked: ask again.
+    pub fn ask_time_up(&mut self) {
+        if self.engine.snapshot().state == VisibleState::Overdue {
+            self.show_time_up_prompt();
+        }
+    }
+
+    /// The overlay moved: put the card back beside it.
+    pub fn place_prompt(&mut self) {
+        if self.prompt == Prompt::Shown {
+            self.show_time_up_prompt();
         }
     }
 
@@ -313,9 +378,10 @@ impl App {
         testhook::log(&format!("command {command:?}"));
         self.phone.on_command(command);
         match command {
-            Command::Reset | Command::Snooze(_) | Command::StartBreak => {
+            Command::Reset | Command::Snooze(_) | Command::Extend | Command::StartBreak => {
                 self.stop_alert_sound();
                 alert_card::hide();
+                self.prompt = Prompt::Idle;
             }
             Command::TogglePause => self.handle_beep(result.beep),
         }
@@ -353,6 +419,7 @@ impl App {
             ));
         }
         self.handle_beep(result.beep);
+        self.sync_prompt();
         self.phone.tick(
             &status_line(result.snapshot),
             &format_today(result.snapshot.today_sitting),
@@ -566,6 +633,7 @@ impl App {
         unsafe {
             let _ = ShowWindow(self.widget, SW_SHOWMINNOACTIVE);
         }
+        self.sync_prompt();
     }
 
     pub fn show_widget(&mut self) {
@@ -588,6 +656,7 @@ impl App {
         }
         self.apply_topmost();
         self.force_repaint();
+        self.sync_prompt();
     }
 
     pub fn toggle_widget(&mut self) {
@@ -715,6 +784,11 @@ impl App {
             tray::ID_SNOOZE_15 => self.snooze(15 * 60),
             tray::ID_SNOOZE_30 => self.snooze(30 * 60),
             tray::ID_SNOOZE_CUSTOM => self.snooze_default(),
+            tray::ID_EXTEND => self.apply_engine_command(Command::Extend),
+            tray::ID_PROMPT_CLOSE => {
+                alert_card::hide();
+                self.prompt = Prompt::Dismissed;
+            }
             tray::ID_SETTINGS => settings_dlg::open(self as *mut App),
             tray::ID_HIDE => self.toggle_widget(),
             tray::ID_PHONE => self.phone.open_admin(),

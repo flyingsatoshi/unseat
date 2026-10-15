@@ -387,7 +387,7 @@ fn sections(tab: Tab) -> &'static [Section] {
                 "Breaks",
                 &[
                     Row::Step("Break length", Field::Break, None),
-                    Row::Note("Start one from the overlay, the tray or Ctrl+Alt+Shift+B. A fresh session follows."),
+                    Row::Note("When time is up, a card asks: break, or extend one more session. A fresh session follows a break."),
                 ],
             ),
             (
@@ -422,7 +422,7 @@ fn sections(tab: Tab) -> &'static [Section] {
             (
                 "Reminders",
                 &[
-                    Row::Flag("Show notification", Flag::Notify, Some("When time is up and when a break ends")),
+                    Row::Flag("Show notification", Flag::Notify, Some("While the overlay is hidden; a card asks beside it")),
                     Row::Flag("Repeat while overdue", Flag::Repeat, None),
                     Row::Step("Remind every", Field::Every, None),
                     Row::Phone,

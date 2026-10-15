@@ -24,7 +24,7 @@
 
 <p align="center">
   <img src="assets/screenshots/tray-panel.png" alt="Tray panel with the countdown, progress, Pause, Take a break, Snooze and Reset" width="300">
-  <img src="assets/screenshots/alert-card.png" alt="Alert card beside the overlay: Time to stand up, with Take a break and Snooze" width="300">
+  <img src="assets/screenshots/alert-card.png" alt="Card beside the overlay when time is up: Time to stand up, with Break and Extend" width="300">
 </p>
 
 ## What's new in 0.2
@@ -32,7 +32,7 @@
 - **Signal design**: the overlay pill is the progress bar, its colour is the state, and the digits use the Sora typeface with fixed-width figures. Light, dark or system theme.
 - **Keeps running** through idle time, a locked screen, sleep and a minimized overlay. Pausing when you step away is now an opt-in setting.
 - **Edge docking**: attach the timer to any screen edge; it slides out to a slim progress tab and comes back when you point at it or when time is up.
-- **Breaks** with their own countdown, an **alert card** with *Take a break* / *Snooze*, a **tray panel** instead of a plain menu, a volume slider, global shortcuts and optional weekly statistics.
+- **Breaks** with their own countdown, a **time-up card** that asks *Break* or *Extend*, a **tray panel** instead of a plain menu, a volume slider, global shortcuts and optional weekly statistics.
 - A new **Rise** icon.
 
 <p align="center">
@@ -54,15 +54,16 @@ Unseat is a local desktop **timer** and break reminder. It stays on top of your 
 **Timing you can trust**
 - Wall-clock based: idle time, a locked screen, sleep and a minimized overlay never stop it, and delayed updates never lose time
 - Optional **Pause when inactive** (off by default): the overlay shows *away* while you are gone, and being away for the break length starts a fresh session
-- **Breaks**: start one from the overlay, the tray or `Ctrl+Alt+Shift+B`; it counts down, then a fresh session starts
+- **Break or extend**: when time is up, a card beside the overlay asks. *Break* counts down your break length, then a fresh session starts; *Extend* gives you one more full session
+- **Breaks** any time from the overlay, the tray or `Ctrl+Alt+Shift+B`
 - Reverse countdown or ascending stopwatch, without resetting the session
 - Timer, pause and break state survive restarts; only Reset starts over
 
 **Alerts that get noticed, not in the way**
 - One alert at the limit, optional repeats while overdue that never pile up
-- An alert card beside the overlay (*Take a break* / *Snooze*), or a Windows notification while the overlay is hidden
+- The time-up card waits for your answer (close it with x; click the overdue time to bring it back). While the overlay is hidden it asks once the overlay is back, and an optional Windows notification stands in
 - Five bundled sounds, a volume slider and a Test button; every sound plays at the same loudness
-- Snooze by clicking the overdue time, from the card, the tray panel, or `Ctrl+Alt+Shift+S`
+- Short snoozes from the tray panel or `Ctrl+Alt+Shift+S`
 
 **An overlay that fits your desk**
 - The pill is the progress bar and its colour shows the state: sitting, near the limit, overdue, break, away or paused
@@ -115,11 +116,13 @@ Settings → Dock → **Dock to a screen edge**, or with it on, drag the overlay
 
 Settings are kept. Earlier versions paused the timer during inactivity by default; that stored default is migrated to the new keep-running behavior once. Turn on **Pause when inactive** under Breaks to get the old behavior back.
 
-## Alerts and snooze
+## Alerts, break or extend, and snooze
 
 Settings → Alerts picks **Chime**, **Bell**, **Pulse**, **Glass**, or **Soft**, a volume (75% by default, a little louder than before), and **Test**. **Once** plays the clip; **2s / 4s / 8s** loops it for that long. Repeat reminders fire on the interval you set and never stack: after sleep only one plays. A new sound always stops the previous one.
 
-When the sitting limit is reached, snooze **5 / 10 / 15 / 30** minutes or a custom duration (Settings → Breaks). The last choice is saved. Click the overdue time on the overlay, the alert card's **Snooze**, or the tray panel.
+When the sitting limit is reached, a card beside the overlay asks **Break** (your break length, Settings → Breaks) or **Extend** (one more full session). It stays until you answer, shows even with Windows notifications off, and closes by itself if the session ends another way, such as a long absence with **Pause when inactive** on. Closed it? Click the overdue time on the overlay to ask again.
+
+For a shorter delay, snooze **5 / 10 / 15 / 30** minutes or a custom duration (Settings → Breaks) from the tray panel or `Ctrl+Alt+Shift+S`. The last choice is saved.
 
 ## Build from source
 

@@ -11,7 +11,9 @@ mod stats;
 mod theme;
 mod view;
 
-pub use alerts::{alert_actions, AlertActions, Notice};
+pub use alerts::{
+    alert_actions, alert_notice, time_up_prompt, AlertActions, Notice, TimeUpPrompt,
+};
 pub use audio::{scale_wav, volume_peak, wav_peak, MAX_PEAK};
 pub use date::CivilDate;
 pub use dock::{

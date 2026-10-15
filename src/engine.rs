@@ -40,6 +40,9 @@ pub enum Command {
     TogglePause,
     Reset,
     Snooze(Duration),
+    /// Keep going for one more full session: the answer "Extend" when time is up. Like
+    /// `Snooze`, it does nothing before the limit or during a break.
+    Extend,
     /// Start an explicit break. It counts down `break_duration` of wall-clock time and then
     /// starts a fresh session. Reset ends a break early.
     StartBreak,
@@ -137,19 +140,24 @@ impl SittingEngine {
                 self.start_fresh_session();
                 self.running = true;
             }
-            Command::Snooze(extra) => {
-                if self.can_snooze() {
-                    self.snooze_until = self.sitting_elapsed.saturating_add(extra);
-                    self.limit_beeped = false;
-                    self.progressive_beeps_fired = 0;
-                }
-            }
+            Command::Snooze(extra) => self.extend_by(extra),
+            Command::Extend => self.extend_by(self.config.sitting_limit),
             Command::StartBreak => {
                 self.away = false;
                 self.on_break = true;
                 self.break_elapsed = Duration::ZERO;
                 self.running = true;
             }
+        }
+    }
+
+    /// Move the limit to `extra` from now, so the countdown restarts and the next
+    /// time-up alert comes when it runs out again.
+    fn extend_by(&mut self, extra: Duration) {
+        if self.can_snooze() {
+            self.snooze_until = self.sitting_elapsed.saturating_add(extra);
+            self.limit_beeped = false;
+            self.progressive_beeps_fired = 0;
         }
     }
 

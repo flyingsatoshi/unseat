@@ -20,6 +20,9 @@ pub const ID_SNOOZE_30: u32 = 23;
 pub const ID_SNOOZE_CUSTOM: u32 = 24;
 pub const ID_BREAK: u32 = 25;
 pub const ID_PHONE: u32 = 26;
+/// The time-up card's answers: one more session, or close the card.
+pub const ID_EXTEND: u32 = 27;
+pub const ID_PROMPT_CLOSE: u32 = 28;
 
 pub fn add(hwnd: HWND) -> bool {
     if !nid(hwnd, true) {
