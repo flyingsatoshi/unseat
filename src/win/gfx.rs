@@ -15,7 +15,8 @@ use windows::Win32::Graphics::Direct2D::{
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, DWRITE_FACTORY_TYPE_SHARED,
     IDWriteFactory, IDWriteFactory5, IDWriteFontCollection, IDWriteFontCollection1,
-    IDWriteFontSetBuilder1, IDWriteInMemoryFontFileLoader, IDWriteTextFormat, DWRITE_FONT_FEATURE,
+    IDWriteFontSetBuilder1, IDWriteInMemoryFontFileLoader, IDWriteTextFormat, IDWriteTextLayout,
+    DWRITE_FONT_FEATURE,
     DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
     DWRITE_TEXT_RANGE,
     DWRITE_FONT_WEIGHT, DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
@@ -203,7 +204,7 @@ unsafe fn tabular_layout(
     align: DWRITE_TEXT_ALIGNMENT,
     w: f32,
     h: f32,
-) -> Option<windows::Win32::Graphics::DirectWrite::IDWriteTextLayout> {
+) -> Option<IDWriteTextLayout> {
     let format = fonts.format(Family::Ui, size, weight, align)?;
     let wide: Vec<u16> = s.encode_utf16().collect();
     let layout = fonts
@@ -228,10 +229,12 @@ unsafe fn tabular_layout(
 
 /// Width of `s` set in the UI face (tabular figures) at `size`.
 pub unsafe fn measure(fonts: &Fonts, s: &str, size: f32, weight: DWRITE_FONT_WEIGHT) -> f32 {
-    let Some(layout) = tabular_layout(fonts, s, size, weight, LEADING, 10_000.0, size * 2.0)
-    else {
-        return 0.0;
-    };
+    tabular_layout(fonts, s, size, weight, LEADING, 10_000.0, size * 2.0)
+        .map_or(0.0, |layout| layout_width(&layout))
+}
+
+/// Width of one line of laid-out text. It never wraps, so the box width doesn't matter.
+unsafe fn layout_width(layout: &IDWriteTextLayout) -> f32 {
     let mut m = windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_METRICS::default();
     if layout.GetMetrics(&mut m).is_ok() {
         m.widthIncludingTrailingWhitespace
@@ -254,12 +257,18 @@ pub unsafe fn digits(
     c: Rgba,
 ) {
     let lane = (rc.right - rc.left).max(1.0);
-    let natural = measure(fonts, s, max_size, weight);
-    let size = if natural > lane { max_size * lane / natural } else { max_size };
-    let Some(layout) = tabular_layout(fonts, s, size, weight, align, lane, rc.bottom - rc.top)
-    else {
+    let h = rc.bottom - rc.top;
+    // Lay out at full size; only text too wide for the lane needs a second, smaller layout.
+    let Some(mut layout) = tabular_layout(fonts, s, max_size, weight, align, lane, h) else {
         return;
     };
+    let natural = layout_width(&layout);
+    if natural > lane {
+        match tabular_layout(fonts, s, max_size * lane / natural, weight, align, lane, h) {
+            Some(smaller) => layout = smaller,
+            None => return,
+        }
+    }
     if let Ok(brush) = rt.CreateSolidColorBrush(&color(c), None) {
         rt.DrawTextLayout(
             D2D_POINT_2F {
