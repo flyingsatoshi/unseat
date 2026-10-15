@@ -33,9 +33,9 @@ fn resource(kind: PCWSTR, id: u16) -> Option<&'static [u8]> {
 fn image_for(cx: i32) -> Option<&'static [u8]> {
     let dir = resource(RT_GROUP_ICON, ICON_GROUP)?;
     let count = usize::from(u16::from_le_bytes([*dir.get(4)?, *dir.get(5)?]));
-    let best = dir
-        .get(6..)?
-        .chunks_exact(14)
+    let (entries, _) = dir.get(6..)?.as_chunks::<14>();
+    let best = entries
+        .iter()
         .take(count)
         .min_by_key(|e| {
             let w = if e[0] == 0 { 256 } else { i32::from(e[0]) };
