@@ -47,7 +47,7 @@ fn overlay_ink_is_legible_on_every_state_surface_and_band() {
                 assert!(contrast(c.tag, surface) >= 4.5, "tag dark={} {state:?}", p.dark);
             }
         }
-        assert!(contrast(p.on_alarm, p.alarm) >= 4.5, "alert card dark={}", p.dark);
+        assert!(contrast(p.on_alarm, p.alarm) >= 4.5, "alarm red dark={}", p.dark);
         assert!(contrast(p.on_selected, p.selected) >= 4.5, "selected chip dark={}", p.dark);
     }
 }
@@ -96,4 +96,22 @@ fn recent_days_fills_gaps_and_uses_the_live_today_total() {
     assert_eq!(bars[1].sitting_secs, 0);
     assert_eq!(average_secs(&bars), (3600 + 7200 + 1800) / 3);
     assert_eq!(average_secs(&recent_days(&[], d(2026, 10, 9), 0, 7)), 0);
+}
+
+#[test]
+fn prompt_tabs_and_caption_are_legible_and_quiet() {
+    for p in both() {
+        let c = p.prompt;
+        for bg in [c.primary, c.primary_hover] {
+            assert!(contrast(c.on_primary, bg) >= 4.5, "primary tab dark={}", p.dark);
+        }
+        for bg in [c.secondary, c.secondary_hover] {
+            assert!(contrast(c.on_secondary, bg) >= 4.5, "secondary tab dark={}", p.dark);
+        }
+        assert_eq!(c.caption_bg.3, 255, "the caption chip is opaque, so any desktop behind it is fine");
+        assert!(contrast(c.caption, c.caption_bg) >= 4.5, "caption dark={}", p.dark);
+        // The primary tab reads as the overdue pill's shadow side, never brighter than it.
+        let black = Rgba::opaque(0);
+        assert!(contrast(c.primary, black) < contrast(p.over.bg, black), "primary darker than the pill");
+    }
 }

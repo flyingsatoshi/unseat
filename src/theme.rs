@@ -56,10 +56,26 @@ pub struct OverlayColors {
     pub tag: Rgba,
 }
 
+/// The small tabs that hang from the overdue pill (Break / Extend) and the caption under
+/// them. The primary tab is the overdue red, darkened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PromptColors {
+    pub primary: Rgba,
+    pub primary_hover: Rgba,
+    pub on_primary: Rgba,
+    pub secondary: Rgba,
+    pub secondary_hover: Rgba,
+    pub on_secondary: Rgba,
+    /// Edge of the tabs and the caption chip against whatever is behind them.
+    pub stroke: Rgba,
+    pub caption_bg: Rgba,
+    pub caption: Rgba,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Palette {
     pub dark: bool,
-    // Windows: settings, tray panel, alert card, flyout.
+    // Windows: settings, tray panel, flyout.
     pub window: Rgba,
     /// Row tiles and secondary buttons.
     pub card: Rgba,
@@ -82,7 +98,7 @@ pub struct Palette {
     pub knob: Rgba,
     pub focus: Rgba,
     pub window_stroke: Rgba,
-    /// Alert card for "time is up".
+    /// Alarm red (the overdue pill and its accents).
     pub alarm: Rgba,
     pub on_alarm: Rgba,
     // Overlay.
@@ -93,6 +109,7 @@ pub struct Palette {
     pub idle: OverlayColors,
     pub pill_stroke: Rgba,
     pub shadow: Rgba,
+    pub prompt: PromptColors,
 }
 
 pub const DARK: Palette = Palette {
@@ -150,6 +167,17 @@ pub const DARK: Palette = Palette {
     },
     pill_stroke: Rgba(255, 255, 255, 18),
     shadow: Rgba(0, 0, 0, 70),
+    prompt: PromptColors {
+        primary: Rgba::opaque(0x912917),
+        primary_hover: Rgba::opaque(0xA52E1A),
+        on_primary: Rgba::opaque(0xFFFFFF),
+        secondary: Rgba::opaque(0x2A2123),
+        secondary_hover: Rgba::opaque(0x35292C),
+        on_secondary: Rgba::opaque(0xD8CFC9),
+        stroke: Rgba(255, 255, 255, 14),
+        caption_bg: Rgba::opaque(0x1A1918),
+        caption: Rgba::opaque(0x8A8580),
+    },
 };
 
 pub const LIGHT: Palette = Palette {
@@ -207,6 +235,17 @@ pub const LIGHT: Palette = Palette {
     },
     pill_stroke: Rgba(0, 0, 0, 22),
     shadow: Rgba(0, 0, 0, 40),
+    prompt: PromptColors {
+        primary: Rgba::opaque(0x912917),
+        primary_hover: Rgba::opaque(0xA52E1A),
+        on_primary: Rgba::opaque(0xFFFFFF),
+        secondary: Rgba::opaque(0xF2EDEA),
+        secondary_hover: Rgba::opaque(0xE8E1DD),
+        on_secondary: Rgba::opaque(0x57534E),
+        stroke: Rgba(0, 0, 0, 26),
+        caption_bg: Rgba::opaque(0xFFFFFF),
+        caption: Rgba::opaque(0x6B6560),
+    },
 };
 
 pub fn palette(dark: bool) -> &'static Palette {

@@ -278,6 +278,25 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 out.extend_from_slice(&px);
                 let _ = std::fs::write(path, out);
             }
+            // The prompt under the pill, if up: width, height and its offset from the
+            // overlay window (little-endian i32 each), then pixels.
+            if let Some(path) = testhook::data_path("prompt.bgra") {
+                let mut rc = RECT::default();
+                let _ = GetWindowRect(hwnd, &mut rc);
+                match crate::win::prompt::snapshot() {
+                    Some((x, y, w, h, px)) => {
+                        let mut out = Vec::with_capacity(px.len() + 16);
+                        for v in [w, h, x - rc.left, y - rc.top] {
+                            out.extend_from_slice(&v.to_le_bytes());
+                        }
+                        out.extend_from_slice(&px);
+                        let _ = std::fs::write(path, out);
+                    }
+                    None => {
+                        let _ = std::fs::remove_file(path);
+                    }
+                }
+            }
             LRESULT(0)
         }
         testhook::MSG_DOCK_HOVER if testhook::enabled() => {
@@ -416,6 +435,8 @@ impl App {
             self.dragging = true;
             let _ = SetCapture(hwnd);
         }
+        // The tabs hide while the overlay moves and come back under it when it lands.
+        self.sync_prompt();
         // Undock while dragging: the overlay returns to its full, free-floating shape.
         self.force_repaint();
     }
@@ -428,7 +449,7 @@ impl App {
             }
             self.end_drag_dock(hwnd);
             self.save_settings();
-            self.place_prompt();
+            self.sync_prompt();
         }
     }
 

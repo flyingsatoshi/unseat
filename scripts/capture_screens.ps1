@@ -36,6 +36,32 @@ function Save-Overlay($inst, [string]$path, [bool]$dark, [switch]$Hover) {
   "wrote $path"
 }
 
+# The overlay with the time-up tabs hanging under it. Both are layered windows, so they are
+# composed from their own pixels (the test snapshot) instead of copied from the screen.
+function Save-Prompt($inst, [string]$path, [bool]$dark) {
+  $ob = Get-OverlayBitmap $inst
+  $bytes = [IO.File]::ReadAllBytes((Join-Path $inst.Dir "prompt.bgra"))
+  $pw = [BitConverter]::ToInt32($bytes, 0); $ph = [BitConverter]::ToInt32($bytes, 4)
+  $dx = [BitConverter]::ToInt32($bytes, 8); $dy = [BitConverter]::ToInt32($bytes, 12)
+  $pb = New-Object System.Drawing.Bitmap $pw, $ph, ([System.Drawing.Imaging.PixelFormat]::Format32bppPArgb)
+  $data = $pb.LockBits((New-Object System.Drawing.Rectangle 0, 0, $pw, $ph), [System.Drawing.Imaging.ImageLockMode]::WriteOnly, $pb.PixelFormat)
+  for ($y = 0; $y -lt $ph; $y++) {
+    [Runtime.InteropServices.Marshal]::Copy($bytes, 16 + $y * $pw * 4, [IntPtr]($data.Scan0.ToInt64() + $y * $data.Stride), $pw * 4)
+  }
+  $pb.UnlockBits($data)
+  $l = [Math]::Min(0, $dx); $t = [Math]::Min(0, $dy)
+  $w = [Math]::Max($ob.Width, $dx + $pw) - $l; $h = [Math]::Max($ob.Height, $dy + $ph) - $t
+  $pad = 28
+  $canvas, $g = Backdrop ($w + 2 * $pad) ($h + 2 * $pad) $dark
+  # The prompt sits under the overlay, so the pill covers the tabs' tucked tops.
+  $g.DrawImage($pb, $pad + $dx - $l, $pad + $dy - $t, $pw, $ph)
+  $g.DrawImage($ob, $pad - $l, $pad - $t, $ob.Width, $ob.Height)
+  $g.Dispose(); $ob.Dispose(); $pb.Dispose()
+  $canvas.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+  $canvas.Dispose()
+  "wrote $path"
+}
+
 # A docked frame pressed against a screen edge on the right of a desktop-like backdrop.
 function Save-Docked($inst, [string]$path, [bool]$dark) {
   $bmp = Get-OverlayBitmap $inst
@@ -96,9 +122,9 @@ foreach ($theme in @("dark", "light")) {
     # Hover reveals pause, reset and hide controls.
     Save-Overlay $inst (Join-Path $Out "overlay-hover-$theme.png") $dark -Hover
     Advance $inst (1200 - 428)
-    $card = Find-TestWindow "UnseatAlertCard" (TestTitle $inst "Unseat alert")
-    Start-Sleep -Milliseconds 300
-    Save-Window $card (Join-Path $Out "card-timeup-$theme.png") $dark
+    Find-TestWindow "UnseatPrompt" (TestTitle $inst "Unseat prompt") | Out-Null
+    Start-Sleep -Milliseconds 400
+    Save-Prompt $inst (Join-Path $Out "prompt-timeup-$theme.png") $dark
     Advance $inst (7 * 60 + 20)
     Save-Overlay $inst (Join-Path $Out "overlay-overdue-$theme.png") $dark
     $panel = Open-TrayPanel $inst

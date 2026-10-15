@@ -1,15 +1,15 @@
 use crate::win::{
-    alert_card, tray_panel,
-    autostart, flyout, handoff, hotkeys, idle, install, paint, phone, session, settings_dlg, sound,
-    testhook, theme, tray, widget,
+    autostart, docking, flyout, handoff, hotkeys, idle, install, paint, phone, prompt, session,
+    settings_dlg, sound, testhook, theme, tray, tray_panel, widget,
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use unseat::{
-    alert_actions, alert_notice, clamp_clock, format_today, next_tick_delay, restored_today_sitting,
-    status_line, time_up_prompt, timer_render_key, Beep, CivilDate, Command, EngineConfig, Input,
-    PhoneAlerts, Settings, SittingEngine, ThemePreference, TimerRenderKey, VisibleState, WidgetSize,
-    WIDGET_H, WIDGET_W,
+    alert_actions, break_over_note, clamp_clock, format_today, next_tick_delay,
+    restored_today_sitting, status_line, time_up_prompt, timer_render_key, widget_layout, Beep,
+    CivilDate, Command, DockDraw, DockFrame, DockPhase, EngineConfig, Input, PhoneAlerts,
+    Settings, SittingEngine, ThemePreference, TimerRenderKey, VisibleState, WidgetSize, WIDGET_H,
+    WIDGET_W,
 };
 use windows::core::w;
 use windows::Win32::Foundation::{
@@ -64,7 +64,7 @@ pub struct App {
     pub dock_suppressed: bool,
     /// iPhone reminders; inert until turned on or opened from the tray.
     pub phone: phone::Phone,
-    /// The "break or extend?" card for the current time-up.
+    /// The "break or extend?" tabs for the current time-up.
     prompt: Prompt,
 }
 
@@ -72,12 +72,11 @@ pub struct App {
 enum Prompt {
     /// Nothing to ask.
     Idle,
-    /// Time is up but the overlay is hidden or in full screen; ask when it is back.
+    /// Time is up but the pill is not out on screen (overlay hidden, full screen, being
+    /// dragged, or docked away); ask once it is.
     Waiting,
-    /// The card is up beside the overlay.
+    /// The tabs hang from the pill.
     Shown,
-    /// The user closed the card; clicking the overdue time brings it back.
-    Dismissed,
 }
 
 pub fn run() -> windows::core::Result<()> {
@@ -105,7 +104,7 @@ pub fn run() -> windows::core::Result<()> {
         settings_dlg::register();
         flyout::register();
         tray_panel::register();
-        alert_card::register();
+        prompt::register();
         register_hidden()?;
 
         let path = settings_file();
@@ -236,7 +235,7 @@ pub fn run() -> windows::core::Result<()> {
         let _ = KillTimer(hidden, SOUND_ID);
         flyout::shutdown();
         tray_panel::shutdown();
-        alert_card::shutdown();
+        prompt::shutdown();
         settings_dlg::shutdown();
         tray::remove(hidden);
         drop(Box::from_raw(ptr));
@@ -279,75 +278,135 @@ impl App {
             self.play_alert_sound();
         }
         self.dock_alert(beep == Beep::LimitReached);
-        // Beside a visible overlay a card asks (time up) or tells (break over), whatever the
-        // notification setting; a Windows notification stands in only while it is hidden.
-        let on_screen = self.prompt_on_screen();
+        // Beside a visible overlay the tabs ask (time up) and a caption tells (break over),
+        // whatever the notification setting; a Windows notification stands in only while the
+        // overlay is hidden.
+        let overlay_shown = self.widget_visible && !self.dock_suppressed;
         match beep {
             Beep::LimitReached => self.show_time_up_prompt(),
-            Beep::BreakOver if on_screen => {
-                if let Some(n) = alert_notice(beep, &self.settings, sitting) {
-                    alert_card::show(self as *mut App, self.widget, alert_card::Card::BreakOver, n.title, &n.body, "OK", "");
+            Beep::BreakOver => {
+                if let Some(anchor) = self.prompt_anchor() {
+                    let note = break_over_note(&self.settings);
+                    prompt::show(self as *mut App, anchor, prompt::Kind::BreakOver, &note, ["", ""]);
                 }
             }
             _ => {}
         }
-        if !on_screen {
+        if !overlay_shown {
             if let Some(notice) = actions.notification {
                 tray::notify(self.hidden, notice.title, &notice.body);
             }
         }
     }
 
-    fn prompt_on_screen(&self) -> bool {
-        self.widget_visible && !self.dock_suppressed
+    /// The pill on screen, if it is fully out: the prompt hangs from it.
+    fn prompt_anchor(&mut self) -> Option<prompt::Anchor> {
+        if !self.widget_visible || self.dock_suppressed || self.dragging {
+            return None;
+        }
+        let now = self.clock_now();
+        let s = widget::paint_scale(self.widget, self.settings.widget_size);
+        let l = widget_layout(s);
+        let edge = self.docked_edge();
+        let (dx, dy) = match (edge, self.dock_frame) {
+            (None, _) => (0.0, 0.0),
+            (Some(_), Some(DockFrame { draw: DockDraw::Pill { dx, dy }, .. })) => {
+                let out = self.dock.as_ref().is_some_and(|d| {
+                    d.phase() == DockPhase::Expanded && !d.animating(now) && d.expansion(now) >= 1.0
+                });
+                if !out {
+                    return None;
+                }
+                (dx, dy)
+            }
+            _ => return None,
+        };
+        let mut rc = windows::Win32::Foundation::RECT::default();
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(self.widget, &mut rc);
+        }
+        let left = rc.left + (l.pill_x + dx).round() as i32;
+        let top = rc.top + (l.pill_y + dy).round() as i32;
+        let pill = windows::Win32::Foundation::RECT {
+            left,
+            top,
+            right: left + l.pill_w.round() as i32,
+            bottom: top + l.pill_h.round() as i32,
+        };
+        let (wl, wt, wr, wb) = docking::work_area_near((pill.left + pill.right) / 2, (pill.top + pill.bottom) / 2)?;
+        Some(prompt::Anchor {
+            overlay: self.widget,
+            pill,
+            work: windows::Win32::Foundation::RECT { left: wl, top: wt, right: wr, bottom: wb },
+            scale: s,
+            dpi: widget::scale(self.widget),
+            radius: l.radius,
+            dock: edge,
+            dark: self.is_dark(),
+        })
     }
 
-    /// Ask "break or extend?" beside the overlay, or wait until the overlay is on screen.
+    /// Ask "break or extend?" under the pill, or wait until the pill is out on screen.
     fn show_time_up_prompt(&mut self) {
-        if !self.prompt_on_screen() {
+        self.hold_dock(true);
+        let Some(anchor) = self.prompt_anchor() else {
             self.prompt = Prompt::Waiting;
             return;
-        }
+        };
         let p = time_up_prompt(&self.settings, self.engine.snapshot().sitting_elapsed);
-        alert_card::show(self as *mut App, self.widget, alert_card::Card::TimeUp, p.title, &p.body, &p.break_label, &p.extend_label);
+        prompt::show(self as *mut App, anchor, prompt::Kind::TimeUp, &p.caption, [&p.break_label, &p.extend_label]);
         self.prompt = Prompt::Shown;
     }
 
-    /// Keep the time-up card in step: it waits while the overlay is hidden, comes back
-    /// with it, keeps its sitting time current and closes once the session moves on.
+    /// A docked overlay stays out while its question waits.
+    fn hold_dock(&mut self, on: bool) {
+        let now = self.clock_now();
+        let changed = self.dock.as_mut().is_some_and(|d| {
+            let changed = d.held() != on;
+            d.hold(now, on);
+            changed
+        });
+        if changed {
+            self.schedule_dock();
+        }
+    }
+
+    /// Keep the time-up tabs in step: they wait while the pill is hidden, come back with it,
+    /// follow it, keep the sitting time current and go once the session moves on.
     pub fn sync_prompt(&mut self) {
         let snap = self.engine.snapshot();
         if matches!(snap.state, VisibleState::Sitting | VisibleState::Break) {
-            if self.prompt == Prompt::Shown {
-                alert_card::hide_card(alert_card::Card::TimeUp);
+            if self.prompt != Prompt::Idle {
+                prompt::hide_kind(prompt::Kind::TimeUp);
+                self.prompt = Prompt::Idle;
+                self.hold_dock(false);
             }
-            self.prompt = Prompt::Idle;
             return;
         }
-        match (self.prompt, self.prompt_on_screen()) {
-            (Prompt::Shown, false) => {
-                alert_card::hide_card(alert_card::Card::TimeUp);
-                self.prompt = Prompt::Waiting;
+        match self.prompt {
+            Prompt::Idle => {}
+            Prompt::Shown => match self.prompt_anchor() {
+                None => {
+                    prompt::hide_kind(prompt::Kind::TimeUp);
+                    self.prompt = Prompt::Waiting;
+                }
+                Some(anchor) => {
+                    let caption = (snap.state == VisibleState::Overdue)
+                        .then(|| time_up_prompt(&self.settings, snap.sitting_elapsed).caption);
+                    prompt::update(anchor, caption.as_ref());
+                }
+            },
+            Prompt::Waiting => {
+                if snap.state == VisibleState::Overdue && self.prompt_anchor().is_some() {
+                    self.show_time_up_prompt();
+                }
             }
-            (Prompt::Shown, true) if snap.state == VisibleState::Overdue => {
-                let p = time_up_prompt(&self.settings, snap.sitting_elapsed);
-                alert_card::set_body(alert_card::Card::TimeUp, &p.body);
-            }
-            (Prompt::Waiting, true) if snap.state == VisibleState::Overdue => self.show_time_up_prompt(),
-            _ => {}
         }
     }
 
     /// The overdue time on the overlay was clicked: ask again.
     pub fn ask_time_up(&mut self) {
         if self.engine.snapshot().state == VisibleState::Overdue {
-            self.show_time_up_prompt();
-        }
-    }
-
-    /// The overlay moved: put the card back beside it.
-    pub fn place_prompt(&mut self) {
-        if self.prompt == Prompt::Shown {
             self.show_time_up_prompt();
         }
     }
@@ -380,8 +439,9 @@ impl App {
         match command {
             Command::Reset | Command::Snooze(_) | Command::Extend | Command::StartBreak => {
                 self.stop_alert_sound();
-                alert_card::hide();
+                prompt::hide();
                 self.prompt = Prompt::Idle;
+                self.hold_dock(false);
             }
             Command::TogglePause => self.handle_beep(result.beep),
         }
@@ -785,10 +845,6 @@ impl App {
             tray::ID_SNOOZE_30 => self.snooze(30 * 60),
             tray::ID_SNOOZE_CUSTOM => self.snooze_default(),
             tray::ID_EXTEND => self.apply_engine_command(Command::Extend),
-            tray::ID_PROMPT_CLOSE => {
-                alert_card::hide();
-                self.prompt = Prompt::Dismissed;
-            }
             tray::ID_SETTINGS => settings_dlg::open(self as *mut App),
             tray::ID_HIDE => self.toggle_widget(),
             tray::ID_PHONE => self.phone.open_admin(),

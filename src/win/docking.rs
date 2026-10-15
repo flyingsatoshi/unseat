@@ -225,6 +225,7 @@ impl App {
             d.tick(now);
         }
         self.repaint();
+        self.sync_prompt();
         self.schedule_dock();
     }
 

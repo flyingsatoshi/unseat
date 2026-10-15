@@ -10,7 +10,7 @@
 //! - `UNSEAT_TEST_ID=<id>` gives this run its own window titles (" (test <id>)") and its own
 //!   single-instance lock, so two test instances never find or attach to each other.
 //! - `UNSEAT_TEST_HIDDEN=1` runs in the background: the overlay never shows, and there is no
-//!   tray icon, alert card or Windows notification. Long-running harnesses (the live iPhone
+//!   tray icon, time-up tabs or Windows notification. Long-running harnesses (the live iPhone
 //!   test) use it so nothing on screen can be mistaken for the user's Unseat.
 //! - Otherwise a visible test overlay carries a "TEST" badge and the tray tooltip says so
 //!   (`UNSEAT_TEST_BADGE=0` turns the badge off, for README screenshots).
