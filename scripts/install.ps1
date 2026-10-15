@@ -5,15 +5,22 @@
 # replaces the old one, an existing "Launch with Windows" entry is pointed at it, and the new
 # build starts. Run this after every change so the next launch is always the new code.
 #
-#   powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Docker | -Exe path] [-NoLaunch]
+#   powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Exe path | -Docker] [-NoLaunch]
 #
-# By default it builds with the local MSVC toolchain. -Docker cross-builds in a Rust Linux
-# container instead (scripts/cross_build.sh), for when Smart App Control blocks local builds
-# with os error 4551. -Exe installs an exe that is already built.
+# Three ways to get the exe; the installed app needs only Windows either way:
+#   (default)  build with Rust and the MSVC Build Tools on this PC.
+#   -Exe path  install an exe that is already built (a release, a CI artifact); needs no
+#              Rust, no build tools and no Docker.
+#   -Docker    optional: cross-build in a Rust Linux container (scripts/cross_build.sh), for
+#              when local builds are blocked (Smart App Control, os error 4551). The container
+#              is capped at -DockerCpus / -DockerMemory because Docker may be shared with other
+#              work on this machine.
 param(
   [switch]$Docker,
   [string]$Exe = "",
-  [switch]$NoLaunch
+  [switch]$NoLaunch,
+  [string]$DockerCpus = "4",
+  [string]$DockerMemory = "6g"
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -31,23 +38,36 @@ public static class UnseatInstall {
 }
 "@
 
+if ($Exe -and $Docker) { throw "Use either -Exe or -Docker, not both." }
 if ($Exe) {
   $built = (Resolve-Path -LiteralPath $Exe).Path
 } elseif ($Docker) {
-  $built = Join-Path $root "target\x86_64-pc-windows-gnu\release\unseat.exe"
+  if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    throw "Docker is not installed. It is optional: run without -Docker to build with Rust, or use -Exe to install a built unseat.exe."
+  }
+  # Only this staging folder is written by the container, and only it is removed afterwards.
+  $staging = Join-Path $root "target\x86_64-pc-windows-gnu"
+  $built = Join-Path $staging "release\unseat.exe"
   Remove-Item -LiteralPath $built -ErrorAction SilentlyContinue
   # The container gets the tree without .git, so pass the commit for the version line.
   $sha = (git -C $root rev-parse --short=7 HEAD 2>$null)
   $branch = (git -C $root rev-parse --abbrev-ref HEAD 2>$null)
   $dirty = if (git -C $root status --porcelain --untracked-files=no 2>$null) { "1" } else { "0" }
-  docker run --rm -e "UNSEAT_GIT_SHA=$sha" -e "UNSEAT_GIT_BRANCH=$branch" -e "UNSEAT_GIT_DIRTY=$dirty" -v "${root}:/src" $image bash /src/scripts/cross_build.sh
-  if ($LASTEXITCODE -ne 0) { throw "Docker build failed with exit code $LASTEXITCODE" }
+  # Swap is capped with memory, and downloaded crates are kept in a named volume between builds.
+  docker run --rm --cpus $DockerCpus --memory $DockerMemory --memory-swap $DockerMemory `
+    -e "UNSEAT_GIT_SHA=$sha" -e "UNSEAT_GIT_BRANCH=$branch" -e "UNSEAT_GIT_DIRTY=$dirty" `
+    -v "${root}:/src" -v "unseat-cargo-registry:/usr/local/cargo/registry" `
+    $image bash /src/scripts/cross_build.sh
+  if ($LASTEXITCODE -ne 0) { throw "Docker build failed with exit code $LASTEXITCODE (see the cross_build messages above)" }
 } else {
+  if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+    throw "Rust (cargo) is not installed. Install Rust and the MSVC Build Tools, or use -Exe to install a built unseat.exe (-Docker is optional)."
+  }
   $built = Join-Path $root "target\release\unseat.exe"
   Push-Location $root
   try {
     cargo build --locked --release --features gui
-    if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE (os error 4551 means Smart App Control; use -Docker)" }
+    if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE (os error 4551 means Smart App Control blocked it; use -Docker or -Exe)" }
   } finally { Pop-Location }
 }
 if (-not (Test-Path -LiteralPath $built)) { throw "No build at $built" }
@@ -65,8 +85,9 @@ if ($widget -ne [IntPtr]::Zero) {
 
 New-Item -ItemType Directory -Force (Split-Path -Parent $app) | Out-Null
 Copy-Item -LiteralPath $built -Destination $app -Force
-# The container build is only a staging copy; keep dist\unseat.exe as the one exe.
-if ($Docker) { Remove-Item -LiteralPath (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $built))) -Recurse -Force }
+# The container build is only a staging copy; keep dist\unseat.exe as the one exe. The rest of
+# target\ (local builds, test data) is left alone.
+if ($Docker) { Remove-Item -LiteralPath $staging -Recurse -Force }
 $info = Get-Item -LiteralPath $app
 Write-Host "Installed $app ($($info.VersionInfo.FileVersion), built $($info.LastWriteTime))"
 

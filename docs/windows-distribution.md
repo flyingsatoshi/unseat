@@ -6,7 +6,7 @@ The GUI uses ordinary Win32 windows, Direct2D drawing, a notification-area icon,
 
 ## Build and sign releases
 
-Use a Windows build environment with Rust, the MSVC C++ build tools, and the Windows SDK. CI uses the lockfile and runs both library and Windows host tests. GNU builds additionally require a working MinGW resource compiler. The icon, package-version metadata, and least-privilege manifest are required build inputs; missing resource tooling is a build error.
+Use a Windows build environment with Rust, the MSVC C++ build tools, and the Windows SDK. CI uses the lockfile and runs both library and Windows host tests. The exe links the C runtime statically (`.cargo/config.toml`) and imports only Windows system DLLs, so it needs no Visual C++ Redistributable; CI fails if it would need `vcruntime140`, `msvcp140`, `libgcc_s` or `libwinpthread`, and uploads the release exe as the `unseat-exe` artifact. GNU builds additionally require a working MinGW resource compiler; the optional Docker cross-build (`scripts\install.ps1 -Docker`) provides one in a container limited to 4 CPUs and 6 GB. The icon, package-version metadata, and least-privilege manifest are required build inputs; missing resource tooling is a build error.
 
 ```powershell
 cargo test --locked --all-targets

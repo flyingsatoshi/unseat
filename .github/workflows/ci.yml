@@ -20,3 +20,17 @@ jobs:
         run: cargo test --locked --all-targets
       - name: Release GUI
         run: cargo build --locked --release --features gui
+      - name: Release exe needs only Windows DLLs
+        shell: pwsh
+        run: |
+          # Import names are plain text in the exe. None of these ship with Windows.
+          $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes("target/release/unseat.exe"))
+          foreach ($dll in "vcruntime140", "msvcp140", "libgcc_s", "libwinpthread") {
+            if ($text.IndexOf($dll, [StringComparison]::OrdinalIgnoreCase) -ge 0) { throw "unseat.exe needs $dll, which is not part of Windows" }
+          }
+      # A ready-to-run build of every commit, for scripts\install.ps1 -Exe (no Rust or Docker).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unseat-exe
+          path: target/release/unseat.exe
+          if-no-files-found: error
