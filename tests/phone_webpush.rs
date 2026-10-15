@@ -146,6 +146,14 @@ fn only_apples_push_service_is_an_allowed_endpoint() {
     assert!(!allowed_endpoint("https://127.0.0.1:8791/admin/revoke", &none));
     assert!(!allowed_endpoint("https://x@web.push.apple.com/abc", &none));
     assert!(!allowed_endpoint("not a url", &none));
+    // A NUL ends the host for Windows, which would then connect to 10.0.0.5, not Apple.
+    assert!(!allowed_endpoint("https://10.0.0.5\u{0}.push.apple.com/abc", &none));
+    assert!(!allowed_endpoint("https://web.push.apple.com\u{0}/abc", &none));
+    assert!(!allowed_endpoint("https://web.push.apple.com/a\r\nX-Evil: 1", &none));
+    assert!(!allowed_endpoint("https://w\u{e9}b.push.apple.com/abc", &none));
+    let fake = ["http://127.0.0.1:9999".to_string()];
+    assert!(allowed_endpoint("http://127.0.0.1:9999/push/Test iPhone", &fake));
+    assert!(!allowed_endpoint("http://127.0.0.1:9999/push/\u{0}x", &fake));
     assert!(allowed_endpoint("http://127.0.0.1:9999/push/1", &["http://127.0.0.1:9999".to_string()]));
 }
 

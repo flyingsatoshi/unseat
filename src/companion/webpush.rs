@@ -89,8 +89,13 @@ impl VapidKey {
     }
 }
 
-/// `scheme://host[:port]` of a URL, or `None` if it isn't one.
+/// `scheme://host[:port]` of a URL, or `None` if it isn't one. Control characters are refused
+/// anywhere: Windows reads host names as NUL-terminated strings, so a NUL could make the host
+/// that was checked differ from the host that is connected to.
 pub fn origin(url: &str) -> Option<String> {
+    if url.chars().any(char::is_control) {
+        return None;
+    }
     let (scheme, rest) = url.split_once("://")?;
     if scheme != "https" && scheme != "http" {
         return None;
@@ -110,7 +115,7 @@ pub fn allowed_endpoint(endpoint: &str, extra: &[String]) -> bool {
         return true;
     }
     let Some(host) = o.strip_prefix("https://") else { return false };
-    if host.contains(':') {
+    if !host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-') {
         return false;
     }
     host == "push.apple.com" || host.ends_with(".push.apple.com")
