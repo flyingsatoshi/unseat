@@ -708,7 +708,8 @@ fn layout(tab: Tab, draft: &Settings, scale: f32, win_h: f32, scroll: f32) -> La
 fn version_line() -> &'static str {
     static LINE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     LINE.get_or_init(|| {
-        let channel = unseat::about::Channel::current(crate::win::testhook::enabled());
+        // A test copy says "Test", unless it is taking README screenshots (badge off).
+        let channel = unseat::about::Channel::current(crate::win::testhook::badge());
         unseat::about::version_line(channel, unseat::about::BUILD_SHA, unseat::about::BUILD_DIRTY)
     })
 }

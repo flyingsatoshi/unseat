@@ -13,7 +13,8 @@
 //!   tray icon, time-up tabs or Windows notification. Long-running harnesses (the live iPhone
 //!   test) use it so nothing on screen can be mistaken for the user's Unseat.
 //! - Otherwise a visible test overlay carries a "TEST" badge and the tray tooltip says so
-//!   (`UNSEAT_TEST_BADGE=0` turns the badge off, for README screenshots).
+//!   and Settings names the channel "Test" (`UNSEAT_TEST_BADGE=0` turns both off, for README
+//!   screenshots).
 
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -67,7 +68,8 @@ pub fn hidden() -> bool {
     *ON.get_or_init(|| enabled() && std::env::var_os("UNSEAT_TEST_HIDDEN").is_some_and(|v| v == "1"))
 }
 
-/// A visible test overlay shows a "TEST" badge.
+/// A visible test copy is marked as one: a "TEST" badge on the overlay and the "Test" channel
+/// in Settings.
 pub fn badge() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| enabled() && !hidden() && !std::env::var_os("UNSEAT_TEST_BADGE").is_some_and(|v| v == "0"))

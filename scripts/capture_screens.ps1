@@ -1,6 +1,7 @@
-# Captures README screenshots from a real Unseat test instance (UNSEAT_TEST_HOOKS=1).
+# Captures the README screenshots from a real Unseat test instance (UNSEAT_TEST_HOOKS=1).
 # The test instance uses its own settings folder and window titles, so it runs beside a
-# normal Unseat without touching it.
+# normal Unseat without touching it. Single frames go to target\screenshots; the sheets the
+# README shows (overlay states, time-up tabs, docking, tray panel, settings) go to -Out.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts/capture_screens.ps1 [-Exe path] [-Out dir]
 param(
@@ -12,7 +13,8 @@ $ErrorActionPreference = "Stop"
 # README screenshots show the overlay as users see it, without the TEST badge.
 $env:UNSEAT_TEST_BADGE = "0"
 Add-Type -AssemblyName System.Drawing
-New-Item -ItemType Directory -Force $Out | Out-Null
+$Frames = Join-Path (Split-Path -Parent $PSScriptRoot) "target\screenshots"
+New-Item -ItemType Directory -Force $Out, $Frames | Out-Null
 
 function Backdrop([int]$w, [int]$h, [bool]$dark) {
   $bmp = New-Object System.Drawing.Bitmap $w, $h
@@ -118,32 +120,32 @@ foreach ($theme in @("dark", "light")) {
   }
   try {
     Advance $inst 428
-    Save-Overlay $inst (Join-Path $Out "overlay-sitting-$theme.png") $dark
+    Save-Overlay $inst (Join-Path $Frames "overlay-sitting-$theme.png") $dark
     # Hover reveals pause, reset and hide controls.
-    Save-Overlay $inst (Join-Path $Out "overlay-hover-$theme.png") $dark -Hover
+    Save-Overlay $inst (Join-Path $Frames "overlay-hover-$theme.png") $dark -Hover
     Advance $inst (1200 - 428)
     Find-TestWindow "UnseatPrompt" (TestTitle $inst "Unseat prompt") | Out-Null
     Start-Sleep -Milliseconds 400
-    Save-Prompt $inst (Join-Path $Out "prompt-timeup-$theme.png") $dark
+    Save-Prompt $inst (Join-Path $Frames "prompt-timeup-$theme.png") $dark
     Advance $inst (7 * 60 + 20)
-    Save-Overlay $inst (Join-Path $Out "overlay-overdue-$theme.png") $dark
+    Save-Overlay $inst (Join-Path $Frames "overlay-overdue-$theme.png") $dark
     $panel = Open-TrayPanel $inst
-    Save-Window $panel (Join-Path $Out "tray-panel-overdue-$theme.png") $dark
+    Save-Window $panel (Join-Path $Frames "tray-panel-overdue-$theme.png") $dark
     Close-Window $panel
     Send-Command $inst $ID_BREAK
     Advance $inst 41
-    Save-Overlay $inst (Join-Path $Out "overlay-break-$theme.png") $dark
+    Save-Overlay $inst (Join-Path $Frames "overlay-break-$theme.png") $dark
     Send-Command $inst $ID_RESET
     Advance $inst 300
     Send-Command $inst $ID_PAUSE
-    Save-Overlay $inst (Join-Path $Out "overlay-paused-$theme.png") $dark
+    Save-Overlay $inst (Join-Path $Frames "overlay-paused-$theme.png") $dark
     Send-Command $inst $ID_PAUSE
 
     $dlg = Open-Settings $inst
     $tabs = "timer", "breaks", "alerts", "dock", "general"
     for ($i = 0; $i -lt $tabs.Count; $i++) {
       Click-SettingsTab $dlg $i
-      Save-Window $dlg (Join-Path $Out "settings-$($tabs[$i])-$theme.png") $dark
+      Save-Window $dlg (Join-Path $Frames "settings-$($tabs[$i])-$theme.png") $dark
     }
     Close-Window $dlg
   } finally {
@@ -163,34 +165,48 @@ foreach ($theme in @("dark", "light")) {
     Start-Sleep -Milliseconds 400
     Click-At $inst.Widget 4 20
     Start-Sleep -Milliseconds 400
-    Save-Docked $inst (Join-Path $Out "dock-expanded-$theme.png") $dark
+    Save-Docked $inst (Join-Path $Frames "dock-expanded-$theme.png") $dark
     Advance $inst 4
     Start-Sleep -Milliseconds 500
-    Save-Docked $inst (Join-Path $Out "dock-tab-$theme.png") $dark
+    Save-Docked $inst (Join-Path $Frames "dock-tab-$theme.png") $dark
     Dock-Hover $inst $true
     Start-Sleep -Milliseconds 200
-    Save-Docked $inst (Join-Path $Out "dock-peek-$theme.png") $dark
+    Save-Docked $inst (Join-Path $Frames "dock-peek-$theme.png") $dark
     Dock-Hover $inst $false
   } finally {
     Stop-TestInstance $inst
   }
 }
 
-# One sheet with every overlay state, dark above light.
-$states = "sitting", "hover", "overdue", "break", "paused"
-$first = [System.Drawing.Image]::FromFile((Join-Path $Out "overlay-sitting-dark.png"))
-$cw = $first.Width; $ch = $first.Height; $first.Dispose()
-$sheet = New-Object System.Drawing.Bitmap ($cw * $states.Count), ($ch * 2)
-$g = [System.Drawing.Graphics]::FromImage($sheet)
-for ($row = 0; $row -lt 2; $row++) {
-  $theme = @("dark", "light")[$row]
-  for ($i = 0; $i -lt $states.Count; $i++) {
-    $img = [System.Drawing.Image]::FromFile((Join-Path $Out "overlay-$($states[$i])-$theme.png"))
-    $g.DrawImage($img, $i * $cw, $row * $ch, $cw, $ch)
-    $img.Dispose()
+# A grid of frames (rows of file names in target\screenshots), cells sized by the first frame,
+# separated by transparent gaps.
+function Save-Sheet([string]$name, [string[][]]$grid, [int]$gap) {
+  $first = [System.Drawing.Image]::FromFile((Join-Path $Frames $grid[0][0]))
+  $cw = $first.Width; $ch = $first.Height; $first.Dispose()
+  $cols = $grid[0].Count; $rows = $grid.Count
+  $sheet = New-Object System.Drawing.Bitmap ($cw * $cols + $gap * ($cols - 1)), ($ch * $rows + $gap * ($rows - 1))
+  $g = [System.Drawing.Graphics]::FromImage($sheet)
+  for ($r = 0; $r -lt $rows; $r++) {
+    for ($c = 0; $c -lt $cols; $c++) {
+      $img = [System.Drawing.Image]::FromFile((Join-Path $Frames $grid[$r][$c]))
+      $g.DrawImage($img, $c * ($cw + $gap), $r * ($ch + $gap), $cw, $ch)
+      $img.Dispose()
+    }
   }
+  $g.Dispose()
+  $path = Join-Path $Out $name
+  $sheet.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+  $sheet.Dispose()
+  "wrote $path"
 }
-$g.Dispose()
-$sheet.Save((Join-Path $Out "overlay-states.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-$sheet.Dispose()
-Get-Item (Join-Path $Out "*.png") | Select-Object Name, Length
+
+$states = "sitting", "hover", "overdue", "break", "paused"
+Save-Sheet "overlay-states.png" @(
+  @($states | ForEach-Object { "overlay-$_-dark.png" }),
+  @($states | ForEach-Object { "overlay-$_-light.png" })) 0
+Save-Sheet "time-up-prompt.png" @(, @("prompt-timeup-dark.png", "prompt-timeup-light.png")) 12
+Save-Sheet "dock-states.png" @(
+  @("dock-expanded-dark.png", "dock-tab-dark.png", "dock-peek-dark.png"),
+  @("dock-expanded-light.png", "dock-tab-light.png", "dock-peek-light.png")) 10
+Save-Sheet "tray-panel.png" @(, @("tray-panel-overdue-dark.png", "tray-panel-overdue-light.png")) 12
+Save-Sheet "settings.png" @(, @("settings-timer-dark.png", "settings-alerts-dark.png", "settings-general-light.png")) 12
