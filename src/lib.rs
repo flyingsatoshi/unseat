@@ -27,7 +27,7 @@ pub use engine::{
 };
 pub use place::{is_dev_build, newer_build_takes_over};
 pub use settings::{
-    AlertSound, DayTotal, InactivityBehavior, PhoneAlerts, Settings, ThemePreference, TimerCheckpoint,
+    write_atomic, AlertSound, DayTotal, InactivityBehavior, PhoneAlerts, Settings, ThemePreference, TimerCheckpoint,
     TimerDisplayMode, TimerShape, WidgetSize, ALERT_DURATION_PRESETS_SECS, DEFAULT_ALERT_VOLUME,
     HISTORY_DAYS, SETTINGS_VERSION, SNOOZE_PRESETS_SECS,
 };

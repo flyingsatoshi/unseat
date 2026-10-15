@@ -569,16 +569,21 @@ impl Settings {
     }
 
     pub fn save_to(&self, path: &Path) -> io::Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        {
-            let mut file = fs::File::create(&tmp)?;
-            file.write_all(&self.to_json())?;
-            file.sync_all()?;
-        }
-        fs::rename(&tmp, path)?;
-        Ok(())
+        write_atomic(path, &self.to_json())
     }
+}
+
+/// Replace `path` with `bytes` so that a crash or power cut leaves either the old file or the
+/// new one, never a torn mix: write a temporary file next to it, flush it to disk, rename.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    {
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp, path)
 }
