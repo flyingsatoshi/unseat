@@ -1,0 +1,24 @@
+{
+  "about": "Limits for scripts/bench.ps1 -Budgets. CI fails only on SizeBytes (deterministic for a toolchain); the rest are reported. Set from the medians of 5 rounds x 60 s idle on the machine below, with headroom: size ~3.5% (compiler updates), counts and leaks tight, memory ~20%, timing and CPU ~1.5-2x (they depend on the machine). Test copies log every tick to a file, which is included in the idle CPU and write numbers. Raise a limit only with a measured reason, in the same change.",
+  "measured": "2026-10-15, Intel i9-14900K, 64 GB, Intel UHD 770, Windows 11 Pro 26300, Rust 1.98.1: unseat.exe 1,294,848 bytes; idle 220 Mcycles/min, 38.6 MB private; 46.4 MB after every window; 0 handle growth; restart 91 ms",
+  "max": {
+    "SizeBytes": 1340000,
+    "FirstReadyMs": 600,
+    "RestartReadyMs": 150,
+    "IdleMcyclesPerMin": 330,
+    "IdlePrivateMB": 45,
+    "RetainedPrivateMB": 55,
+    "PeakPrivateMB": 60,
+    "IdleHandles": 320,
+    "IdleThreads": 6,
+    "HandleGrowthPerCycle": 0.5,
+    "GdiGrowthPerCycle": 0.5,
+    "UserGrowthPerCycle": 0.5,
+    "IdleSettingsSavesPerHour": 4,
+    "TickSkippedOrRepeated": 0,
+    "TickLateP95Ms": 120,
+    "RepaintKcycles": 3000,
+    "SettingsOpenMedianMs": 30,
+    "ShutdownMs": 100
+  }
+}

@@ -43,7 +43,7 @@ The engine reports `LimitReached`, `Progressive` and `BreakOver` regardless of s
 
 | Piece | Role |
 | --- | --- |
-| `app` | Owns the engine; feeds time, last-input age and lock/sleep state; persists every 60 s, on every command and at shutdown |
+| `app` | Owns the engine; feeds time, last-input age and lock/sleep state; persists on every command and at shutdown, and otherwise only when a restart would no longer restore the live timer (checked every 60 s) |
 | `widget` | Layered Direct2D overlay (no-activate, optionally topmost). Receives the broadcasts the message-only window cannot: theme change, `TaskbarCreated`, display/DPI changes, power, end-session |
 | `paint`, `gfx` | Overlay painter (pill as progress bar, docked tab and peek) with a cached back buffer; shared Direct2D helpers, text-format cache, the embedded Sora font loaded from memory, tabular digits measured to fit. Every window draws through one Direct2D factory on the UI thread (`gfx::shared`), so they share one Direct3D device |
 | `docking` | Applies `DockController` to the overlay window: placement, slide frames (~16 ms timer only while sliding), drag-to-dock, fullscreen detection |
@@ -64,7 +64,8 @@ The engine reports `LimitReached`, `Progressive` and `BreakOver` regardless of s
 - `cargo test --all-targets`: adds settings-window layout, focus-order and hit-test tests.
 - `scripts/test_app.ps1`: end-to-end against the real executable through `testhook`.
 - `scripts/test_phone.ps1`: iPhone reminders end to end, against a local fake push service.
+- `scripts/bench.ps1`: size, startup, idle CPU and memory, handles, threads, tick timing, repaint cost, window opening, settings writes, handle leaks and shutdown of one or more builds, side by side. `-Budgets scripts/perf-budgets.json` checks the last build against the limits there. CI fails a build whose exe outgrows `max.SizeBytes`; timing and memory depend on the machine, so CI only reports them.
 
 ## Data
 
-Local only unless iPhone reminders are turned on (see `SECURITY.md` and `docs/iphone.md`): then a loopback listener for Tailscale Serve and HTTPS requests to Apple's push service. Paired phones live in `companion.json`, apart from settings. Settings are written to a temp file then renamed. Corrupt JSON loads defaults. Unknown enum values fall back to defaults. Numeric fields are clamped on load and save.
+Local only unless iPhone reminders are turned on (see `SECURITY.md` and `docs/iphone.md`): then a loopback listener for Tailscale Serve and HTTPS requests to Apple's push service. Paired phones live in `companion.json`, apart from settings. Settings are written to a temp file, flushed, then renamed (`write_atomic`). While only time passes they are not rewritten, because restoring the checkpoint already adds the downtime (`checkpoint_current`); they are still rewritten at least every 15 minutes. Corrupt JSON loads defaults. Unknown enum values fall back to defaults. Numeric fields are clamped on load and save.
